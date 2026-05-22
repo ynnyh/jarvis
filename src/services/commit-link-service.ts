@@ -1,6 +1,6 @@
 import { basename } from 'path'
 import {
-  listMyLocalCommitsOnce,
+  listMyLocalCommitsShared,
   type ListMyLocalCommitsResult,
   type LocalCommit,
   type RangePreset,
@@ -178,7 +178,7 @@ export async function linkTasksWithCommits(
   const range: RangePreset = options.range ?? 'today'
 
   const [raw, aliases] = await Promise.all([
-    listMyLocalCommitsOnce({
+    listMyLocalCommitsShared({
       range,
       since: options.since,
       until: options.until,

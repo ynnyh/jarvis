@@ -101,7 +101,8 @@ export class TencentCodeMcpClient {
 }
 
 /**
- * 一次性调用封装：建连接 → 调工具 → 关闭。CLI 一次性场景最常用。
+ * 一次性调用封装：建连接 → 调工具 → 关闭。
+ * 保留给极少数明确需要短连接的场景；常规调用走 sharedTencentCodeMcpClient。
  */
 export async function listMyLocalCommitsOnce(
   input: ListMyLocalCommitsInput = {},
@@ -110,4 +111,55 @@ export async function listMyLocalCommitsOnce(
     const result = await client.callTool('list_my_local_commits', input as Record<string, unknown>)
     return parseToolJsonResult<ListMyLocalCommitsResult>(result)
   })
+}
+
+// ===== 共享单例（守护进程 / CLI 同进程内复用，避免每次 spawn tencentcode-mcp） =====
+
+let sharedClient: TencentCodeMcpClient | null = null
+let sharedConnectPromise: Promise<TencentCodeMcpClient> | null = null
+
+/**
+ * 取共享 client；首次调用懒启动，后续直接复用。
+ * 连接失败会清空缓存让下次重试，不把脏状态留给调用方。
+ */
+export async function getSharedTencentCodeMcpClient(): Promise<TencentCodeMcpClient> {
+  if (sharedClient) return sharedClient
+  if (sharedConnectPromise) return sharedConnectPromise
+  sharedConnectPromise = (async () => {
+    const client = new TencentCodeMcpClient()
+    try {
+      await client.connect()
+      sharedClient = client
+      return client
+    } catch (err) {
+      sharedClient = null
+      throw err
+    } finally {
+      sharedConnectPromise = null
+    }
+  })()
+  return sharedConnectPromise
+}
+
+export async function closeSharedTencentCodeMcpClient(): Promise<void> {
+  const c = sharedClient
+  sharedClient = null
+  sharedConnectPromise = null
+  if (c) {
+    try {
+      await c.close()
+    } catch {
+      // ignore close errors
+    }
+  }
+}
+
+/**
+ * 用共享 client 拉本地 commit。优先用这个，而不是 listMyLocalCommitsOnce。
+ */
+export async function listMyLocalCommitsShared(
+  input: ListMyLocalCommitsInput = {},
+): Promise<ListMyLocalCommitsResult> {
+  const client = await getSharedTencentCodeMcpClient()
+  return client.listMyLocalCommits(input)
 }

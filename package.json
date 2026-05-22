@@ -12,6 +12,8 @@
     "build": "tsc",
     "dev": "tsx src/cli/index.ts",
     "start": "node dist/cli/index.js",
+    "daemon": "node dist/daemon/server.js",
+    "daemon:dev": "tsx src/daemon/server.ts",
     "typecheck": "tsc --noEmit",
     "desktop:dev": "node scripts/dev.mjs",
     "desktop:build": "tauri build"

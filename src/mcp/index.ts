@@ -3,6 +3,9 @@ export type { McpServerParams, CallToolResult } from './client.js'
 export {
   TencentCodeMcpClient,
   listMyLocalCommitsOnce,
+  listMyLocalCommitsShared,
+  getSharedTencentCodeMcpClient,
+  closeSharedTencentCodeMcpClient,
 } from './tencentcode-client.js'
 export type {
   LocalCommit,
