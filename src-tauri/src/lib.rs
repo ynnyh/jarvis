@@ -1,4 +1,5 @@
 mod commands;
+mod daemon_client;
 
 use tauri::Manager;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
