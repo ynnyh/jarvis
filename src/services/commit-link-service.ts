@@ -6,6 +6,7 @@ import {
   type RangePreset,
 } from '../mcp/tencentcode-client.js'
 import { aliasesFor, loadBusinessAliases, type BusinessAliases } from '../config/business-aliases.js'
+import { loadExcludedBusinessLines } from '../config/excluded-business-lines.js'
 import { effortForCommit } from './commit-effort.js'
 
 // ===== 类型 =====
@@ -180,7 +181,7 @@ export async function linkTasksWithCommits(
 ): Promise<CommitLinkResult> {
   const range: RangePreset = options.range ?? 'today'
 
-  const [raw, aliases] = await Promise.all([
+  const [raw, aliases, excluded] = await Promise.all([
     listMyLocalCommitsShared({
       range,
       since: options.since,
@@ -191,13 +192,21 @@ export async function linkTasksWithCommits(
       includeStat: true,
     }),
     loadBusinessAliases(),
+    loadExcludedBusinessLines(),
   ])
 
   const rootDirs = raw.rootDirs ?? (Array.isArray(options.rootDir)
     ? options.rootDir
     : options.rootDir ? [options.rootDir] : ['D:/coding'])
 
-  const rawRepos = raw.repos ?? []
+  // 按"业务线名"过滤掉用户标记为非公司项目的仓库（~/.jarvis/excluded-business-lines.json）。
+  // 这些仓库的 commit 完全不进入后续统计：不计入 totalCommits、不出现在分组、不分工时。
+  const rawRepos = (raw.repos ?? []).filter(
+    r => !excluded.has(extractBusinessLine(r.repoPath, rootDirs)),
+  )
+
+  // 实际计入的 commit 总数（不是 raw.totalCommits，因为可能排除了一些仓库）
+  const effectiveTotalCommits = rawRepos.reduce((s, r) => s + r.commits.length, 0)
 
   // 按业务线聚合
   const groupMap = new Map<string, BusinessGroup>()
@@ -315,7 +324,7 @@ export async function linkTasksWithCommits(
   return {
     range: raw.range,
     scannedRepos: raw.scannedRepos ?? 0,
-    totalCommits: raw.totalCommits ?? 0,
+    totalCommits: effectiveTotalCommits,
     tasks: tasksOut,
     orphanCommits,
   }
