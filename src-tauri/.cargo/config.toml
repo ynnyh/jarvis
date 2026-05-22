@@ -1,0 +1,5 @@
+[build]
+target-dir = "target"
+
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "link-arg=-fno-use-linker-plugin", "-C", "link-arg=-Wl,--disable-auto-image-base", "-C", "link-arg=-Wl,--exclude-all-symbols"]

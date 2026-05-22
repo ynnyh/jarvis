@@ -1,0 +1,46 @@
+# 依赖与构建产物
+node_modules/
+dist/
+build/
+build-out/
+*.tsbuildinfo
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/build-out/
+src-tauri/gen/schemas/
+
+# 凭据 / 用户私有配置（含禅道账号密码、工蜂 token）
+.env
+.env.local
+.env.*.local
+.jarvis/
+
+# 编辑器 / IDE
+.trae/
+.vscode/
+.idea/
+*.swp
+
+# 工作中的敏感数据（含真实禅道任务标题、负责人等）
+my-assigned-tasks.json
+my-tasks-full.html
+zentao-my-tasks.html
+zentao-tasks-page.html
+dev-api-page.html
+api-data.json
+tasks-output.txt
+
+# 临时 / 调试输出
+result-tmp.txt
+result-tmp.json
+r.json
+*.log
+
+# 二进制
+rustup-init.exe
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
