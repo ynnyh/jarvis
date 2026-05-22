@@ -3,6 +3,7 @@ import { ref, computed, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useAppStore } from '../stores/app'
 import { useDailyReview } from '../composables/useDailyReview'
+import { cleanCommitTitle } from '../composables/cleanCommitTitle'
 
 const store = useAppStore()
 const { fetchReview, copyPlainText } = useDailyReview()
@@ -31,14 +32,15 @@ async function handleCopy() {
   setTimeout(() => { copyState.value = 'idle' }, 1800)
 }
 
-/** 复制单个任务的工作内容：去重后的 commit title 列表，每行一个 */
+/** 复制单个任务的工作内容：去重后的 commit 标题列表（去掉 emoji/feat: 前缀），每行一个 */
 async function copyTaskCommits(task: { taskId: string; commits: { title: string }[] }) {
   const seen = new Set<string>()
   const lines: string[] = []
   for (const c of task.commits) {
-    if (seen.has(c.title)) continue
-    seen.add(c.title)
-    lines.push(`- ${c.title}`)
+    const cleaned = cleanCommitTitle(c.title)
+    if (!cleaned || seen.has(cleaned)) continue
+    seen.add(cleaned)
+    lines.push(`- ${cleaned}`)
   }
   const text = lines.join('\n')
   try {
@@ -212,7 +214,7 @@ function formatTime(iso: string): string {
             <summary class="commits-summary">📦 commit 列表</summary>
             <ul class="commit-list">
               <li v-for="c in g.commits" :key="c.sha + c.repoPath" class="commit-item">
-                <div class="commit-title">{{ c.title }}</div>
+                <div class="commit-title">{{ cleanCommitTitle(c.title) }}</div>
                 <div class="commit-meta">
                   <span class="commit-repo">{{ c.repoName }}</span>
                   <span class="commit-sha">{{ c.shortSha }}</span>

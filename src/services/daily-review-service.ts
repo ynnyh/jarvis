@@ -1,4 +1,5 @@
 import type { CommitLink, CommitLinkResult } from './commit-link-service.js'
+import { cleanCommitTitle } from './clean-commit-title.js'
 
 export interface ReviewTaskInfo {
   id: string | number
@@ -238,13 +239,15 @@ function renderPlainText(
   lines.push('')
   for (const g of byLine) {
     if (g.commits.length === 0) continue
-    // 按 title 去重，避免 rebase/cherry-pick 产生的同标题不同 sha 干扰阅读
-    const uniqueByTitle: typeof g.commits = []
+    // 按清理后的标题去重（剥掉 emoji/feat: 前缀后比较），避免 rebase/cherry-pick
+    // 产生的同标题不同 sha 干扰阅读，也避免「✨ feat: xx」和「feat: xx」被当成两条
+    const uniqueByTitle: Array<{ commit: CommitLink; cleaned: string }> = []
     const seen = new Set<string>()
     for (const c of g.commits) {
-      if (seen.has(c.title)) continue
-      seen.add(c.title)
-      uniqueByTitle.push(c)
+      const cleaned = cleanCommitTitle(c.title)
+      if (!cleaned || seen.has(cleaned)) continue
+      seen.add(cleaned)
+      uniqueByTitle.push({ commit: c, cleaned })
     }
     const dupCount = g.commits.length - uniqueByTitle.length
     const countLabel = dupCount > 0
@@ -252,8 +255,8 @@ function renderPlainText(
       : `${g.commits.length} 个 commit`
 
     lines.push(`${g.businessLine}（${countLabel}）`)
-    for (const c of uniqueByTitle) {
-      lines.push(`  · ${c.title}  (${c.repoName} · ${c.shortSha})`)
+    for (const { commit: c, cleaned } of uniqueByTitle) {
+      lines.push(`  · ${cleaned}  (${c.repoName} · ${c.shortSha})`)
     }
     if (g.tasks.length > 0) {
       lines.push('  推进任务：')
