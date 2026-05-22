@@ -20,7 +20,9 @@ useTaskCommits({ autoLoad: true })
 const { openReview } = useDailyReview()
 useEveningReminder({
   onTrigger: () => {
-    showAlert('今天的复盘看一下？', '📋', 'thinking', 0)
+    // 不传 duration=0 — 那会让气泡永久挂着、状态卡在 thinking 直到用户手动 ×。
+    // 复盘窗口已经自动打开了，气泡只是个提示动作，15s 足够注意到。
+    showAlert('今天的复盘看一下？', '📋', 'thinking', 15000)
     store.showReviewWindow = true
   },
 })
@@ -95,7 +97,12 @@ function showAlert(text: string, emoji: string, s: JarvisState, duration = 5000)
   alertEmoji.value = emoji
   if (alertTimer) clearTimeout(alertTimer)
   if (duration > 0) {
-    alertTimer = window.setTimeout(() => { alertText.value = ''; alertEmoji.value = '' }, duration)
+    alertTimer = window.setTimeout(() => {
+      alertText.value = ''
+      alertEmoji.value = ''
+      // 气泡消失时状态也归还 idle，避免小人卡在 thinking/warning 直到下次主动改 state
+      state.value = 'idle'
+    }, duration)
   }
 }
 
@@ -255,7 +262,7 @@ onUnmounted(() => {
         <div v-if="hasAlert" class="alert-bubble pointer-target">
           <span class="alert-bubble__emoji">{{ alertEmoji }}</span>
           <span class="alert-bubble__text">{{ alertText }}</span>
-          <button class="alert-bubble__close" @click.stop="alertText = ''; alertEmoji = ''" aria-label="关闭">×</button>
+          <button class="alert-bubble__close" @click.stop="alertText = ''; alertEmoji = ''; state = 'idle'" aria-label="关闭">×</button>
         </div>
       </transition>
 

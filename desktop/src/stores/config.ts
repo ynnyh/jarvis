@@ -159,7 +159,10 @@ export const useConfigStore = defineStore('config', () => {
     const now = new Date()
     const periods = config.value.workSchedule.periods
     if (periods.length === 0) return -1
-    const lastEnd = parseHm(periods[periods.length - 1].end)
+    // 防御性排序：用户在设置里可能把 periods 顺序写乱，直接取下标 last 会把"下午到 18:00"
+    // 误判成"上午到 12:00"，导致复盘提醒永远不触发或在错误时间触发。
+    const sortedEnds = periods.map(p => parseHm(p.end)).sort((a, b) => a - b)
+    const lastEnd = sortedEnds[sortedEnds.length - 1]
     const m = now.getHours() * 60 + now.getMinutes()
     return lastEnd - m
   })
