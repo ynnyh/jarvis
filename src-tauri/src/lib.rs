@@ -2,6 +2,7 @@ mod commands;
 mod daemon_client;
 
 use tauri::Manager;
+use tauri::RunEvent;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
@@ -111,6 +112,12 @@ pub fn run() {
             commands::config_load,
             commands::config_save,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, event| {
+            // 应用退出前优雅关闭守护进程，避免 Node 进程残留
+            if let RunEvent::Exit = event {
+                tauri::async_runtime::block_on(daemon_client::try_shutdown());
+            }
+        });
 }
