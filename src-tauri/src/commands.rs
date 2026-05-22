@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::process::Command;
 
+use crate::daemon_client;
+
 /// 获取项目根目录（package.json 所在目录）
 fn project_root() -> PathBuf {
     let cwd = std::env::current_dir().unwrap_or_default();
@@ -62,104 +64,36 @@ pub struct ToolResult {
 
 #[tauri::command]
 pub async fn tool_execute(name: String, input: Option<serde_json::Value>) -> Result<ToolResult, String> {
-    let input_json = input.unwrap_or(serde_json::json!({}));
-    
-    let output = silent_command("node")
-        .arg("dist/cli/agent-core.js")
-        .arg("tool")
-        .arg(&name)
-        .arg(input_json.to_string())
-        .current_dir(project_root())
-        .output()
-        .map_err(|e| format!("Failed to execute tool: {}", e))?;
-    
-    if output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        // 解析 JSON 输出
-        match serde_json::from_str(&stdout) {
-            Ok(data) => Ok(ToolResult { success: true, data: Some(data), error: None }),
-            Err(_) => Ok(ToolResult { 
-                success: true, 
-                data: Some(serde_json::json!({ "output": stdout.to_string() })), 
-                error: None 
-            }),
-        }
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Ok(ToolResult { success: false, data: None, error: Some(stderr.to_string()) })
+    let body = input.unwrap_or(serde_json::json!({}));
+    match daemon_client::post(&format!("/tool/{}", name), body).await {
+        Ok(data) => Ok(ToolResult { success: true, data: Some(data), error: None }),
+        Err(e) => Ok(ToolResult { success: false, data: None, error: Some(e) }),
     }
 }
 
 #[tauri::command]
 pub async fn tool_list() -> Result<Vec<serde_json::Value>, String> {
-    let output = silent_command("node")
-        .arg("dist/cli/agent-core.js")
-        .arg("tools")
-        .current_dir(project_root())
-        .output()
-        .map_err(|e| format!("Failed to list tools: {}", e))?;
-    
-    if output.status.success() {
-        // 简化处理：返回空数组，实际应该解析输出
-        Ok(vec![])
-    } else {
-        Err("Failed to list tools".to_string())
-    }
+    let v = daemon_client::get("/tools").await?;
+    Ok(v.as_array().cloned().unwrap_or_default())
 }
 
 // ===== Action 调用 =====
 
 #[tauri::command]
 pub async fn action_execute(id: String) -> Result<ToolResult, String> {
-    let output = silent_command("node")
-        .arg("dist/cli/agent-core.js")
-        .arg("action")
-        .arg(&id)
-        .current_dir(project_root())
-        .output()
-        .map_err(|e| format!("Failed to execute action: {}", e))?;
-    
-    if output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Ok(ToolResult { 
-            success: true, 
-            data: Some(serde_json::json!({ "output": stdout.to_string() })), 
-            error: None 
-        })
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Ok(ToolResult { success: false, data: None, error: Some(stderr.to_string()) })
+    match daemon_client::post(&format!("/action/{}", id), serde_json::json!({})).await {
+        Ok(data) => Ok(ToolResult { success: true, data: Some(data), error: None }),
+        Err(e) => Ok(ToolResult { success: false, data: None, error: Some(e) }),
     }
 }
 
 #[tauri::command]
 pub async fn action_list() -> Result<Vec<serde_json::Value>, String> {
-    let output = silent_command("node")
-        .arg("dist/cli/agent-core.js")
-        .arg("actions")
-        .current_dir(project_root())
-        .output()
-        .map_err(|e| format!("Failed to list actions: {}", e))?;
-    
-    if output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        Ok(vec![serde_json::json!({ "output": stdout.to_string() })])
-    } else {
-        Err("Failed to list actions".to_string())
-    }
+    let v = daemon_client::get("/actions").await?;
+    Ok(v.as_array().cloned().unwrap_or_default())
 }
 
 // ===== Memory 操作 =====
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct MemoryEntry {
-    pub id: String,
-    pub r#type: String,
-    pub content: String,
-    pub tags: Vec<String>,
-    pub importance: i32,
-    pub created_at: String,
-}
 
 #[tauri::command]
 pub async fn memory_add(
@@ -167,46 +101,20 @@ pub async fn memory_add(
     content: String,
     tags: Vec<String>,
     importance: i32,
-) -> Result<MemoryEntry, String> {
-    let output = silent_command("node")
-        .arg("dist/cli/agent-core.js")
-        .arg("memory")
-        .arg("add")
-        .arg(&r#type)
-        .arg(&content)
-        .arg(tags.join(","))
-        .arg(importance.to_string())
-        .current_dir(project_root())
-        .output()
-        .map_err(|e| format!("Failed to add memory: {}", e))?;
-    
-    if output.status.success() {
-        Ok(MemoryEntry {
-            id: format!("mem_{}", chrono::Utc::now().timestamp_millis()),
-            r#type,
-            content,
-            tags,
-            importance,
-            created_at: chrono::Utc::now().to_rfc3339(),
-        })
-    } else {
-        Err("Failed to add memory".to_string())
-    }
+) -> Result<serde_json::Value, String> {
+    let body = serde_json::json!({
+        "type": r#type,
+        "content": content,
+        "tags": tags,
+        "importance": importance,
+    });
+    daemon_client::post("/memory", body).await
 }
 
 #[tauri::command]
-pub async fn memory_list() -> Result<Vec<MemoryEntry>, String> {
-    // 读取内存文件
-    let memory_file = std::path::Path::new(".jarvis/memory/memories.json");
-    if memory_file.exists() {
-        let content = std::fs::read_to_string(memory_file)
-            .map_err(|e| format!("Failed to read memory: {}", e))?;
-        let entries: Vec<MemoryEntry> = serde_json::from_str(&content)
-            .map_err(|e| format!("Failed to parse memory: {}", e))?;
-        Ok(entries)
-    } else {
-        Ok(vec![])
-    }
+pub async fn memory_list() -> Result<Vec<serde_json::Value>, String> {
+    let v = daemon_client::get("/memory").await?;
+    Ok(v.as_array().cloned().unwrap_or_default())
 }
 
 // ===== Agent 状态 =====
@@ -220,30 +128,11 @@ pub struct AgentState {
 
 #[tauri::command]
 pub async fn agent_get_state() -> Result<AgentState, String> {
-    let output = silent_command("node")
-        .arg("dist/cli/agent-core.js")
-        .arg("state")
-        .current_dir(project_root())
-        .output()
-        .map_err(|e| format!("Failed to get state: {}", e))?;
-    
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    
-    // 解析状态输出
-    let state = if stdout.contains("thinking") {
-        "thinking"
-    } else if stdout.contains("working") {
-        "working"
-    } else if stdout.contains("notifying") {
-        "notifying"
-    } else {
-        "idle"
-    };
-    
+    let v = daemon_client::get("/state").await?;
     Ok(AgentState {
-        state: state.to_string(),
-        duration: 0,
-        history_count: 0,
+        state: v.get("current").and_then(|x| x.as_str()).unwrap_or("idle").to_string(),
+        duration: v.get("duration").and_then(|x| x.as_u64()).unwrap_or(0),
+        history_count: v.get("historyCount").and_then(|x| x.as_u64()).unwrap_or(0) as usize,
     })
 }
 
@@ -251,31 +140,23 @@ pub async fn agent_get_state() -> Result<AgentState, String> {
 
 #[tauri::command]
 pub async fn scheduler_start() -> Result<(), String> {
-    // 启动调度器（在后台运行）
-    std::thread::spawn(|| {
-        let _ = silent_command("node")
-            .arg("dist/cli/agent-core.js")
-            .arg("start")
-            .current_dir(project_root())
-            .spawn();
-    });
-    
+    daemon_client::post("/scheduler/start", serde_json::json!({})).await?;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn scheduler_status() -> Result<serde_json::Value, String> {
-    let output = silent_command("node")
-        .arg("dist/cli/agent-core.js")
-        .arg("scheduler")
-        .current_dir(project_root())
-        .output()
-        .map_err(|e| format!("Failed to get scheduler status: {}", e))?;
-    
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let v = daemon_client::get("/scheduler").await?;
+    // 兼容老前端约定：top-level 暴露 running 字段
+    let running = v
+        .get("status")
+        .and_then(|s| s.get("running"))
+        .and_then(|r| r.as_bool())
+        .unwrap_or(false);
     Ok(serde_json::json!({
-        "output": stdout.to_string(),
-        "running": stdout.contains("运行中: true")
+        "running": running,
+        "status": v.get("status").cloned().unwrap_or(serde_json::Value::Null),
+        "tasks": v.get("tasks").cloned().unwrap_or(serde_json::Value::Array(vec![])),
     }))
 }
 
@@ -283,15 +164,8 @@ pub async fn scheduler_status() -> Result<serde_json::Value, String> {
 
 #[tauri::command]
 pub async fn context_build() -> Result<String, String> {
-    let output = silent_command("node")
-        .arg("dist/cli/agent-core.js")
-        .arg("context")
-        .current_dir(project_root())
-        .output()
-        .map_err(|e| format!("Failed to build context: {}", e))?;
-    
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(stdout.to_string())
+    let v = daemon_client::get("/context").await?;
+    Ok(v.get("prompt").and_then(|p| p.as_str()).unwrap_or("").to_string())
 }
 
 // ===== 用户配置 =====
@@ -458,58 +332,19 @@ fn read_dotenv_value(root: &PathBuf, key: &str) -> Option<String> {
 
 #[tauri::command]
 pub async fn fetch_task_alerts() -> Result<Vec<TaskAlert>, String> {
-    // 找到项目根目录（agent-core.js 所在位置）
     let root = project_root();
 
     // 读取 .env 里的 ZENTAO_ACCOUNT，用作"只看我自己"的过滤条件
-    // 注意：Rust 端不自动加载 .env，需要手动读
     let me = read_dotenv_value(&root, "ZENTAO_ACCOUNT")
         .or_else(|| std::env::var("ZENTAO_ACCOUNT").ok())
         .unwrap_or_default();
 
-    // 调用 agent-core 获取全部任务（用线程 + mpsc 实现 30 秒超时）
-    let root_clone = root.clone();
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let result = silent_command("node")
-            .arg("dist/cli/agent-core.js")
-            .arg("tool")
-            .arg("get_tasks")
-            .arg("{}")
-            .current_dir(&root_clone)
-            .output();
-        let _ = tx.send(result);
-    });
-
-    let output = match rx.recv_timeout(std::time::Duration::from_secs(30)) {
-        Ok(Ok(o)) => o,
-        Ok(Err(e)) => {
-            let msg = format!("agent-core 调用失败: {}", e);
-            eprintln!("[fetch_task_alerts] {} (cwd: {:?})", msg, root);
-            return Err(msg);
-        }
-        Err(_) => {
-            let msg = "agent-core 30 秒内未返回（可能 Node 进程未退出或网络阻塞）".to_string();
-            eprintln!("[fetch_task_alerts] {}", msg);
-            return Err(msg);
-        }
-    };
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        eprintln!("[fetch_task_alerts] 工具执行失败: {}", stderr);
-        // 取最后几行 stderr 作为错误信息
-        let tail = stderr.lines().rev().take(3).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(" | ");
-        return Err(format!("agent-core 返回错误: {}", if tail.is_empty() { "未知错误".to_string() } else { tail }));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let parsed: serde_json::Value = match serde_json::from_str(&stdout) {
+    // 通过守护进程调 get_tasks（daemon 内部 60s 超时；reqwest client 也是 60s）
+    let parsed = match daemon_client::post("/tool/get_tasks", serde_json::json!({})).await {
         Ok(v) => v,
         Err(e) => {
-            let msg = format!("禅道返回不是合法 JSON: {}", e);
-            eprintln!("[fetch_task_alerts] {}", msg);
-            return Err(msg);
+            eprintln!("[fetch_task_alerts] daemon call failed: {}", e);
+            return Err(e);
         }
     };
 
@@ -518,8 +353,6 @@ pub async fn fetch_task_alerts() -> Result<Vec<TaskAlert>, String> {
         arr.clone()
     } else if let Some(arr) = parsed.get("tasks").and_then(|v| v.as_array()) {
         arr.clone()
-    } else if let Some(output_str) = parsed.get("output").and_then(|v| v.as_str()) {
-        serde_json::from_str(output_str).unwrap_or_default()
     } else {
         vec![]
     };
@@ -660,29 +493,39 @@ pub struct ProactiveReminder {
 
 #[tauri::command]
 pub async fn get_proactive_reminders() -> Result<Vec<ProactiveReminder>, String> {
-    // 尝试获取今日任务
-    let output = silent_command("node")
-        .arg("dist/cli/agent-core.js")
-        .arg("action")
-        .arg("get_today_tasks")
-        .current_dir(project_root())
-        .output();
-
     let mut reminders = vec![];
 
-    if let Ok(output) = output {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        
-        // 解析任务数量，生成提醒
-        if stdout.contains("延期") || stdout.contains("逾期") {
+    // 通过守护进程跑 action；失败也降级到空列表（前端会回退到本地模拟）
+    let result = daemon_client::post("/action/get_today_tasks", serde_json::json!({})).await;
+    if let Ok(v) = result {
+        // 老版本基于 stdout 字符串扫"延期/逾期/截止/今天"。新版本拿到 ActionResult
+        // 里 stepResults 的 JSON，里面就是任务列表，做语义判断更准。
+        let mut has_overdue = false;
+        let mut has_today = false;
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        // 钻进 stepResults[*].result 找任意数组
+        if let Some(steps) = v.get("stepResults").and_then(|x| x.as_array()) {
+            for step in steps {
+                let arr = step.get("result").and_then(|r| r.as_array());
+                if let Some(arr) = arr {
+                    for task in arr {
+                        let deadline = task.get("deadline").and_then(|d| d.as_str()).unwrap_or("");
+                        if deadline.len() < 10 { continue; }
+                        let dl = &deadline[..10];
+                        if dl < today.as_str() { has_overdue = true; }
+                        else if dl == today.as_str() { has_today = true; }
+                    }
+                }
+            }
+        }
+        if has_overdue {
             reminders.push(ProactiveReminder {
                 text: "⚠️ 有任务已延期，建议优先处理".to_string(),
                 emoji: "🔥".to_string(),
                 state: "warning".to_string(),
             });
         }
-        
-        if stdout.contains("截止") || stdout.contains("今天") {
+        if has_today {
             reminders.push(ProactiveReminder {
                 text: "⏰ 今天有任务即将截止".to_string(),
                 emoji: "📌".to_string(),
@@ -691,7 +534,6 @@ pub async fn get_proactive_reminders() -> Result<Vec<ProactiveReminder>, String>
         }
     }
 
-    // 如果没有任何提醒，返回空数组（前端会降级到本地模拟）
     Ok(reminders)
 }
 
@@ -709,26 +551,27 @@ pub struct GitInfo {
 
 #[tauri::command]
 pub async fn git_info() -> Result<GitInfo, String> {
-    let output = silent_command("node")
-        .arg("dist/cli/agent-core.js")
-        .arg("git")
-        .current_dir(project_root())
-        .output()
-        .map_err(|e| format!("Failed to get git info: {}", e))?;
-    
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    
-    if stdout.contains("不是 Git 仓库") {
+    let v = daemon_client::get("/git").await?;
+    if v.get("isRepo").and_then(|x| x.as_bool()) != Some(true) {
         return Err("Not a git repository".to_string());
     }
-    
-    // 简化解析
+
+    let info = v.get("info").cloned().unwrap_or(serde_json::Value::Null);
+    let status = v.get("status").cloned().unwrap_or(serde_json::Value::Null);
+
+    let str_array = |v: &serde_json::Value, key: &str| -> Vec<String> {
+        v.get(key)
+            .and_then(|x| x.as_array())
+            .map(|a| a.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+            .unwrap_or_default()
+    };
+
     Ok(GitInfo {
-        branch: "main".to_string(),
-        commit_count: 0,
-        remote_url: None,
-        modified: vec![],
-        added: vec![],
-        untracked: vec![],
+        branch: info.get("branch").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+        commit_count: info.get("commitCount").and_then(|x| x.as_i64()).unwrap_or(0) as i32,
+        remote_url: info.get("remoteUrl").and_then(|x| x.as_str()).map(String::from),
+        modified: str_array(&status, "modified"),
+        added: str_array(&status, "added"),
+        untracked: str_array(&status, "untracked"),
     })
 }
