@@ -196,6 +196,7 @@ export const useAppStore = defineStore('app', () => {
     repoName: string
     matchType: 'exact' | 'soft'
     matchedKeywords?: string[]
+    effort: number
   }
 
   /** taskId → 该任务关联的 commit 列表 */
@@ -343,12 +344,14 @@ export interface DailyReviewData {
     commitCount: number
     commits: CommitLink[]
     businessLine: string
+    effort: number
     suggestedHours?: number
   }>
   byBusinessLine: Array<{
     businessLine: string
     commits: CommitLink[]
     tasks: Array<{ taskId: string; taskName: string }>
+    effort: number
     suggestedHours?: number
   }>
   needsStatusUpdate: Array<{

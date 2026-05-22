@@ -15,6 +15,8 @@ export interface AdvancedTask {
   commits: CommitLink[]
   /** 业务线 */
   businessLine: string
+  /** 工作量分数（该任务下所有 commit effort 之和，已去重 commit-sha） */
+  effort: number
   /** 建议工时（小时，四舍五入到 0.5）：业务线工时 / 该业务线任务数 */
   suggestedHours?: number
 }
@@ -24,7 +26,9 @@ export interface BusinessLineGroup {
   commits: CommitLink[]
   /** 这条业务线下涉及的任务（去重） */
   tasks: Array<{ taskId: string; taskName: string }>
-  /** 按 commit 比例估算的建议工时（小时，四舍五入到 0.5） */
+  /** 该业务线去重 commit 的 effort 总和；用于在多业务线之间按工作量分配工时 */
+  effort: number
+  /** 按 effort 比例估算的建议工时（小时，四舍五入到 0.5） */
   suggestedHours?: number
 }
 
@@ -109,11 +113,20 @@ export function buildDailyReview(
   for (const t of tasks) taskById.set(String(t.id), t)
 
   // ---- 推进的任务 ----
+  // 一个任务的 commits 可能横跨多个业务线（任务名同时命中多条业务线关键词），
+  // 这里把"主业务线"定为该任务下 commit 数最多的那条；effort 只算主业务线内的
+  // commit，避免跨业务线累加把这种任务挤到 effort 排行榜前列。
   const advancedTasks: AdvancedTask[] = linkResult.tasks
     .filter(t => t.commits.length > 0)
     .map(t => {
       const taskInfo = taskById.get(t.taskId)
-      const businessLine = t.commits[0]?.businessLine ?? ''
+      const blCount = new Map<string, number>()
+      for (const c of t.commits) blCount.set(c.businessLine, (blCount.get(c.businessLine) ?? 0) + 1)
+      const businessLine =
+        Array.from(blCount.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? ''
+      const effort = t.commits
+        .filter(c => c.businessLine === businessLine)
+        .reduce((s, c) => s + (c.effort ?? 1), 0)
       return {
         taskId: t.taskId,
         taskName: t.taskName,
@@ -121,21 +134,23 @@ export function buildDailyReview(
         commitCount: t.commits.length,
         commits: t.commits,
         businessLine,
+        effort,
       }
     })
-    .sort((a, b) => b.commitCount - a.commitCount)
+    .sort((a, b) => b.effort - a.effort)
 
   // ---- 按业务线分组 ----
   const byLineMap = new Map<string, BusinessLineGroup>()
   const collectCommit = (bl: string, c: CommitLink) => {
-    if (!byLineMap.has(bl)) byLineMap.set(bl, { businessLine: bl, commits: [], tasks: [] })
+    if (!byLineMap.has(bl)) byLineMap.set(bl, { businessLine: bl, commits: [], tasks: [], effort: 0 })
     const g = byLineMap.get(bl)!
     if (!g.commits.find(x => x.sha === c.sha && x.repoPath === c.repoPath)) {
       g.commits.push(c)
+      g.effort += c.effort ?? 1
     }
   }
   const collectTask = (bl: string, taskId: string, taskName: string) => {
-    if (!byLineMap.has(bl)) byLineMap.set(bl, { businessLine: bl, commits: [], tasks: [] })
+    if (!byLineMap.has(bl)) byLineMap.set(bl, { businessLine: bl, commits: [], tasks: [], effort: 0 })
     const g = byLineMap.get(bl)!
     if (!g.tasks.find(x => x.taskId === taskId)) {
       g.tasks.push({ taskId, taskName })
@@ -155,24 +170,23 @@ export function buildDailyReview(
       ...g,
       commits: g.commits.sort((a, b) => b.authoredDate.localeCompare(a.authoredDate)),
     }))
-    .sort((a, b) => b.commits.length - a.commits.length)
+    .sort((a, b) => b.effort - a.effort)
 
-  // ---- 按业务线分配建议工时 ----
+  // ---- 按业务线分配建议工时（按 effort 比例，不再按 commit 数）----
   // 排除孤儿业务线（如 my-mcp-servers），它不该占工时
   const linesWithTasks = byBusinessLine.filter(g => g.tasks.length > 0)
-  const totalCommitsForEstimate = linesWithTasks.reduce((s, g) => s + g.commits.length, 0)
-  if (hoursPerWorkDay > 0 && totalCommitsForEstimate > 0) {
+  const totalEffort = linesWithTasks.reduce((s, g) => s + g.effort, 0)
+  if (hoursPerWorkDay > 0 && totalEffort > 0) {
     for (const g of linesWithTasks) {
-      const raw = (g.commits.length / totalCommitsForEstimate) * hoursPerWorkDay
+      const raw = (g.effort / totalEffort) * hoursPerWorkDay
       g.suggestedHours = roundHalf(raw)
     }
-    // 按业务线把工时按 0.5h 粒度分配给任务（优先 commit 数多的）
+    // 业务线工时按 0.5h 粒度分到任务，优先 effort 高的
     for (const line of linesWithTasks) {
       if (!line.suggestedHours) continue
-      // 拿该业务线下的任务（按 commit 数倒序）
       const lineTasks = advancedTasks
         .filter(t => t.businessLine === line.businessLine)
-        .sort((a, b) => b.commitCount - a.commitCount)
+        .sort((a, b) => b.effort - a.effort)
       const allocations = allocateHoursBySlots(line.suggestedHours, lineTasks.length)
       lineTasks.forEach((t, i) => {
         t.suggestedHours = allocations[i]

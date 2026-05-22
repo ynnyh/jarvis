@@ -6,6 +6,7 @@ import {
   type RangePreset,
 } from '../mcp/tencentcode-client.js'
 import { aliasesFor, loadBusinessAliases, type BusinessAliases } from '../config/business-aliases.js'
+import { effortForCommit } from './commit-effort.js'
 
 // ===== 类型 =====
 
@@ -29,6 +30,8 @@ export interface CommitLink {
   matchType: MatchType
   /** 软关联的命中关键词；精确匹配时为空 */
   matchedKeywords?: string[]
+  /** 工作量分数；commit 没有 stat 时为 1。用于工时反推。 */
+  effort: number
 }
 
 export interface TaskCommitLinks {
@@ -184,6 +187,8 @@ export async function linkTasksWithCommits(
       until: options.until,
       rootDir: options.rootDir,
       includeBody: options.includeBody ?? true,
+      // 工时反推需要每文件的行数变更来排除生成/锁文件
+      includeStat: true,
     }),
     loadBusinessAliases(),
   ])
@@ -242,6 +247,7 @@ export async function linkTasksWithCommits(
     repoName: item.repoName,
     businessLine,
     matchType,
+    effort: effortForCommit(item.commit),
     ...(matchedKeywords ? { matchedKeywords } : {}),
   })
 
