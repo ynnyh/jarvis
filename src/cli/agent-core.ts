@@ -14,7 +14,6 @@ import { agentScheduler } from '../scheduler/agent-scheduler.js'
 import { contextBuilder } from '../ai/context-builder.js'
 import { agentState } from '../core/agent-state.js'
 import { GitProvider } from '../providers/git/git-provider.js'
-import { closeSharedTencentCodeMcpClient } from '../mcp/tencentcode-client.js'
 
 // 当作为 `tool` 命令运行时，stdout 需要保持为纯 JSON 给上游解析。
 // 因此事件监听器在 tool 模式下走 stderr，正常模式走 stdout。
@@ -205,8 +204,7 @@ async function main() {
   unsubscribeMessage()
   unsubscribeNotify()
 
-  // 关闭共享 MCP 子进程，避免 CLI 退出后留下僵尸 tencentcode-mcp 进程
-  await closeSharedTencentCodeMcpClient()
+  // git 扫描已内联到本进程，无须额外清理
 
   // 一次性命令完成后必须显式退出。
   // 否则 src/index.ts 注册的 agentScheduler 内部 setInterval 会让 Node 永远不退出，

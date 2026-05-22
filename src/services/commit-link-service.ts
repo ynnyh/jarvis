@@ -1,10 +1,10 @@
 import { basename } from 'path'
 import {
-  listMyLocalCommitsShared,
+  listMyLocalCommits,
   type ListMyLocalCommitsResult,
   type LocalCommit,
   type RangePreset,
-} from '../mcp/tencentcode-client.js'
+} from './local-git/index.js'
 import { aliasesFor, loadBusinessAliases, type BusinessAliases } from '../config/business-aliases.js'
 import { loadExcludedBusinessLines } from '../config/excluded-business-lines.js'
 import { effortForCommit } from './commit-effort.js'
@@ -182,7 +182,7 @@ export async function linkTasksWithCommits(
   const range: RangePreset = options.range ?? 'today'
 
   const [raw, aliases, excluded] = await Promise.all([
-    listMyLocalCommitsShared({
+    listMyLocalCommits({
       range,
       since: options.since,
       until: options.until,

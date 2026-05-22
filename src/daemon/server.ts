@@ -28,7 +28,6 @@ import { agentScheduler } from '../scheduler/agent-scheduler.js'
 import { contextBuilder } from '../ai/context-builder.js'
 import { agentState } from '../core/agent-state.js'
 import { GitProvider } from '../providers/git/git-provider.js'
-import { closeSharedTencentCodeMcpClient } from '../mcp/tencentcode-client.js'
 
 import {
   readDaemonInfo,
@@ -312,8 +311,7 @@ async function shutdown(reason: string): Promise<void> {
     server.close(() => resolve())
   })
 
-  // 关 MCP 子进程，避免泄漏 tencentcode-mcp
-  await closeSharedTencentCodeMcpClient().catch(() => {})
+  // git 扫描现在直接在本进程内运行，没有子进程要关
 
   // 5 秒兜底
   const timeout = new Promise<void>((resolve) => setTimeout(resolve, 5000))

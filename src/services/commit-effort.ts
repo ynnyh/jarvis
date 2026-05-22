@@ -1,4 +1,4 @@
-import type { LocalCommit } from '../mcp/tencentcode-client.js'
+import type { LocalCommit } from './local-git/index.js'
 
 /**
  * 判断一个路径是否属于"生成 / 锁文件"，不应计入工作量。
