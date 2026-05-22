@@ -25,6 +25,11 @@ export interface JarvisConfig {
     todayMode: 'normal' | 'overtime' | 'dayoff'
     todayModeSetOn: string   // YYYY-MM-DD
   }
+  zentao: {
+    baseUrl: string           // 如 http://zentao.example.com:9538/zentao
+    account: string           // 用户的禅道账号；密码在 OS 密钥链里，不存这里
+  }
+  repoRoots: string[]         // 扫描 git 提交的本地代码根目录列表
 }
 
 const defaultConfig = (): JarvisConfig => ({
@@ -47,6 +52,8 @@ const defaultConfig = (): JarvisConfig => ({
     todayMode: 'normal',
     todayModeSetOn: '',
   },
+  zentao: { baseUrl: '', account: '' },
+  repoRoots: [],
 })
 
 function todayStr(): string {

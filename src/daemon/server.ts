@@ -28,6 +28,7 @@ import { agentScheduler } from '../scheduler/agent-scheduler.js'
 import { contextBuilder } from '../ai/context-builder.js'
 import { agentState } from '../core/agent-state.js'
 import { GitProvider } from '../providers/git/git-provider.js'
+import { reloadSettings, settingsFilePath } from '../config/settings.js'
 
 import {
   readDaemonInfo,
@@ -143,6 +144,12 @@ GET('/git', async () => {
 
 GET('/memory', async (_req, _body) => memoryStore.query({}))
 POST('/memory', async (_req, body) => memoryStore.add(body))
+
+// 设置改动后由 Tauri config_save 调用，让 daemon 内的缓存失效。
+POST('/settings/reload', async () => {
+  const s = reloadSettings()
+  return { ok: true, file: settingsFilePath(), hasZentao: !!s.zentao.baseUrl, repoRoots: s.repoRoots.length }
+})
 
 // ===== HTTP 处理 =====
 

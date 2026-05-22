@@ -203,7 +203,14 @@ fn default_config() -> serde_json::Value {
         "override": {
             "todayMode": "normal",                // normal | overtime | dayoff
             "todayModeSetOn": ""                  // 日期，仅当天有效
-        }
+        },
+        // 禅道连接信息。密码不在这里，单独存到 OS 密钥链（task #12）
+        "zentao": {
+            "baseUrl": "",                         // 如 http://zentao.example.com:9538/zentao
+            "account": ""                          // 同事的禅道账号名
+        },
+        // 本地代码根目录列表，用于扫描 git 提交。同事电脑可能放在 D:/work、C:/projects 等
+        "repoRoots": []
     })
 }
 
@@ -236,7 +243,7 @@ pub fn config_load() -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-pub fn config_save(config: serde_json::Value) -> Result<(), String> {
+pub async fn config_save(config: serde_json::Value) -> Result<(), String> {
     let dir = jarvis_dir();
     std::fs::create_dir_all(&dir)
         .map_err(|e| format!("创建配置目录失败: {}", e))?;
@@ -245,6 +252,9 @@ pub fn config_save(config: serde_json::Value) -> Result<(), String> {
         .map_err(|e| format!("配置序列化失败: {}", e))?;
     std::fs::write(&path, content)
         .map_err(|e| format!("写入配置失败: {}", e))?;
+
+    // 通知守护进程刷新缓存。失败不影响保存本身（daemon 可能还没启动）。
+    let _ = daemon_client::post("/settings/reload", serde_json::json!({})).await;
     Ok(())
 }
 
