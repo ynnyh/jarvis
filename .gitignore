@@ -9,6 +9,8 @@ build-out/
 src-tauri/target/
 src-tauri/build-out/
 src-tauri/gen/schemas/
+# 打包资源（node.exe ~66MB + daemon.mjs 由 desktop:prebuild 生成，不入库）
+src-tauri/bundled/
 
 # 凭据 / 用户私有配置（含禅道账号密码、工蜂 token）
 .env

@@ -16,7 +16,12 @@
     "daemon:dev": "tsx src/daemon/server.ts",
     "typecheck": "tsc --noEmit",
     "desktop:dev": "node scripts/dev.mjs",
-    "desktop:build": "tauri build"
+    "desktop:bundle-daemon": "tsc && node scripts/bundle-daemon.mjs",
+    "desktop:fetch-node": "node scripts/fetch-node.mjs",
+    "desktop:prebuild": "npm run desktop:bundle-daemon && npm run desktop:fetch-node",
+    "desktop:build": "npm run desktop:prebuild && tauri build",
+    "desktop:build-binary": "npm run desktop:prebuild && tauri build --no-bundle",
+    "desktop:portable": "npm run desktop:build-binary && node scripts/portable-zip.mjs"
   },
   "keywords": [
     "ai",
@@ -32,6 +37,7 @@
     "@types/node": "^25.7.0",
     "commander": "^14.0.3",
     "dotenv": "^17.4.2",
+    "esbuild": "^0.28.0",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3"
   },

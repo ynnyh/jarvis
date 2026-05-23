@@ -64,6 +64,64 @@ fn project_root() -> PathBuf {
     }
 }
 
+/// 解析 daemon 启动用的 node 可执行文件 + 入口脚本路径。
+///
+/// 决策优先级（先匹配的胜出）：
+/// 1. **生产**：exe 同级 `resources/bundled/{node.exe, daemon.mjs}` 全在 → 用打包资源
+/// 2. **生产 mac**：`<exe_dir>/../Resources/bundled/...`
+/// 3. **dev**：项目根 `dist/daemon/server.js` 存在 → 系统 node 跑它（开发改完 src 立刻生效）
+/// 4. **dev 兜底**：项目根 `src-tauri/bundled/...`（手动跑过 prebuild 的情况）
+/// 5. **最后兜底**：系统 node + `dist/daemon/server.js`（即便不存在也让 spawn 失败而不是 panic）
+fn resolve_daemon_launch() -> (PathBuf, PathBuf, PathBuf) {
+    let exe = std::env::current_exe().ok();
+    let exe_dir = exe.as_ref().and_then(|p| p.parent()).map(PathBuf::from);
+    let root = project_root();
+    let node_bin_name = if cfg!(windows) { "node.exe" } else { "node" };
+
+    // 生产候选：必须 node + daemon 都齐全才认
+    let prod_candidates: Vec<PathBuf> = exe_dir
+        .iter()
+        .flat_map(|d| {
+            let mut v = vec![d.join("resources").join("bundled")];
+            if let Some(parent) = d.parent() {
+                v.push(parent.join("Resources").join("bundled"));
+            }
+            v.push(d.join("bundled"));
+            v
+        })
+        .collect();
+
+    for dir in &prod_candidates {
+        let node = dir.join(node_bin_name);
+        let script = dir.join("daemon.mjs");
+        if node.exists() && script.exists() {
+            let workdir = exe_dir.clone().unwrap_or_else(|| root.clone());
+            return (node, script, workdir);
+        }
+    }
+
+    // dev：优先 dist/daemon/server.js（每次 tsc 都会刷新）
+    let dev_script = root.join("dist").join("daemon").join("server.js");
+    if dev_script.exists() {
+        return (PathBuf::from("node"), dev_script, root);
+    }
+
+    // dev 二号候选：手动 prebuild 过的 src-tauri/bundled/
+    let dev_bundled = root.join("src-tauri").join("bundled");
+    let dev_node = dev_bundled.join(node_bin_name);
+    let dev_bundled_script = dev_bundled.join("daemon.mjs");
+    if dev_node.exists() && dev_bundled_script.exists() {
+        return (dev_node, dev_bundled_script, root);
+    }
+
+    // 完全兜底：让 spawn 自然失败给出明确错误
+    (
+        PathBuf::from("node"),
+        root.join("dist").join("daemon").join("server.js"),
+        root,
+    )
+}
+
 fn read_info() -> Option<DaemonInfo> {
     let path = daemon_info_path();
     if !path.exists() {
@@ -127,19 +185,23 @@ fn read_password_from_keychain() -> Option<String> {
 }
 
 #[cfg(windows)]
-fn spawn_daemon(root: &PathBuf) -> std::io::Result<()> {
+fn spawn_daemon() -> std::io::Result<()> {
     use std::os::windows::process::CommandExt;
+    let (node, script, workdir) = resolve_daemon_launch();
+    eprintln!(
+        "[daemon] spawning: {} {} (cwd: {})",
+        node.display(),
+        script.display(),
+        workdir.display()
+    );
     // DETACHED_PROCESS (0x00000008) | CREATE_NO_WINDOW (0x08000000)
-    // Detached so daemon outlives Tauri if we crash.
-    let mut cmd = std::process::Command::new("node");
-    cmd.arg("dist/daemon/server.js")
-        .current_dir(root)
+    let mut cmd = std::process::Command::new(&node);
+    cmd.arg(&script)
+        .current_dir(&workdir)
         .creation_flags(0x00000008 | 0x08000000)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    // 把密码作为 env 一次性传给 daemon，磁盘上没有明文。daemon 启动后通过
-    // process.env.ZENTAO_PASSWORD 拿到，存在内存里直到进程结束。
     if let Some(pwd) = read_password_from_keychain() {
         cmd.env("ZENTAO_PASSWORD", pwd);
     }
@@ -148,10 +210,17 @@ fn spawn_daemon(root: &PathBuf) -> std::io::Result<()> {
 }
 
 #[cfg(not(windows))]
-fn spawn_daemon(root: &PathBuf) -> std::io::Result<()> {
-    let mut cmd = std::process::Command::new("node");
-    cmd.arg("dist/daemon/server.js")
-        .current_dir(root)
+fn spawn_daemon() -> std::io::Result<()> {
+    let (node, script, workdir) = resolve_daemon_launch();
+    eprintln!(
+        "[daemon] spawning: {} {} (cwd: {})",
+        node.display(),
+        script.display(),
+        workdir.display()
+    );
+    let mut cmd = std::process::Command::new(&node);
+    cmd.arg(&script)
+        .current_dir(&workdir)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
@@ -182,8 +251,7 @@ pub async fn ensure_running() -> Result<DaemonInfo, String> {
         }
     }
 
-    let root = project_root();
-    spawn_daemon(&root).map_err(|e| format!("failed to spawn daemon: {}", e))?;
+    spawn_daemon().map_err(|e| format!("failed to spawn daemon: {}", e))?;
 
     // Poll for readiness up to 15 seconds.
     let deadline = std::time::Instant::now() + Duration::from_secs(15);
