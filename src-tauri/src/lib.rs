@@ -1,4 +1,5 @@
 mod commands;
+mod credentials;
 mod daemon_client;
 
 use tauri::Manager;
@@ -111,6 +112,10 @@ pub fn run() {
             commands::toggle_avatar_window,
             commands::config_load,
             commands::config_save,
+            credentials::credentials_set,
+            credentials::credentials_get,
+            credentials::credentials_delete,
+            credentials::zentao_test_connection,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

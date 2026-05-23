@@ -107,31 +107,58 @@ async fn probe_health(info: &DaemonInfo) -> bool {
     matches!(resp, Ok(r) if r.status().is_success())
 }
 
+/// 从 settings.json 读取禅道账号（用作 keychain 的 key）
+fn read_zentao_account() -> Option<String> {
+    let cfg_path = jarvis_dir().join("config.json");
+    let raw = std::fs::read_to_string(cfg_path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    v.get("zentao")
+        .and_then(|z| z.get("account"))
+        .and_then(|a| a.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.to_string())
+}
+
+/// 从 keychain 取密码（账号从 settings 拿）。失败/缺失返回 None，让 daemon 自然降级。
+fn read_password_from_keychain() -> Option<String> {
+    let account = read_zentao_account()?;
+    let entry = keyring::Entry::new("Jarvis", &account).ok()?;
+    entry.get_password().ok()
+}
+
 #[cfg(windows)]
 fn spawn_daemon(root: &PathBuf) -> std::io::Result<()> {
     use std::os::windows::process::CommandExt;
     // DETACHED_PROCESS (0x00000008) | CREATE_NO_WINDOW (0x08000000)
     // Detached so daemon outlives Tauri if we crash.
-    std::process::Command::new("node")
-        .arg("dist/daemon/server.js")
+    let mut cmd = std::process::Command::new("node");
+    cmd.arg("dist/daemon/server.js")
         .current_dir(root)
         .creation_flags(0x00000008 | 0x08000000)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()?;
+        .stderr(std::process::Stdio::null());
+    // 把密码作为 env 一次性传给 daemon，磁盘上没有明文。daemon 启动后通过
+    // process.env.ZENTAO_PASSWORD 拿到，存在内存里直到进程结束。
+    if let Some(pwd) = read_password_from_keychain() {
+        cmd.env("ZENTAO_PASSWORD", pwd);
+    }
+    cmd.spawn()?;
     Ok(())
 }
 
 #[cfg(not(windows))]
 fn spawn_daemon(root: &PathBuf) -> std::io::Result<()> {
-    std::process::Command::new("node")
-        .arg("dist/daemon/server.js")
+    let mut cmd = std::process::Command::new("node");
+    cmd.arg("dist/daemon/server.js")
         .current_dir(root)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()?;
+        .stderr(std::process::Stdio::null());
+    if let Some(pwd) = read_password_from_keychain() {
+        cmd.env("ZENTAO_PASSWORD", pwd);
+    }
+    cmd.spawn()?;
     Ok(())
 }
 
