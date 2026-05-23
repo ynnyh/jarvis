@@ -31,7 +31,10 @@ export function useCursorPassthrough() {
       await win.setIgnoreCursorEvents(value)
       isIgnoring = value
     } catch (e) {
-      // 在某些非桌面平台上会失败，忽略
+      // 历史教训：这里被静默吞过 —— 当时 capabilities/default.json 漏了
+      // core:window:allow-set-ignore-cursor-events，整套穿透逻辑全部失效但
+      // 看上去毫无报错。出问题要 console 报，别再让人查半天死角。
+      console.error('[passthrough] setIgnoreCursorEvents 失败：', e)
     }
   }
 
