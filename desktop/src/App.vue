@@ -9,6 +9,7 @@ import { useDailyReview } from './composables/useDailyReview'
 import { useEveningReminder } from './composables/useEveningReminder'
 import { useWorkdayNudges } from './composables/useWorkdayNudges'
 import { useCursorPassthrough } from './composables/useCursorPassthrough'
+import { useUpdater } from './composables/useUpdater'
 import TaskWindow from './components/TaskWindow.vue'
 import SettingsWindow from './components/SettingsWindow.vue'
 import RiskWindow from './components/RiskWindow.vue'
@@ -35,6 +36,27 @@ useWorkdayNudges({
   },
 })
 useCursorPassthrough()
+
+const updater = useUpdater({
+  onAvailable: (version) => {
+    // 新版本到位，挂常驻气泡（duration=0），用户点了才安装
+    showAlert(`新版本 v${version} 可用，点这里更新`, '✨', 'happy', 0)
+  },
+})
+updater.start()
+
+async function installUpdate() {
+  if (!updater.available.value) {
+    // 没现成的就立刻查一次
+    const found = await updater.checkNow()
+    if (!found) {
+      showAlert('当前已是最新版本', '✓', 'happy', 4000)
+      return
+    }
+  }
+  showAlert('正在下载更新…', '⬇️', 'thinking', 0)
+  await updater.installAndRestart()
+}
 
 type JarvisState = 'idle' | 'thinking' | 'working' | 'warning' | 'happy'
 
@@ -155,6 +177,11 @@ function menuShowSettings() {
   configStore.showSettingsWindow = true
 }
 
+function menuCheckUpdate() {
+  showMenu.value = false
+  installUpdate()
+}
+
 // --- 拖拽 + 点击 ---
 let mouseDownTime = 0
 let mouseDownX = 0
@@ -270,6 +297,10 @@ onUnmounted(() => {
       <button class="menu-item" @click="menuShowRisk"><span>⚠️</span><span>风险分析</span></button>
       <button class="menu-item" @click="menuShowReview"><span>📋</span><span>今日复盘</span></button>
       <button class="menu-item" @click="menuShowSettings"><span>⚙️</span><span>设置</span></button>
+      <button class="menu-item" @click="menuCheckUpdate">
+        <span>✨</span><span>检查更新</span>
+        <span v-if="updater.available.value" class="menu-badge badge-soon">新</span>
+      </button>
       <div class="menu-divider" />
       <button class="menu-item menu-item-danger" @click="menuQuit"><span>🚪</span><span>退出 Jarvis</span></button>
     </div>

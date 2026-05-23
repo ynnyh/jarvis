@@ -12,6 +12,8 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // ===== 系统托盘 =====
             let show_i = MenuItem::with_id(app, "tray_show", "显示小人", true, None::<&str>)?;
@@ -62,12 +64,14 @@ pub fn run() {
 
             // ===== 小人窗口初始化 =====
             if let Some(window) = app.get_webview_window("avatar") {
-                // 设置窗口大小
-                let window_width = 300u32;
-                let window_height = 400u32;
-                let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
-                    width: window_width,
-                    height: window_height,
+                // 用 Logical 尺寸：CSS 拿到的就是这个数，跟 Windows 缩放无关。
+                // 历史教训：之前用 Physical(300,400)，在 150% 缩放显示器（2K 笔记本默认）
+                // 上 CSS 只剩 200×267，所有 panel 全挤爆 / 标题换行。
+                let logical_w: f64 = 400.0;
+                let logical_h: f64 = 560.0;
+                let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize {
+                    width: logical_w,
+                    height: logical_h,
                 }));
 
                 // 获取主显示器信息并设置位置到右下角
@@ -78,11 +82,17 @@ pub fn run() {
                 if let Some(monitor) = monitor {
                     let monitor_size = monitor.size();
                     let monitor_position = monitor.position();
+                    let scale = window.scale_factor().unwrap_or(1.0);
 
-                    let x = monitor_position.x + monitor_size.width as i32 - window_width as i32 - 20;
-                    // 减去 Windows 任务栏高度 (约 40px) 确保不被遮挡
-                    let taskbar_height = 40i32;
-                    let y = monitor_position.y + monitor_size.height as i32 - window_height as i32 - 20 - taskbar_height;
+                    // monitor 返回的是 physical 坐标，窗口实际物理像素 = logical × scale
+                    let physical_w = (logical_w * scale) as i32;
+                    let physical_h = (logical_h * scale) as i32;
+                    let margin = (20.0 * scale) as i32;
+                    // Windows 任务栏在 150% 缩放下 ~60px，统一用 logical 50px 兜底
+                    let taskbar = (50.0 * scale) as i32;
+
+                    let x = monitor_position.x + monitor_size.width as i32 - physical_w - margin;
+                    let y = monitor_position.y + monitor_size.height as i32 - physical_h - margin - taskbar;
 
                     let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }));
                 }

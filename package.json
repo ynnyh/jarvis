@@ -45,6 +45,8 @@
     "@tailwindcss/postcss": "^4.3.0",
     "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/plugin-notification": "^2.3.3",
+    "@tauri-apps/plugin-updater": "^2.5.0",
+    "@tauri-apps/plugin-process": "^2.3.0",
     "@vitejs/plugin-vue": "^6.0.6",
     "autoprefixer": "^10.5.0",
     "axios": "^1.16.1",

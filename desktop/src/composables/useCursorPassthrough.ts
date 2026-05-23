@@ -20,7 +20,7 @@ import { invoke } from '@tauri-apps/api/core'
  *
  * 标记可交互元素：在 root 元素（小人、菜单、气泡、各 panel）上加 class="pointer-target"。
  */
-const POLL_INTERVAL = 80
+const POLL_INTERVAL = 120
 const SELECTOR = '.pointer-target'
 
 export function useCursorPassthrough() {

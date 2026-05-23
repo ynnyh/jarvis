@@ -8,8 +8,9 @@
 //   4. 选代码文件夹（可多选）
 //   5. 完成（写 settings + 保存密码到密钥链）
 
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { getCurrentWindow, LogicalSize, LogicalPosition } from '@tauri-apps/api/window'
 import { useConfigStore } from '../stores/config'
 import { normalizeZentaoBaseUrl } from '../composables/zentaoUrl'
 
@@ -18,6 +19,58 @@ const emit = defineEmits<{
 }>()
 
 const store = useConfigStore()
+
+// 小人窗口固定 300×400，但 wizard 内容设计宽度 480。直接渲染会被挤成多行/竖排按钮。
+// 进入 wizard 时临时把窗口放大居中，结束时恢复原尺寸/位置（小人贴回桌面右下角）。
+const WIZARD_W = 500
+const WIZARD_H = 620
+let savedSize: { width: number; height: number } | null = null
+let savedPos: { x: number; y: number } | null = null
+
+async function enterWizardMode() {
+  const win = getCurrentWindow()
+  try {
+    const scale = await win.scaleFactor()
+    const outerSize = await win.outerSize()
+    const outerPos = await win.outerPosition()
+    savedSize = {
+      width: Math.round(outerSize.width / scale),
+      height: Math.round(outerSize.height / scale),
+    }
+    savedPos = {
+      x: Math.round(outerPos.x / scale),
+      y: Math.round(outerPos.y / scale),
+    }
+    await win.setSize(new LogicalSize(WIZARD_W, WIZARD_H))
+    const monitor = await win.currentMonitor()
+    if (monitor) {
+      const monW = monitor.size.width / scale
+      const monH = monitor.size.height / scale
+      const cx = Math.round((monW - WIZARD_W) / 2)
+      const cy = Math.round((monH - WIZARD_H) / 2)
+      await win.setPosition(new LogicalPosition(cx, cy))
+    }
+  } catch (e) {
+    console.error('[wizard] 放大窗口失败:', e)
+  }
+}
+
+async function exitWizardMode() {
+  if (!savedSize) return
+  const win = getCurrentWindow()
+  try {
+    await win.setSize(new LogicalSize(savedSize.width, savedSize.height))
+    if (savedPos) await win.setPosition(new LogicalPosition(savedPos.x, savedPos.y))
+  } catch (e) {
+    console.error('[wizard] 恢复窗口失败:', e)
+  } finally {
+    savedSize = null
+    savedPos = null
+  }
+}
+
+onMounted(enterWizardMode)
+onUnmounted(exitWizardMode)
 
 const step = ref(1)
 const totalSteps = 5
@@ -103,7 +156,7 @@ function prev() { if (step.value > 1) step.value-- }
 </script>
 
 <template>
-  <div class="wizard-overlay">
+  <div class="wizard-overlay pointer-target">
     <div class="wizard">
       <header class="wizard-header">
         <div class="wizard-title">
