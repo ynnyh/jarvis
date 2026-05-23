@@ -6,6 +6,7 @@ import {
   sendNotification,
 } from '@tauri-apps/plugin-notification'
 import { useAppStore } from '../stores/app'
+import { useConfigStore } from '../stores/config'
 
 interface TaskAlertRaw {
   id: string
@@ -42,11 +43,21 @@ async function ensureNotificationPermission(): Promise<boolean> {
 
 export function useTaskAlerts() {
   const store = useAppStore()
+  const configStore = useConfigStore()
   let timer: ReturnType<typeof setInterval> | null = null
   let permissionGranted = false
   let isFirstFetch = true
 
+  // 配置未完成（首启 wizard 路径 / 用户清空了凭据）时不发请求 —— 否则 daemon
+  // 会拿着空账号空密码去调禅道，必然认证失败，UI 会被红色错误状态污染。
+  function isConfigReady(): boolean {
+    if (!configStore.loaded) return false
+    const z = configStore.config.zentao
+    return !!(z.baseUrl?.trim() && z.account?.trim())
+  }
+
   async function fetchAlerts() {
+    if (!isConfigReady()) return
     try {
       const alerts = await invoke<TaskAlertRaw[]>('fetch_task_alerts')
       const mapped = alerts.map(a => ({

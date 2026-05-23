@@ -55,11 +55,21 @@ pub fn credentials_delete(account: String) -> Result<(), String> {
 // 否则它仍用旧凭证调禅道 → 认证失败。
 #[tauri::command]
 pub async fn daemon_restart() -> Result<(), String> {
-    // 通知现有 daemon 优雅退出（如果有的话）
+    // 1. 让现有 daemon 优雅退出
     crate::daemon_client::try_shutdown().await;
-    // 等一小会儿让端口释放 + daemon.json 被清掉
+
+    // 2. 主动删 daemon.json —— 否则 ensure_running 看到 daemon.json + pid 还活
+    //    +/health 还能响应（旧 daemon 退出前能撑几秒）会判定旧 daemon 健康直接
+    //    复用，新密码永远生效不了。删掉这个状态文件强制下一次走 spawn 路径。
+    let info_path = crate::daemon_client::daemon_info_path_pub();
+    let _ = std::fs::remove_file(&info_path);
+
+    // 3. 给旧 daemon 一点时间释放端口（OS 分配的随机端口，新 daemon 不会抢，
+    //    但保险起见等一下让旧 daemon 进程真正退出）
     tokio::time::sleep(Duration::from_millis(500)).await;
-    // ensure_running 感知 daemon 不在会重新 spawn，新进程会拿到新密码 env
+
+    // 4. ensure_running 现在看不到 daemon.json，必定走 spawn，新进程通过 env
+    //    拿到 keychain 里最新的密码
     crate::daemon_client::ensure_running()
         .await
         .map(|_| ())

@@ -49,6 +49,11 @@ fn daemon_info_path() -> PathBuf {
     jarvis_dir().join("daemon.json")
 }
 
+/// 暴露给 credentials::daemon_restart 调，让它能主动删 daemon.json 触发 spawn。
+pub fn daemon_info_path_pub() -> PathBuf {
+    daemon_info_path()
+}
+
 fn project_root() -> PathBuf {
     let cwd = std::env::current_dir().unwrap_or_default();
     if cwd.join("package.json").exists() {

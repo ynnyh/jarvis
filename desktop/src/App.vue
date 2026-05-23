@@ -16,8 +16,8 @@ import WelcomeWizard from './components/WelcomeWizard.vue'
 
 const store = useAppStore()
 const configStore = useConfigStore()
-useTaskAlerts()
-useTaskCommits({ autoLoad: true })
+const { refresh: refreshAlerts } = useTaskAlerts()
+const { fetchCommits } = useTaskCommits({ autoLoad: true })
 const { openReview } = useDailyReview()
 useEveningReminder({
   onTrigger: () => {
@@ -239,8 +239,11 @@ const needsWizard = computed(() => {
 })
 
 function onWizardDone() {
-  // store.watch 会把 settings 写盘 + 通知 daemon reload；这里再拉一次任务/提醒
+  // wizard 完成后立刻拉一次任务/提醒 —— 周期轮询要等 5/15 分钟，太慢。
+  // wizard 内部已经等过 daemon restart，这里调时新 daemon 已经拿到新凭证。
   showAlert('配置完成，正在加载…', '✅', 'happy', 3000)
+  refreshAlerts()
+  fetchCommits()
 }
 
 onUnmounted(() => {

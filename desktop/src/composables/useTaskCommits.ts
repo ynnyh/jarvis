@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { onMounted, onUnmounted } from 'vue'
 import { useAppStore, type CommitLink } from '../stores/app'
+import { useConfigStore } from '../stores/config'
 
 interface ToolResult {
   success: boolean
@@ -46,10 +47,20 @@ function unpack(result: ToolResult): CommitLinkPayload | null {
 
 export function useTaskCommits(options: { autoLoad?: boolean } = { autoLoad: false }) {
   const store = useAppStore()
+  const configStore = useConfigStore()
   let timer: ReturnType<typeof setInterval> | null = null
   let firstFetchTimer: ReturnType<typeof setTimeout> | null = null
 
+  // 同 useTaskAlerts：配置未完成时不调 daemon，避免污染错误状态。
+  // 同时也要求 repoRoots 非空 —— 没有代码目录就没 commit 可关联，发请求纯浪费。
+  function isConfigReady(): boolean {
+    if (!configStore.loaded) return false
+    const c = configStore.config
+    return !!(c.zentao.baseUrl?.trim() && c.zentao.account?.trim() && c.repoRoots?.length)
+  }
+
   async function fetchCommits(range: 'today' | 'thisWeek' | 'last7days' = 'thisWeek') {
+    if (!isConfigReady()) return
     try {
       const raw = await invoke<ToolResult>('tool_execute', {
         name: 'get_task_commits',
