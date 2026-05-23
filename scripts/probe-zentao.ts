@@ -1,49 +1,68 @@
-import { http, tokenManager, ACCOUNT, PASSWORD } from '../src/providers/zentao/request.js'
+#!/usr/bin/env node
+// 禅道连接探测脚本 —— 不进打包，纯诊断工具
+//
+// 用法：
+//   npx tsx scripts/probe-zentao.ts <baseUrl> <account> <password>
+//
+// 用 Node fetch 模拟 Tauri credentials.rs::zentao_test_connection 发的请求，
+// 输出完整 URL、状态码、响应头、body 前 500 字符。
+//
+// 同时用两种 User-Agent 分别探一次：
+//   1) reqwest 默认 UA（之前会 500 的情况）
+//   2) Mozilla 浏览器 UA（Node 端 ZenTaoProvider 已经在用的）
+// 对比能直接看出禅道服务端是否在做 UA 过滤。
+//
+// 账号密码只在本进程内存里，不写文件、不发任何第三方。
 
-async function probe() {
-  // 1. 获取 Token
-  const tokenRes = await http.post('/api.php/v1/tokens', { account: ACCOUNT, password: PASSWORD })
-  tokenManager.setToken(tokenRes.data.token)
-  console.log('✅ Token 获取成功')
+import { normalizeZentaoBaseUrl } from '../desktop/src/composables/zentaoUrl.ts'
 
-  // 2. 尝试获取所有执行（不筛选状态）
-  console.log('\n--- 测试: 获取所有执行 (status=all) ---')
-  const allExecRes = await http.get('/api.php/v2/executions', { params: { status: 'all', recPerPage: 100 } })
-  console.log('执行数量:', allExecRes.data.executions?.length || 0)
-
-  // 3. 尝试获取项目列表
-  console.log('\n--- 测试: 获取项目列表 ---')
-  try {
-    const projRes = await http.get('/api.php/v2/projects', { params: { status: 'all', recPerPage: 50 } })
-    console.log('项目数量:', projRes.data.projects?.length || 0)
-    if (projRes.data.projects?.length > 0) {
-      console.log('前 3 个项目:', JSON.stringify(projRes.data.projects.slice(0, 3), null, 2))
-    }
-  } catch (e: any) {
-    console.log('项目接口错误:', e.message)
-  }
-
-  // 4. 查看 execRes 的完整响应结构
-  console.log('\n--- 执行列表响应结构 ---')
-  console.log(JSON.stringify(allExecRes.data, null, 2).slice(0, 2000))
-
-  // 5. 尝试直接获取任务列表（v1 API）
-  console.log('\n--- 测试: v1 任务列表 ---')
-  try {
-    const taskRes = await http.get('/api.php/v1/tasks', { params: { limit: 10 } })
-    console.log('v1 任务数量:', taskRes.data.tasks?.length || 0)
-  } catch (e: any) {
-    console.log('v1 任务接口错误:', e.response?.status, e.message)
-  }
-
-  // 6. 尝试获取当前用户信息
-  console.log('\n--- 测试: 当前用户信息 ---')
-  try {
-    const userRes = await http.get('/api.php/v1/user')
-    console.log('用户信息:', JSON.stringify(userRes.data, null, 2))
-  } catch (e: any) {
-    console.log('用户信息接口错误:', e.response?.status, e.message)
-  }
+const [rawBase, account, password] = process.argv.slice(2)
+if (!rawBase || !account || !password) {
+  console.error('用法: npx tsx scripts/probe-zentao.ts <baseUrl> <account> <password>')
+  process.exit(2)
 }
 
-probe().catch(console.error)
+const base = normalizeZentaoBaseUrl(rawBase)
+console.log(`📥 输入 baseUrl: ${rawBase}`)
+console.log(`🔧 清洗后:       ${base}`)
+console.log('')
+
+const url = `${base}/api.php/v1/tokens`
+console.log(`🌐 请求 URL:     ${url}`)
+console.log('')
+
+const UAs: [string, string][] = [
+  ['reqwest-default', 'reqwest/0.12'],
+  ['mozilla',         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'],
+]
+
+for (const [tag, ua] of UAs) {
+  console.log(`=== [${tag}]  User-Agent: ${ua}`)
+  try {
+    const t0 = Date.now()
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'User-Agent': ua,
+      },
+      body: JSON.stringify({ account, password }),
+    })
+    const ms = Date.now() - t0
+    const body = await resp.text()
+    console.log(`    HTTP ${resp.status} (${ms} ms)`)
+    console.log(`    响应头:`)
+    for (const [k, v] of resp.headers) console.log(`        ${k}: ${v}`)
+    const bodyHead = body.length > 500 ? body.slice(0, 500) + '...(truncated)' : body
+    console.log(`    Body (${body.length} bytes):`)
+    console.log(bodyHead.split('\n').map(l => '        ' + l).join('\n'))
+    try {
+      const j = JSON.parse(body)
+      if (j.token) console.log(`    ✓ 拿到 token: ${j.token.slice(0, 12)}...`)
+    } catch {}
+  } catch (e: any) {
+    console.log(`    ✗ ${e?.message ?? e}`)
+  }
+  console.log('')
+}

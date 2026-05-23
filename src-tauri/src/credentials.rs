@@ -192,11 +192,17 @@ pub async fn zentao_test_connection(req: ZentaoTestRequest) -> Result<ZentaoTest
     let url = format!("{}/api.php/v1/tokens", base);
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(8))
+        // 跟 Node 端 ZenTaoProvider.authenticate() 完全一致的浏览器 UA。
+        // 之前用 reqwest 默认 UA 会被某些禅道前置（WAF / nginx mod / PHP 自身的
+        // UA 检查）拦下，返回 HTTP 500 + HTML —— 但同样 payload 从 Node fetch
+        // 发出去能 200。
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
 
     let resp = client
         .post(&url)
+        .header("Accept", "application/json")
         .json(&serde_json::json!({
             "account": req.account,
             "password": req.password,
