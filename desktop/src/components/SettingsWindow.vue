@@ -302,6 +302,28 @@ onMounted(loadExcluded)
           </label>
         </section>
 
+        <!-- 工作时段小提示 -->
+        <section class="section">
+          <h3 class="section-title">工作时段小提示</h3>
+          <label class="toggle-row">
+            <input type="checkbox" v-model="store.config.notifications.workdayNudges" />
+            <span>上班时段定时弹提示（喝水 / 起身 / 午饭 / 下班）</span>
+          </label>
+          <label class="toggle-row">
+            <span>喝水 / 起身 每
+              <input
+                class="inline-num"
+                type="number"
+                min="30" max="240" step="15"
+                v-model.number="store.config.notifications.nudgeIntervalMinutes"
+                :disabled="!store.config.notifications.workdayNudges"
+              />
+              分钟轮一次
+            </span>
+          </label>
+          <p class="section-hint">午饭前 10 分钟、下班前 10 分钟为时间锚点，自动一次。所有提示静默时段不弹。</p>
+        </section>
+
         <!-- 今日临时覆盖 -->
         <section class="section">
           <h3 class="section-title">今日临时覆盖</h3>

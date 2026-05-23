@@ -7,6 +7,7 @@ import { useTaskAlerts } from './composables/useTaskAlerts'
 import { useTaskCommits } from './composables/useTaskCommits'
 import { useDailyReview } from './composables/useDailyReview'
 import { useEveningReminder } from './composables/useEveningReminder'
+import { useWorkdayNudges } from './composables/useWorkdayNudges'
 import { useCursorPassthrough } from './composables/useCursorPassthrough'
 import TaskWindow from './components/TaskWindow.vue'
 import SettingsWindow from './components/SettingsWindow.vue'
@@ -25,6 +26,12 @@ useEveningReminder({
     // 复盘窗口已经自动打开了，气泡只是个提示动作，15s 足够注意到。
     showAlert('今天的复盘看一下？', '📋', 'thinking', 15000)
     store.showReviewWindow = true
+  },
+})
+useWorkdayNudges({
+  onTrigger: (text, emoji) => {
+    // 上班时段的小提示走 happy 表情、12s 自动消失，不打断工作
+    showAlert(text, emoji, 'happy', 12000)
   },
 })
 useCursorPassthrough()
@@ -269,11 +276,13 @@ onUnmounted(() => {
 
     <div class="menu-btn pointer-target" @click="toggleMenu">⋯</div>
 
-    <div class="avatar-group pointer-target"
-      @mousedown="onMouseDown"
-      @mousemove="onMouseMove"
-      @mouseup="onMouseUp"
-    >
+    <!--
+      avatar-group 只是 flex 排版容器，跨越 alert 气泡到 avatar 的整个矩形（含
+      间隙、外边距）。如果在这一层加 pointer-target，整个 200×200 范围都不
+      穿透，鼠标在空白处也被吃掉。把标记下沉到真正有像素的子元素上。
+      拖拽/点击事件也只挂在 avatar 上 —— 状态条和气泡不应该触发拖窗。
+    -->
+    <div class="avatar-group">
       <!-- 弹出气泡（位于状态条上方，绑定到右边对齐） -->
       <transition name="bubble">
         <div v-if="hasAlert" class="alert-bubble pointer-target">
@@ -283,12 +292,16 @@ onUnmounted(() => {
         </div>
       </transition>
 
-      <div class="status-label" :class="{ active: state === 'working' }">
+      <div class="status-label pointer-target" :class="{ active: state === 'working' }">
         <span class="status-label__emoji">{{ current.emotion }}</span>
         <span class="status-label__text">{{ current.text }}</span>
       </div>
 
-      <div class="avatar" :class="{ active: state === 'working' }">
+      <div class="avatar pointer-target" :class="{ active: state === 'working' }"
+        @mousedown="onMouseDown"
+        @mousemove="onMouseMove"
+        @mouseup="onMouseUp"
+      >
         <div class="avatar-glow" :style="{ boxShadow: `0 0 20px ${current.color}40, 0 0 40px ${current.color}20`, background: current.glowColor }" />
         <div class="avatar-body" :class="`state-${state}`">
           <svg viewBox="0 0 80 80" class="avatar-svg">

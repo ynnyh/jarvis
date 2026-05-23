@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, watch } from 'vue'
 import { useAppStore, type CommitLink } from '../stores/app'
-import { useConfigStore } from '../stores/config'
+import { useConfigStore, type CommitsRange } from '../stores/config'
 
 interface ToolResult {
   success: boolean
@@ -59,12 +59,14 @@ export function useTaskCommits(options: { autoLoad?: boolean } = { autoLoad: fal
     return !!(c.zentao.baseUrl?.trim() && c.zentao.account?.trim() && c.repoRoots?.length)
   }
 
-  async function fetchCommits(range: 'today' | 'thisWeek' | 'last7days' = 'thisWeek') {
+  async function fetchCommits(range?: CommitsRange) {
     if (!isConfigReady()) return
+    // 默认读 config 里持久化的选择；显式传参时以传参为准（手动刷新场景）
+    const effectiveRange: CommitsRange = range ?? configStore.config.commitsRange ?? 'thisWeek'
     try {
       const raw = await invoke<ToolResult>('tool_execute', {
         name: 'get_task_commits',
-        input: { range, includeBody: true },
+        input: { range: effectiveRange, includeBody: true },
       })
       const payload = unpack(raw)
       if (!payload) {
@@ -77,7 +79,7 @@ export function useTaskCommits(options: { autoLoad?: boolean } = { autoLoad: fal
         map[String(t.taskId)] = t.commits
       }
       store.commitsByTask = map
-      store.commitsRange = range
+      store.commitsRange = effectiveRange
       store.commitsLastError = null
       store.commitsLoaded = true
     } catch (e) {
@@ -93,9 +95,14 @@ export function useTaskCommits(options: { autoLoad?: boolean } = { autoLoad: fal
   if (options.autoLoad) {
     onMounted(() => {
       firstFetchTimer = setTimeout(() => {
-        fetchCommits(store.commitsRange as any)
+        fetchCommits()
       }, FIRST_FETCH_DELAY)
-      timer = setInterval(() => fetchCommits(store.commitsRange as any), POLL_INTERVAL)
+      timer = setInterval(() => fetchCommits(), POLL_INTERVAL)
+      // 用户改下拉 → 立刻拉一次，不等下个 15 分钟轮询
+      watch(() => configStore.config.commitsRange, () => {
+        if (!isConfigReady()) return
+        fetchCommits()
+      })
     })
 
     onUnmounted(() => {

@@ -6,7 +6,7 @@ import { TaskService } from '../services/task-service.js'
 import { getZentaoCredentials, getRepoRoots } from '../config/settings.js'
 
 const rangeEnum = z.enum([
-  'today', 'yesterday', 'thisWeek', 'lastWeek', 'last7days', 'last30days', 'thisMonth',
+  'today', 'yesterday', 'thisWeek', 'lastWeek', 'last7days', 'last30days', 'thisMonth', 'all',
 ])
 
 const inputSchema = z.object({

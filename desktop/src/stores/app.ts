@@ -360,7 +360,12 @@ export interface DailyReviewData {
     commitCount: number
     reason: string
   }>
-  orphanCommits: Array<{ businessLine: string; commits: CommitLink[] }>
+  orphanCommits: Array<{
+    businessLine: string
+    commits: CommitLink[]
+    effort?: number
+    suggestedHours?: number
+  }>
   totalHoursForEstimate: number
   /** 纯文本日报草稿，可直接复制粘贴 */
   plainText: string

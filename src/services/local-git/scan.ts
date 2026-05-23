@@ -55,6 +55,7 @@ export type RangePreset =
   | 'last7days'
   | 'last30days'
   | 'thisMonth'
+  | 'all'
 
 export interface CommitDiff {
   sha: string
@@ -142,6 +143,11 @@ export function getDateRange(preset: RangePreset): DateRange {
       start = new Date(now.getFullYear(), now.getMonth(), 1)
       end = tomorrowStart
       break
+    case 'all':
+      // 起点 1970-01-01：足够久远，覆盖任何项目的最早 commit
+      start = new Date(0)
+      end = tomorrowStart
+      break
     default:
       start = todayStart
       end = tomorrowStart
@@ -150,7 +156,9 @@ export function getDateRange(preset: RangePreset): DateRange {
   return {
     since: start.toISOString(),
     until: end.toISOString(),
-    label: `${formatDate(start)} ~ ${formatDate(new Date(end.getTime() - 1))}`,
+    label: preset === 'all'
+      ? '全部'
+      : `${formatDate(start)} ~ ${formatDate(new Date(end.getTime() - 1))}`,
   }
 }
 

@@ -8,6 +8,10 @@ export interface WorkPeriod {
   label: string
 }
 
+export type CommitsRange =
+  | 'today' | 'yesterday' | 'thisWeek' | 'lastWeek'
+  | 'last7days' | 'last30days' | 'thisMonth' | 'all'
+
 export interface JarvisConfig {
   workSchedule: {
     workDays: number[]      // 0=Sun, 1=Mon ... 6=Sat
@@ -20,6 +24,10 @@ export interface JarvisConfig {
     morningGreeting: boolean
     eveningSummary: boolean
     eveningSummaryMinutesBefore: number
+    /** 上班时段定时小提示（喝水/起身/午饭/下班）总开关 */
+    workdayNudges: boolean
+    /** 周期性提示（喝水/起身交替）的间隔（分钟）。<30 视为关闭 */
+    nudgeIntervalMinutes: number
   }
   override: {
     todayMode: 'normal' | 'overtime' | 'dayoff'
@@ -30,6 +38,8 @@ export interface JarvisConfig {
     account: string           // 用户的禅道账号；密码在 OS 密钥链里，不存这里
   }
   repoRoots: string[]         // 扫描 git 提交的本地代码根目录列表
+  /** 任务窗口里 commits 关联取多大时间范围 —— 默认本周，'all' 走全量 */
+  commitsRange: CommitsRange
 }
 
 const defaultConfig = (): JarvisConfig => ({
@@ -47,6 +57,8 @@ const defaultConfig = (): JarvisConfig => ({
     morningGreeting: true,
     eveningSummary: true,
     eveningSummaryMinutesBefore: 30,
+    workdayNudges: true,
+    nudgeIntervalMinutes: 90,
   },
   override: {
     todayMode: 'normal',
@@ -54,6 +66,7 @@ const defaultConfig = (): JarvisConfig => ({
   },
   zentao: { baseUrl: 'http://REDACTED_INTERNAL_IP:8989/zentao', account: '' },
   repoRoots: [],
+  commitsRange: 'thisWeek',
 })
 
 function todayStr(): string {
@@ -70,12 +83,28 @@ export const useConfigStore = defineStore('config', () => {
   async function load() {
     try {
       const remote = await invoke<JarvisConfig>('config_load')
-      // 临时覆盖只在当日有效
-      if (remote.override.todayModeSetOn !== todayStr()) {
-        remote.override.todayMode = 'normal'
-        remote.override.todayModeSetOn = ''
+      // 老 settings.json 可能没有新增字段 —— 把缺的字段从默认值补齐，否则
+      // 模板字符串 / 下拉绑定会拿到 undefined 报错。
+      const defaults = defaultConfig()
+      const merged: JarvisConfig = {
+        ...defaults,
+        ...remote,
+        // notifications 是嵌套对象，浅合并会丢掉新字段 —— 显式合并
+        notifications: { ...defaults.notifications, ...(remote.notifications ?? {}) },
+        // zentao 同理，且要兜默认值：旧 settings.json 可能 baseUrl 为空串 ——
+        // 这种情况下 wizard 应该看到默认内网地址而不是空，避免每次都让用户手填。
+        zentao: {
+          baseUrl: remote.zentao?.baseUrl?.trim() ? remote.zentao.baseUrl : defaults.zentao.baseUrl,
+          account: remote.zentao?.account ?? defaults.zentao.account,
+        },
+        commitsRange: remote.commitsRange ?? defaults.commitsRange,
       }
-      config.value = remote
+      // 临时覆盖只在当日有效
+      if (merged.override.todayModeSetOn !== todayStr()) {
+        merged.override.todayMode = 'normal'
+        merged.override.todayModeSetOn = ''
+      }
+      config.value = merged
     } catch (e) {
       console.error('加载配置失败，使用默认值:', e)
     } finally {

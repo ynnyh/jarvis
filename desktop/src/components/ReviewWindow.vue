@@ -55,6 +55,32 @@ async function copyTaskCommits(task: { taskId: string; commits: { title: string 
   }, 1800)
 }
 
+/** 每个孤儿业务线分组的复制状态。和 taskCopyState 同一套设计，但 key 是
+ *  businessLine 而非 taskId —— 孤儿 commit 按业务线分组。 */
+const orphanCopyState = ref<Record<string, 'ok' | 'fail'>>({})
+
+async function copyOrphanGroup(group: { businessLine: string; commits: { title: string }[] }) {
+  const seen = new Set<string>()
+  const lines: string[] = []
+  for (const c of group.commits) {
+    const cleaned = cleanCommitTitle(c.title)
+    if (!cleaned || seen.has(cleaned)) continue
+    seen.add(cleaned)
+    lines.push(`- ${cleaned}`)
+  }
+  const text = lines.join('\n')
+  try {
+    await navigator.clipboard.writeText(text)
+    orphanCopyState.value = { ...orphanCopyState.value, [group.businessLine]: 'ok' }
+  } catch {
+    orphanCopyState.value = { ...orphanCopyState.value, [group.businessLine]: 'fail' }
+  }
+  setTimeout(() => {
+    const { [group.businessLine]: _, ...rest } = orphanCopyState.value
+    orphanCopyState.value = rest
+  }, 1800)
+}
+
 async function openTask(id: string) {
   try {
     await invoke('open_zentao_task', { id })
@@ -240,6 +266,48 @@ function formatTime(iso: string): string {
           </details>
         </section>
 
+        <!-- 未关联任务的提交：用户实际写了代码但没匹配到禅道任务，也是日报内容 -->
+        <section v-if="store.reviewData.orphanCommits.some(o => o.commits.length > 0)" class="section">
+          <h3 class="section-title">
+            <span>🧩 未关联禅道任务的提交</span>
+            <span class="section-count">{{ store.reviewData.summary.orphanCommitCount }} 个 commit</span>
+          </h3>
+          <p class="section-hint">这些 commit 没匹配到任务号。可以补任务号、或在日报里口头交代 / 在禅道用杂项任务填工时。点 📋 复制内容。</p>
+          <ul class="task-fill-list">
+            <li v-for="g in store.reviewData.orphanCommits.filter(o => o.commits.length > 0)"
+              :key="g.businessLine" class="task-fill-item orphan-item">
+              <div class="task-fill-row">
+                <span class="task-fill-name">{{ g.businessLine }}</span>
+                <span v-if="g.suggestedHours" class="hours-pill">~{{ g.suggestedHours }}h</span>
+                <button
+                  class="copy-mini"
+                  :class="`mini-${orphanCopyState[g.businessLine] || 'idle'}`"
+                  @click="copyOrphanGroup(g)"
+                  :title="`复制 ${g.commits.length} 条 commit`"
+                >
+                  {{ orphanCopyState[g.businessLine] === 'ok' ? '✓' : orphanCopyState[g.businessLine] === 'fail' ? '×' : '📋' }}
+                </button>
+              </div>
+              <div class="task-fill-meta">
+                <span>{{ g.commits.length }} 个 commit</span>
+              </div>
+              <details class="orphan-commits-block">
+                <summary class="commits-summary">📦 commit 列表</summary>
+                <ul class="commit-list">
+                  <li v-for="c in g.commits" :key="c.sha + c.repoPath" class="commit-item">
+                    <div class="commit-title">{{ cleanCommitTitle(c.title) }}</div>
+                    <div class="commit-meta">
+                      <span class="commit-repo">{{ c.repoName }}</span>
+                      <span class="commit-sha">{{ c.shortSha }}</span>
+                      <span class="commit-time">{{ formatTime(c.authoredDate) }}</span>
+                    </div>
+                  </li>
+                </ul>
+              </details>
+            </li>
+          </ul>
+        </section>
+
         <!-- 原始日报全文预览 -->
         <section class="section">
           <button class="toggle-raw" @click="showRaw = !showRaw">
@@ -385,6 +453,19 @@ function formatTime(iso: string): string {
   background: rgba(255, 255, 255, 0.03);
   border-radius: 5px;
   border-left: 2px solid rgba(59, 130, 246, 0.4);
+}
+.task-fill-item.orphan-item {
+  border-left-color: rgba(168, 85, 247, 0.5);
+  background: rgba(168, 85, 247, 0.04);
+}
+.orphan-commits-block {
+  margin-top: 4px;
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 4px;
+}
+.orphan-commits-block .commits-summary {
+  padding: 4px 8px;
+  font-size: 10px;
 }
 .task-fill-row {
   display: flex;

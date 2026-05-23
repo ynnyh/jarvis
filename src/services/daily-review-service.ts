@@ -54,8 +54,17 @@ export interface DailyReview {
   byBusinessLine: BusinessLineGroup[]
   /** 有 commit 关联但任务状态仍是"未开始"——提醒去禅道更新 */
   needsStatusUpdate: NeedsStatusUpdate[]
-  /** 没匹配到任务的 commit（可能是工具仓库/试验代码） */
-  orphanCommits: Array<{ businessLine: string; commits: CommitLink[] }>
+  /**
+   * 没匹配到任务的 commit。也是真实工作量，进日报。
+   * effort 是这组 commit 的代码量分（≈ 影响行数），suggestedHours 按全天工时
+   * 比例分配，让用户填写禅道的"杂项工时"或在日报里口头补一段。
+   */
+  orphanCommits: Array<{
+    businessLine: string
+    commits: CommitLink[]
+    effort: number
+    suggestedHours?: number
+  }>
   /** 用于按业务线分配工时的总工时基数（若未传 hoursPerWorkDay，则为 0） */
   totalHoursForEstimate: number
   /** 纯文本日报草稿（无 Markdown 符号，可直接复制粘贴） */
@@ -173,16 +182,20 @@ export function buildDailyReview(
     .sort((a, b) => b.effort - a.effort)
 
   // ---- 按业务线分配建议工时（按 effort 比例，不再按 commit 数）----
-  // 排除孤儿业务线（如 my-mcp-servers），它不该占工时
-  const linesWithTasks = byBusinessLine.filter(g => g.tasks.length > 0)
-  const totalEffort = linesWithTasks.reduce((s, g) => s + g.effort, 0)
+  // 所有业务线（含纯孤儿业务线）都按 effort 比例分工时 —— 用户的真实工作量。
+  // 历史上这里曾排除"没任务的业务线"防 my-mcp-servers 一类工具仓占工时，
+  // 现在这类仓应该通过 ~/.jarvis/excluded-business-lines.json 提前过滤，
+  // 走到这里的就是用户认可的真实工作。日报要全部呈现 / 全部分工时，让
+  // 用户在禅道用「杂项任务」之类的方式补登也好，至少别让代码量凭空消失。
+  const totalEffort = byBusinessLine.reduce((s, g) => s + g.effort, 0)
   if (hoursPerWorkDay > 0 && totalEffort > 0) {
-    for (const g of linesWithTasks) {
+    for (const g of byBusinessLine) {
       const raw = (g.effort / totalEffort) * hoursPerWorkDay
       g.suggestedHours = roundHalf(raw)
     }
-    // 业务线工时按 0.5h 粒度分到任务，优先 effort 高的
-    for (const line of linesWithTasks) {
+    // 业务线工时按 0.5h 粒度分到任务，优先 effort 高的（孤儿业务线没任务，
+    // 这一步直接跳过，整条业务线的 suggestedHours 留给 orphan 段呈现）
+    for (const line of byBusinessLine.filter(g => g.tasks.length > 0)) {
       if (!line.suggestedHours) continue
       const lineTasks = advancedTasks
         .filter(t => t.businessLine === line.businessLine)
@@ -212,8 +225,20 @@ export function buildDailyReview(
     orphanCommitCount: linkResult.orphanCommits.reduce((s, o) => s + o.commits.length, 0),
   }
 
+  // ---- 孤儿 commit 也估个工时 ----
+  // 没匹配到禅道任务的提交也是真实工作。按这组 commit 的 effort 占全天总
+  // effort 的比例切一份工时出来，让用户能在日报里补一段或拿去禅道找杂项
+  // 任务填工时。
+  const orphanCommitGroups = linkResult.orphanCommits.map(o => {
+    const effort = o.commits.reduce((s, c) => s + (c.effort ?? 1), 0)
+    const suggestedHours = hoursPerWorkDay > 0 && totalEffort > 0
+      ? roundHalf((effort / totalEffort) * hoursPerWorkDay)
+      : undefined
+    return { businessLine: o.businessLine, commits: o.commits, effort, suggestedHours }
+  })
+
   // ---- 纯文本草稿 ----
-  const plainText = renderPlainText(date, summary, advancedTasks, byBusinessLine, needsStatusUpdate, hoursPerWorkDay)
+  const plainText = renderPlainText(date, summary, advancedTasks, byBusinessLine, needsStatusUpdate, orphanCommitGroups, hoursPerWorkDay)
 
   return {
     date,
@@ -222,7 +247,7 @@ export function buildDailyReview(
     advancedTasks,
     byBusinessLine,
     needsStatusUpdate,
-    orphanCommits: linkResult.orphanCommits,
+    orphanCommits: orphanCommitGroups,
     totalHoursForEstimate: hoursPerWorkDay,
     plainText,
   }
@@ -234,6 +259,7 @@ function renderPlainText(
   advancedTasks: AdvancedTask[],
   byLine: BusinessLineGroup[],
   needsUpdate: NeedsStatusUpdate[],
+  orphanGroups: DailyReview['orphanCommits'],
   hoursPerWorkDay: number,
 ): string {
   const lines: string[] = []
@@ -304,6 +330,29 @@ function renderPlainText(
     lines.push('【需要在禅道更新状态的任务】')
     for (const t of needsUpdate) {
       lines.push(`  · #${t.taskId} ${t.taskName}：${t.reason}`)
+    }
+    lines.push('')
+  }
+
+  // 未关联任务的提交（孤儿）—— 用户实际写了代码但没找到对应禅道任务。
+  // 列出来方便用户在日报里口头交代 / 在禅道用杂项任务补登。
+  const nonEmptyOrphans = orphanGroups.filter(o => o.commits.length > 0)
+  if (nonEmptyOrphans.length > 0) {
+    lines.push('【未关联禅道任务的提交】（建议补任务号或在日报中说明）')
+    for (const g of nonEmptyOrphans) {
+      const seen = new Set<string>()
+      const unique: Array<{ commit: CommitLink; cleaned: string }> = []
+      for (const c of g.commits) {
+        const cleaned = cleanCommitTitle(c.title)
+        if (!cleaned || seen.has(cleaned)) continue
+        seen.add(cleaned)
+        unique.push({ commit: c, cleaned })
+      }
+      const hoursLabel = g.suggestedHours ? `，建议 ~${g.suggestedHours}h` : ''
+      lines.push(`  · ${g.businessLine}（${unique.length} 个主题${hoursLabel}）`)
+      for (const { commit: c, cleaned } of unique) {
+        lines.push(`    - ${cleaned}  (${c.repoName} · ${c.shortSha})`)
+      }
     }
     lines.push('')
   }

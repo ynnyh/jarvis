@@ -1,21 +1,33 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { invoke } from '@tauri-apps/api/core'
 import { useAppStore } from '../stores/app'
+import { useConfigStore, type CommitsRange } from '../stores/config'
 import { useTaskAlerts } from '../composables/useTaskAlerts'
 import { useTaskCommits } from '../composables/useTaskCommits'
 import TaskItem from './TaskItem.vue'
 
 const store = useAppStore()
+const configStore = useConfigStore()
 const { refresh } = useTaskAlerts()
 const { fetchCommits } = useTaskCommits()
+
+const rangeOptions: Array<{ value: CommitsRange; label: string }> = [
+  { value: 'today',     label: '今天' },
+  { value: 'yesterday', label: '昨天' },
+  { value: 'thisWeek',  label: '本周' },
+  { value: 'lastWeek',  label: '上周' },
+  { value: 'last7days', label: '近 7 天' },
+  { value: 'last30days', label: '近 30 天' },
+  { value: 'thisMonth', label: '本月' },
+  { value: 'all',       label: '全部' },
+]
 
 const refreshing = ref(false)
 async function handleRefresh() {
   if (refreshing.value) return
   refreshing.value = true
   try {
-    await Promise.all([refresh(), fetchCommits(store.commitsRange as any)])
+    await Promise.all([refresh(), fetchCommits()])
   } finally {
     setTimeout(() => { refreshing.value = false }, 600)
   }
@@ -63,6 +75,15 @@ const hasAnyAlert = computed(() =>
         <span v-if="connState === 'ok'" class="conn-meta">
           {{ store.taskAlerts.length }} 条
         </span>
+        <select
+          class="range-select"
+          v-model="configStore.config.commitsRange"
+          title="commit 关联范围"
+        >
+          <option v-for="opt in rangeOptions" :key="opt.value" :value="opt.value">
+            {{ opt.label }}
+          </option>
+        </select>
       </div>
 
       <!-- 堆叠风险横幅：未来 7 天同一天 ≥3 个任务 -->
@@ -237,6 +258,24 @@ const hasAnyAlert = computed(() =>
 .conn-ok { color: rgba(16, 185, 129, 0.85); }
 .conn-error { color: rgba(239, 68, 68, 0.9); }
 .conn-meta { margin-left: auto; color: rgba(255, 255, 255, 0.45); }
+.range-select {
+  margin-left: 6px;
+  padding: 1px 4px;
+  font-size: 10px;
+  font-family: inherit;
+  color: rgba(255, 255, 255, 0.75);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.range-select:hover { background: rgba(255, 255, 255, 0.1); }
+.range-select:focus { outline: none; border-color: rgba(0, 212, 255, 0.5); }
+.range-select option { color: #222; background: #fff; }
+/* conn-meta 没有时 select 自己往右 */
+.conn-bar > .range-select:not(:last-child) { margin-left: 6px; }
+.conn-bar > .conn-meta + .range-select { margin-left: 6px; }
+.conn-bar > .conn-text + .range-select { margin-left: auto; }
 @keyframes pulse-dot {
   0%, 100% { opacity: 0.5; transform: scale(0.85); }
   50% { opacity: 1; transform: scale(1.15); }
