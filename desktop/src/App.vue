@@ -12,6 +12,7 @@ import TaskWindow from './components/TaskWindow.vue'
 import SettingsWindow from './components/SettingsWindow.vue'
 import RiskWindow from './components/RiskWindow.vue'
 import ReviewWindow from './components/ReviewWindow.vue'
+import WelcomeWizard from './components/WelcomeWizard.vue'
 
 const store = useAppStore()
 const configStore = useConfigStore()
@@ -229,6 +230,19 @@ onMounted(() => {
   }, { once: true })
 })
 
+// 首启引导：配置不完整（无禅道地址 OR 没添加代码文件夹）时展示
+const needsWizard = computed(() => {
+  if (!configStore.loaded) return false
+  const z = configStore.config.zentao
+  const r = configStore.config.repoRoots
+  return !z.baseUrl.trim() || !z.account.trim() || !r || r.length === 0
+})
+
+function onWizardDone() {
+  // store.watch 会把 settings 写盘 + 通知 daemon reload；这里再拉一次任务/提醒
+  showAlert('配置完成，正在加载…', '✅', 'happy', 3000)
+}
+
 onUnmounted(() => {
   if (alertTimer) clearTimeout(alertTimer)
 })
@@ -297,6 +311,8 @@ onUnmounted(() => {
     <ReviewWindow />
     <!-- 设置面板 -->
     <SettingsWindow />
+    <!-- 首启引导：配置不完整时全屏覆盖，写完后消失 -->
+    <WelcomeWizard v-if="needsWizard" @done="onWizardDone" />
   </div>
 </template>
 

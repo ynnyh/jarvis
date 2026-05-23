@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, onMounted } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
 import { useConfigStore } from '../stores/config'
 
 const store = useConfigStore()
@@ -33,6 +34,108 @@ function toggleWorkDay(day: number) {
   if (i >= 0) days.splice(i, 1)
   else { days.push(day); days.sort() }
 }
+
+// ===== 禅道连接 =====
+const zentaoPassword = ref('')          // 用户输入；只在按"保存"时写到 keychain
+const zentaoTestState = ref<'idle' | 'testing' | 'ok' | 'fail'>('idle')
+const zentaoTestMessage = ref('')
+
+async function testZentao() {
+  zentaoTestState.value = 'testing'
+  zentaoTestMessage.value = ''
+  try {
+    const r = await invoke<{ ok: boolean; message: string }>('zentao_test_connection', {
+      req: {
+        baseUrl: store.config.zentao.baseUrl,
+        account: store.config.zentao.account,
+        password: zentaoPassword.value,
+      },
+    })
+    zentaoTestState.value = r.ok ? 'ok' : 'fail'
+    zentaoTestMessage.value = r.message
+  } catch (e: any) {
+    zentaoTestState.value = 'fail'
+    zentaoTestMessage.value = String(e?.message ?? e)
+  }
+}
+
+async function saveZentaoPassword() {
+  if (!store.config.zentao.account.trim()) {
+    zentaoTestMessage.value = '请先填写禅道账号'
+    zentaoTestState.value = 'fail'
+    return
+  }
+  if (!zentaoPassword.value) {
+    zentaoTestMessage.value = '请输入密码'
+    zentaoTestState.value = 'fail'
+    return
+  }
+  try {
+    await invoke('credentials_set', {
+      account: store.config.zentao.account,
+      password: zentaoPassword.value,
+    })
+    zentaoTestState.value = 'ok'
+    zentaoTestMessage.value = '密码已加密保存到系统密钥链'
+    zentaoPassword.value = ''
+  } catch (e: any) {
+    zentaoTestState.value = 'fail'
+    zentaoTestMessage.value = '保存密码失败：' + String(e?.message ?? e)
+  }
+}
+
+// ===== 代码文件夹（repoRoots） =====
+async function addRepoRoot() {
+  const picked = await invoke<string | null>('pick_directory', {
+    title: '选择本地代码根目录（如 D:/coding）',
+  })
+  if (!picked) return
+  if (store.config.repoRoots.includes(picked)) return
+  store.config.repoRoots.push(picked)
+}
+
+function removeRepoRoot(i: number) {
+  store.config.repoRoots.splice(i, 1)
+}
+
+// ===== 忽略的业务线 =====
+const excludedLines = ref<string[]>([])
+const newExcludedInput = ref('')
+
+async function loadExcluded() {
+  try {
+    excludedLines.value = await invoke<string[]>('excluded_business_lines_load')
+  } catch {
+    excludedLines.value = []
+  }
+}
+
+async function saveExcluded() {
+  try {
+    await invoke('excluded_business_lines_save', { lines: excludedLines.value })
+  } catch (e) {
+    console.error('保存排除业务线失败:', e)
+  }
+}
+
+function addExcluded() {
+  const v = newExcludedInput.value.trim()
+  if (!v) return
+  if (excludedLines.value.includes(v)) {
+    newExcludedInput.value = ''
+    return
+  }
+  excludedLines.value.push(v)
+  newExcludedInput.value = ''
+  saveExcluded()
+}
+
+function removeExcluded(i: number) {
+  excludedLines.value.splice(i, 1)
+  saveExcluded()
+}
+
+onMounted(loadExcluded)
 </script>
 
 <template>
@@ -54,6 +157,72 @@ function toggleWorkDay(day: number) {
       </div>
 
       <div class="panel-body">
+        <!-- 禅道连接 -->
+        <section class="section">
+          <h3 class="section-title">禅道连接</h3>
+          <label class="field">
+            <span class="field-label">地址</span>
+            <input class="text-input" type="url" placeholder="http://zentao.example.com/zentao"
+              v-model="store.config.zentao.baseUrl" />
+          </label>
+          <label class="field">
+            <span class="field-label">账号</span>
+            <input class="text-input" type="text" placeholder="你的禅道用户名"
+              v-model="store.config.zentao.account" />
+          </label>
+          <label class="field">
+            <span class="field-label">密码</span>
+            <input class="text-input" type="password" placeholder="留空表示不修改密钥链中的密码"
+              v-model="zentaoPassword" />
+          </label>
+          <div class="zentao-actions">
+            <button class="action-btn" :disabled="zentaoTestState === 'testing'" @click="testZentao">
+              {{ zentaoTestState === 'testing' ? '测试中…' : '测试连接' }}
+            </button>
+            <button class="action-btn primary" @click="saveZentaoPassword">
+              保存密码到密钥链
+            </button>
+          </div>
+          <p v-if="zentaoTestMessage" class="zentao-msg" :class="`msg-${zentaoTestState}`">
+            {{ zentaoTestMessage }}
+          </p>
+          <p class="section-hint">密码不会写入任何文件，仅保存在系统密钥链中</p>
+        </section>
+
+        <!-- 代码文件夹（repoRoots） -->
+        <section class="section">
+          <h3 class="section-title">本地代码文件夹</h3>
+          <p class="section-hint">Jarvis 会扫描这些目录下的 git 仓库，关联到禅道任务以生成日报。每个目录第一层子文件夹的名字会被当作"业务线"</p>
+          <ul class="path-list">
+            <li v-for="(p, i) in store.config.repoRoots" :key="i" class="path-item">
+              <span class="path-text">{{ p }}</span>
+              <button class="path-remove" @click="removeRepoRoot(i)" title="移除">×</button>
+            </li>
+            <li v-if="store.config.repoRoots.length === 0" class="path-empty">还没有添加</li>
+          </ul>
+          <button class="action-btn" @click="addRepoRoot">+ 添加文件夹</button>
+        </section>
+
+        <!-- 忽略的业务线 -->
+        <section class="section">
+          <h3 class="section-title">忽略的文件夹（业务线）</h3>
+          <p class="section-hint">这些业务线下的 commit 不会进入工时统计和日报。常用于个人项目、试验仓库等</p>
+          <ul class="path-list">
+            <li v-for="(name, i) in excludedLines" :key="name" class="path-item">
+              <span class="path-text">{{ name }}</span>
+              <button class="path-remove" @click="removeExcluded(i)" title="移除">×</button>
+            </li>
+            <li v-if="excludedLines.length === 0" class="path-empty">没有忽略项</li>
+          </ul>
+          <div class="excl-add-row">
+            <input class="text-input excl-input" type="text"
+              placeholder="业务线名（如 my-mcp-servers）"
+              v-model="newExcludedInput"
+              @keydown.enter="addExcluded" />
+            <button class="action-btn" @click="addExcluded">添加</button>
+          </div>
+        </section>
+
         <!-- 工作日 -->
         <section class="section">
           <h3 class="section-title">工作日</h3>
@@ -286,6 +455,135 @@ function toggleWorkDay(day: number) {
   cursor: pointer;
   padding: 2px 0;
 }
+
+/* 字段 */
+.field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+.field-label {
+  width: 48px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+  flex-shrink: 0;
+}
+.text-input {
+  flex: 1;
+  padding: 4px 8px;
+  font-size: 11.5px;
+  font-family: inherit;
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+}
+.text-input:focus {
+  outline: none;
+  border-color: rgba(0, 212, 255, 0.5);
+  background: rgba(0, 212, 255, 0.05);
+}
+
+/* 行动按钮 */
+.action-btn {
+  padding: 5px 12px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.action-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+.action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.action-btn.primary {
+  color: rgba(0, 212, 255, 0.95);
+  background: rgba(0, 212, 255, 0.12);
+  border-color: rgba(0, 212, 255, 0.35);
+}
+.action-btn.primary:hover {
+  background: rgba(0, 212, 255, 0.18);
+}
+
+.zentao-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+.zentao-msg {
+  margin: 4px 0 0;
+  padding: 4px 8px;
+  font-size: 11px;
+  border-radius: 4px;
+  line-height: 1.4;
+}
+.msg-ok { color: rgba(134, 239, 172, 0.95); background: rgba(34, 197, 94, 0.12); }
+.msg-fail { color: rgba(252, 165, 165, 0.95); background: rgba(239, 68, 68, 0.12); }
+.msg-testing { color: rgba(147, 197, 253, 0.95); background: rgba(59, 130, 246, 0.12); }
+
+/* 路径列表 */
+.path-list {
+  list-style: none;
+  margin: 4px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.path-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.85);
+}
+.path-text {
+  flex: 1;
+  font-family: ui-monospace, monospace;
+  word-break: break-all;
+}
+.path-remove {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.5);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.path-remove:hover {
+  color: rgba(239, 68, 68, 0.9);
+  background: rgba(239, 68, 68, 0.1);
+}
+.path-empty {
+  padding: 6px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.35);
+  text-align: center;
+}
+.excl-add-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.excl-input { flex: 1; }
 .toggle-row input[type=checkbox] {
   width: 14px;
   height: 14px;

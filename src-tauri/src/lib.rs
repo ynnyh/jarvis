@@ -1,6 +1,7 @@
 mod commands;
 mod credentials;
 mod daemon_client;
+mod settings_extras;
 
 use tauri::Manager;
 use tauri::RunEvent;
@@ -116,6 +117,9 @@ pub fn run() {
             credentials::credentials_get,
             credentials::credentials_delete,
             credentials::zentao_test_connection,
+            settings_extras::pick_directory,
+            settings_extras::excluded_business_lines_load,
+            settings_extras::excluded_business_lines_save,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
