@@ -8,6 +8,7 @@
 
 use keyring::Entry;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::time::Duration;
 
 const SERVICE_NAME: &str = "Jarvis";
@@ -125,59 +126,8 @@ fn normalize_base_url(input: &str) -> String {
     format!("{}://{}{}", scheme, host_port, path)
 }
 
-/// 根据响应状态码 + body 形态生成对用户友好的诊断信息。
-///
-/// 已知 4 种典型失败现场（按出现频率）：
-///   - HTTP 500 + HTML：禅道 API 没在后台启用，或者老版本压根没 v1 REST
-///   - HTTP 404：URL 路径不对（多半是 baseUrl 漏了 /zentao 子路径）
-///   - HTTP 200 + HTML：URL 命中了登录页或别的 HTML（baseUrl 还是有问题）
-///   - HTTP 200 + JSON 无 token：账号密码错误，或者 API 返回了别的 shape
-fn diagnose_failure(url: &str, status: u16, body: &str) -> String {
-    let trimmed = body.trim();
-    let snippet: String = trimmed.chars().take(200).collect();
-    let looks_html = trimmed.starts_with('<')
-        || trimmed.to_lowercase().contains("<!doctype html")
-        || trimmed.to_lowercase().contains("<html");
-
-    if status == 500 && looks_html {
-        return format!(
-            "禅道服务器内部错误（HTTP 500）。最常见原因：\n\
-             1) 后台 → 二次开发 → API 未启用 → 联系禅道管理员开启\n\
-             2) 禅道版本低于 12.3.3，没有 v1 REST 接口\n\
-             实际请求：{}",
-            url
-        );
-    }
-    if status == 404 {
-        return format!(
-            "找不到接口（HTTP 404）。多半是 baseUrl 漏了子路径（常见为 /zentao）。\n\
-             实际请求：{}",
-            url
-        );
-    }
-    if (status == 200 || status == 201) && looks_html {
-        return format!(
-            "禅道返回了 HTML 页面而不是 JSON，说明 baseUrl 命中了登录页或别的网页。\n\
-             检查 baseUrl 是否多了页面路径（如 /user-login-xxx.html）。\n\
-             实际请求：{}",
-            url
-        );
-    }
-    if status == 401 || status == 403 {
-        return format!(
-            "账号或密码错误（HTTP {}）。\n响应：{}",
-            status, snippet
-        );
-    }
-    if status >= 200 && status < 300 {
-        // 2xx 但没 token —— 大概率账号密码错
-        return format!(
-            "账号或密码错误，或禅道未返回 token。\n响应：{}",
-            snippet
-        );
-    }
-    format!("禅道返回 HTTP {}：{}", status, snippet)
-}
+/// 诊断逻辑已搬到 bundled/zentao-test.mjs（与 fetch 在同一进程里就近做），
+/// Rust 这边不再需要本地拷贝。Tauri 后端只把 helper 的 JSON 结果原样回传。
 
 #[tauri::command]
 pub async fn zentao_test_connection(req: ZentaoTestRequest) -> Result<ZentaoTestResult, String> {
@@ -189,66 +139,160 @@ pub async fn zentao_test_connection(req: ZentaoTestRequest) -> Result<ZentaoTest
         return Ok(ZentaoTestResult { ok: false, message: "账号不能为空".to_string() });
     }
 
-    let url = format!("{}/api.php/v1/tokens", base);
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(8))
-        // 跟 Node 端 ZenTaoProvider.authenticate() 完全一致的浏览器 UA。
-        // 之前用 reqwest 默认 UA 会被某些禅道前置（WAF / nginx mod / PHP 自身的
-        // UA 检查）拦下，返回 HTTP 500 + HTML —— 但同样 payload 从 Node fetch
-        // 发出去能 200。
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        .build()
-        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+    // === 为什么不直接用 reqwest 发 HTTP？===
+    // 实测某些禅道前置（nginx + WAF）会把 reqwest 的请求拦成 HTTP 403 + HTML
+    // "禁止访问"页 —— 即使 UA / Accept 已完全对齐 Node 端，并禁用了系统代理也
+    // 仍然 403。但同一台机器、同一组凭证从 Node 18+ fetch（undici）发出去能
+    // 201 拿到 token —— daemon 长期在这条路径上工作。
+    //
+    // 推测 WAF 在做 TCP/HTTP 客户端指纹识别（header 顺序、TLS-on-clear-port
+    // 探测、HTTP/1.1 vs HTTP/2、Connection 字段等），reqwest 和 undici 输出
+    // 不同。直接对齐 header 已经不够。
+    //
+    // 解决：把整个 HTTP 调用外包给打包好的 node.exe，跑 bundled/zentao-test.mjs
+    // helper（30 行 fetch + 诊断），从 stdout 读 `__JARVIS_RESULT__{...}` 一行
+    // 拿结果。100% 复用 daemon 同一套网络栈。
+    spawn_node_zentao_test(&base, &req.account, &req.password).await
+}
 
-    let resp = client
-        .post(&url)
-        .header("Accept", "application/json")
-        .json(&serde_json::json!({
-            "account": req.account,
-            "password": req.password,
-        }))
-        .send()
-        .await;
+/// 调 bundled node.exe + zentao-test.mjs 完成实际连接测试，从 stdout 取 JSON。
+async fn spawn_node_zentao_test(
+    base: &str,
+    account: &str,
+    password: &str,
+) -> Result<ZentaoTestResult, String> {
+    let (node_bin, helper) = match resolve_zentao_test_helper() {
+        Some(t) => t,
+        None => {
+            return Ok(ZentaoTestResult {
+                ok: false,
+                message: "找不到禅道测试 helper（bundled/zentao-test.mjs）。请重装应用。".to_string(),
+            });
+        }
+    };
 
-    let resp = match resp {
-        Ok(r) => r,
-        Err(err) => {
+    let url_for_msg = format!("{}/api.php/v1/tokens", base);
+    let base = base.to_string();
+    let account = account.to_string();
+    let password = password.to_string();
+    let node_bin_clone = node_bin.clone();
+    let helper_clone = helper.clone();
+
+    // 阻塞性的 Command::output 放到 blocking 线程，避免堵 tokio runtime。
+    // 8s 超时由 spawn 包一层 tokio::time::timeout 控制（Command 自身没超时）。
+    let output_fut = tokio::task::spawn_blocking(move || {
+        let mut cmd = std::process::Command::new(&node_bin_clone);
+        cmd.arg(&helper_clone).arg(&base).arg(&account).arg(&password);
+        // 关键：擦掉所有代理 env。Tauri/WebView2 进程在 Windows 上会注入
+        // HTTP(S)_PROXY 反映系统代理设置，子进程继承后 undici fetch 会读取
+        // 并走代理 —— 而代理把禅道域名拦成 403 "禁止访问"HTML。
+        // 直接命令行跑 bundled node.exe 没这些 env，所以能 201 成功。
+        for v in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+                  "http_proxy", "https_proxy", "all_proxy",
+                  "NO_PROXY", "no_proxy"] {
+            cmd.env_remove(v);
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
+        cmd.output()
+    });
+
+    let output = match tokio::time::timeout(Duration::from_secs(15), output_fut).await {
+        Ok(Ok(Ok(o))) => o,
+        Ok(Ok(Err(e))) => {
+            return Ok(ZentaoTestResult {
+                ok: false,
+                message: format!("启动 node helper 失败：{}\n实际请求：{}", e, url_for_msg),
+            });
+        }
+        Ok(Err(e)) => {
+            return Ok(ZentaoTestResult {
+                ok: false,
+                message: format!("node helper 任务异常：{}", e),
+            });
+        }
+        Err(_) => {
+            return Ok(ZentaoTestResult {
+                ok: false,
+                message: format!("禅道测试超时（>15s）。\n实际请求：{}", url_for_msg),
+            });
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // helper 用一行 `__JARVIS_RESULT__{json}` 包结果，避免被无关日志干扰
+    let parsed = stdout
+        .lines()
+        .filter_map(|l| l.strip_prefix("__JARVIS_RESULT__"))
+        .last()
+        .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok());
+
+    let v = match parsed {
+        Some(v) => v,
+        None => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
             return Ok(ZentaoTestResult {
                 ok: false,
                 message: format!(
-                    "无法连接禅道：{}\n请检查地址是否正确、是否在公司网络。\n实际请求：{}",
-                    err, url
+                    "node helper 未返回有效结果。stdout:\n{}\nstderr:\n{}",
+                    stdout.trim().chars().take(300).collect::<String>(),
+                    stderr.trim().chars().take(300).collect::<String>(),
                 ),
             });
         }
     };
 
-    let status = resp.status();
-    let body = resp.text().await.unwrap_or_default();
-
-    if !status.is_success() {
-        return Ok(ZentaoTestResult {
-            ok: false,
-            message: diagnose_failure(&url, status.as_u16(), &body),
-        });
-    }
-
-    // 成功响应里应该有 token 字段
-    let parsed: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
-    let token = parsed.get("token").and_then(|t| t.as_str()).unwrap_or("");
-    if token.is_empty() {
-        return Ok(ZentaoTestResult {
-            ok: false,
-            message: diagnose_failure(&url, status.as_u16(), &body),
-        });
-    }
-
     Ok(ZentaoTestResult {
-        ok: true,
-        message: format!(
-            "连接成功，已获取 Token（{}...）\nbaseUrl 已规范化为：{}",
-            &token[..token.len().min(10)],
-            base
-        ),
+        ok: v.get("ok").and_then(|b| b.as_bool()).unwrap_or(false),
+        message: v.get("message").and_then(|m| m.as_str()).unwrap_or("").to_string(),
     })
+}
+
+/// 找 bundled/node.exe + bundled/zentao-test.mjs。逻辑同 daemon_client.rs 的
+/// resolve_daemon_launch —— 生产从 exe 同级 resources/bundled 找，dev 从项目
+/// 根 src-tauri/bundled 找；找不到 node.exe 时回退到系统 node（适配 dev）。
+fn resolve_zentao_test_helper() -> Option<(PathBuf, PathBuf)> {
+    let exe = std::env::current_exe().ok();
+    let exe_dir = exe.as_ref().and_then(|p| p.parent()).map(PathBuf::from);
+    let node_bin_name = if cfg!(windows) { "node.exe" } else { "node" };
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(d) = &exe_dir {
+        candidates.push(d.join("resources").join("bundled"));
+        if let Some(parent) = d.parent() {
+            candidates.push(parent.join("Resources").join("bundled"));
+        }
+        candidates.push(d.join("bundled"));
+    }
+
+    // 项目根（dev）
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let root = if cwd.join("package.json").exists() {
+        cwd.clone()
+    } else if cwd.parent().map(|p| p.join("package.json").exists()).unwrap_or(false) {
+        cwd.parent().unwrap().to_path_buf()
+    } else {
+        cwd
+    };
+    candidates.push(root.join("src-tauri").join("bundled"));
+
+    for dir in &candidates {
+        let helper = dir.join("zentao-test.mjs");
+        if !helper.exists() {
+            continue;
+        }
+        let bundled_node = dir.join(node_bin_name);
+        let node = if bundled_node.exists() {
+            bundled_node
+        } else {
+            // dev 模式 bundled/node.exe 可能没下载 —— 用系统 node
+            PathBuf::from("node")
+        };
+        return Some((node, helper));
+    }
+
+    None
 }

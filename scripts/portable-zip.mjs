@@ -25,7 +25,7 @@ const distDir = resolve(root, 'dist')
 const exe = resolve(releaseDir, 'jarvis.exe')
 const bundledDir = resolve(releaseDir, 'bundled')
 
-for (const p of [exe, resolve(bundledDir, 'node.exe'), resolve(bundledDir, 'daemon.mjs')]) {
+for (const p of [exe, resolve(bundledDir, 'node.exe'), resolve(bundledDir, 'daemon.mjs'), resolve(bundledDir, 'zentao-test.mjs')]) {
   if (!existsSync(p)) {
     console.error(`[portable-zip] missing required artifact: ${p}`)
     console.error(`[portable-zip] run "npm run desktop:build" (or at least "npm run desktop:prebuild && cargo build --release" in src-tauri/) first`)
@@ -52,6 +52,7 @@ mkdirSync(stageBundled, { recursive: true })
 execSync(`powershell -Command "Copy-Item -Path '${exe}' -Destination '${stageRoot}'"`, { stdio: 'inherit' })
 execSync(`powershell -Command "Copy-Item -Path '${resolve(bundledDir, 'node.exe')}' -Destination '${stageBundled}'"`, { stdio: 'inherit' })
 execSync(`powershell -Command "Copy-Item -Path '${resolve(bundledDir, 'daemon.mjs')}' -Destination '${stageBundled}'"`, { stdio: 'inherit' })
+execSync(`powershell -Command "Copy-Item -Path '${resolve(bundledDir, 'zentao-test.mjs')}' -Destination '${stageBundled}'"`, { stdio: 'inherit' })
 
 // 简单 README
 const readme = `Jarvis · 便携版

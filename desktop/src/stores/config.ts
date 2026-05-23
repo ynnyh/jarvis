@@ -52,7 +52,7 @@ const defaultConfig = (): JarvisConfig => ({
     todayMode: 'normal',
     todayModeSetOn: '',
   },
-  zentao: { baseUrl: '', account: '' },
+  zentao: { baseUrl: 'http://REDACTED_INTERNAL_IP:8989/zentao', account: '' },
   repoRoots: [],
 })
 
