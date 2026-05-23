@@ -81,7 +81,14 @@ async function finish() {
     store.config.zentao.baseUrl = normalizeZentaoBaseUrl(baseUrl.value)
     store.config.zentao.account = account.value.trim()
     store.config.repoRoots = [...repoRoots.value]
-    // store 的 watch 会自动保存 + 触发 daemon reload
+    // 3. 让 store 的 watch 把 config 写盘（save 是 250ms 防抖）
+    await new Promise(r => setTimeout(r, 350))
+    // 4. 重启 daemon —— 它启动时通过 env 拿 ZENTAO_PASSWORD，不重启拿不到新密码。
+    //    旧 daemon 用启动时的（可能为空 / 旧密码）凭证调禅道会认证失败，UI 一进
+    //    主界面就报 "ZenTao 认证失败"。
+    try { await invoke('daemon_restart') } catch (e) {
+      console.warn('daemon 重启失败（不影响 wizard 完成）:', e)
+    }
     emit('done')
   } catch (e: any) {
     testState.value = 'fail'

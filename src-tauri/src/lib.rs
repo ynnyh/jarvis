@@ -117,6 +117,7 @@ pub fn run() {
             credentials::credentials_get,
             credentials::credentials_delete,
             credentials::zentao_test_connection,
+            credentials::daemon_restart,
             settings_extras::pick_directory,
             settings_extras::excluded_business_lines_load,
             settings_extras::excluded_business_lines_save,

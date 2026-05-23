@@ -80,8 +80,12 @@ async function saveZentaoPassword() {
       account: store.config.zentao.account,
       password: zentaoPassword.value,
     })
+    // 重启 daemon 拿新密码 —— 不重启的话它仍用旧 env 里的密码调禅道认证。
+    try { await invoke('daemon_restart') } catch (e) {
+      console.warn('daemon 重启失败（密码已保存）:', e)
+    }
     zentaoTestState.value = 'ok'
-    zentaoTestMessage.value = '密码已加密保存到系统密钥链'
+    zentaoTestMessage.value = '密码已加密保存到系统密钥链，daemon 已重启使用新凭证'
     zentaoPassword.value = ''
   } catch (e: any) {
     zentaoTestState.value = 'fail'

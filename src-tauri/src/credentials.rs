@@ -46,6 +46,26 @@ pub fn credentials_delete(account: String) -> Result<(), String> {
     }
 }
 
+// ===== daemon 重启 =====
+//
+// 用户在 wizard 完成 / 在设置面板保存新密码后调。
+//
+// daemon 启动时通过 spawn env 拿到 ZENTAO_PASSWORD（从 keychain 读出来塞进去），
+// 启动后 process.env 不会变。所以改了密码 / 改了 baseUrl 之后必须重启 daemon，
+// 否则它仍用旧凭证调禅道 → 认证失败。
+#[tauri::command]
+pub async fn daemon_restart() -> Result<(), String> {
+    // 通知现有 daemon 优雅退出（如果有的话）
+    crate::daemon_client::try_shutdown().await;
+    // 等一小会儿让端口释放 + daemon.json 被清掉
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    // ensure_running 感知 daemon 不在会重新 spawn，新进程会拿到新密码 env
+    crate::daemon_client::ensure_running()
+        .await
+        .map(|_| ())
+        .map_err(|e| format!("daemon 重启失败: {}", e))
+}
+
 // ===== 禅道连接测试 =====
 //
 // 给引导/设置窗口的"测试连接"按钮调。直接打禅道的 token 接口，验证 baseUrl
