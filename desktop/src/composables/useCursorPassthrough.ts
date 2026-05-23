@@ -1,29 +1,33 @@
 import { onMounted, onUnmounted } from 'vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { invoke } from '@tauri-apps/api/core'
 
 /**
  * 让小人窗口的空白区域真穿透到桌面。
  *
- * 工作原理（受 Tauri/Webview2 限制做的妥协方案）：
- *   - DOM 通过 mousemove 检测鼠标进入/离开"可交互元素"（class .pointer-target），
- *     即时调 setIgnoreCursorEvents。
- *   - 穿透状态下，DOM 收不到任何鼠标事件（包括 mousemove），无法主动检测
- *     "鼠标又回到 UI 上"——所以 150ms 一次 probe：临时取消穿透，让 CSS :hover
- *     同步当前鼠标位置，再决定是否要保持非穿透或设回穿透。
- *   - mousedown 期间禁用切换，避免拖动窗口（drag_window）时穿透状态意外变化。
+ * 原理（v2 重写）：
+ *   - 每 80ms 调 Rust 的 cursor_pos_in_window 拿到鼠标相对窗口的 CSS 坐标
+ *     （直接读 OS 的鼠标位置，绕开 WebView 在 ignoreCursorEvents=true 时收
+ *     不到事件的问题）
+ *   - document.elementFromPoint(x, y) 看看那个像素下是不是 .pointer-target
+ *   - 是 → 关穿透（窗口接事件）；不是 → 开穿透（鼠标穿过去落桌面）
+ *
+ * 为什么不沿用 v1 的 mousemove + :hover + 150ms 探针：
+ *   开了 ignoreCursorEvents 之后 OS 根本不向 WebView 派发鼠标事件，:hover
+ *   状态卡在 OFF。临时关穿透再查 :hover 也救不回来 —— 静止鼠标不触发
+ *   WM_MOUSEMOVE，hover 仍是旧值。结果就是用户从空白区移到小人上后小人
+ *   永远不可点。
  *
  * 标记可交互元素：在 root 元素（小人、菜单、气泡、各 panel）上加 class="pointer-target"。
- * 同时给元素加 ":hover" 触发的 CSS 不影响样式即可（默认 `:hover` 总会生效）。
  */
-const PROBE_INTERVAL = 150
+const POLL_INTERVAL = 80
 const SELECTOR = '.pointer-target'
 
 export function useCursorPassthrough() {
   const win = getCurrentWindow()
   let isIgnoring = false
-  let mouseIsDown = false
-  let probeTimer: ReturnType<typeof setInterval> | null = null
-  let probing = false
+  let timer: ReturnType<typeof setInterval> | null = null
+  let polling = false
 
   async function setIgnore(value: boolean) {
     if (value === isIgnoring) return
@@ -31,68 +35,48 @@ export function useCursorPassthrough() {
       await win.setIgnoreCursorEvents(value)
       isIgnoring = value
     } catch (e) {
-      // 历史教训：这里被静默吞过 —— 当时 capabilities/default.json 漏了
-      // core:window:allow-set-ignore-cursor-events，整套穿透逻辑全部失效但
-      // 看上去毫无报错。出问题要 console 报，别再让人查半天死角。
+      // 历史教训：capabilities/default.json 漏了 set-ignore-cursor-events
+      // 权限时这里被静默吞了，整套穿透看上去什么都没发生。出问题要 console
+      // 报，别让人查半天。
       console.error('[passthrough] setIgnoreCursorEvents 失败：', e)
     }
   }
 
-  function isOnUI(target: EventTarget | null): boolean {
-    if (!target || !(target instanceof HTMLElement)) return false
-    return target.closest(SELECTOR) !== null
-  }
-
-  function onMouseMove(e: MouseEvent) {
-    if (mouseIsDown) return
-    setIgnore(!isOnUI(e.target))
-  }
-
-  function onMouseDown() {
-    mouseIsDown = true
-  }
-
-  function onMouseUp() {
-    mouseIsDown = false
-  }
-
-  async function probe() {
-    if (!isIgnoring || mouseIsDown || probing) return
-    probing = true
+  async function tick() {
+    if (polling) return
+    polling = true
     try {
-      // 临时取消穿透，让 CSS :hover 同步当前鼠标位置
-      await win.setIgnoreCursorEvents(false)
-      // 等两帧确保 hover 状态生效
-      await new Promise(r => requestAnimationFrame(r))
-      await new Promise(r => requestAnimationFrame(r))
-      const onUI = document.querySelector(`${SELECTOR}:hover`) !== null
-      if (onUI) {
-        // 鼠标确实在 UI 上，保持非穿透
-        isIgnoring = false
-      } else {
-        // 还是空白，设回穿透
-        await win.setIgnoreCursorEvents(true)
-      }
-    } catch {
-      // ignore
+      const [x, y] = await invoke<[number, number]>('cursor_pos_in_window')
+      // 鼠标在窗口外 → 维持当前状态（不主动改）。0..rect 之间才在窗口内。
+      const w = window.innerWidth
+      const h = window.innerHeight
+      if (x < 0 || y < 0 || x >= w || y >= h) return
+
+      const el = document.elementFromPoint(x, y)
+      const onUI = !!(el && el.closest && el.closest(SELECTOR))
+      // onUI=true  → 关穿透（让窗口收事件）
+      // onUI=false → 开穿透（鼠标穿过窗口空白区到桌面）
+      await setIgnore(!onUI)
+    } catch (e) {
+      // 调 cursor_pos_in_window 失败一般是 capability 没配 / 权限问题。
+      // 安全策略：失败时关穿透，至少保证 UI 可用 —— 否则用户点不到小人。
+      console.error('[passthrough] cursor_pos_in_window 失败：', e)
+      await setIgnore(false)
     } finally {
-      probing = false
+      polling = false
     }
   }
 
   onMounted(() => {
-    document.addEventListener('mousemove', onMouseMove)
-    document.addEventListener('mousedown', onMouseDown)
-    document.addEventListener('mouseup', onMouseUp)
-    probeTimer = setInterval(probe, PROBE_INTERVAL)
+    // 启动时显式同步状态 —— 默认不穿透，保证 wizard / 小人立刻可点
+    setIgnore(false)
+    timer = setInterval(tick, POLL_INTERVAL)
   })
 
   onUnmounted(() => {
-    document.removeEventListener('mousemove', onMouseMove)
-    document.removeEventListener('mousedown', onMouseDown)
-    document.removeEventListener('mouseup', onMouseUp)
-    if (probeTimer) clearInterval(probeTimer)
-    // 关闭穿透避免遗留状态
+    if (timer) clearInterval(timer)
+    timer = null
+    // 关穿透避免遗留状态影响其它窗口（同 app 多窗口场景）
     setIgnore(false)
   })
 }

@@ -95,6 +95,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::drag_window,
+            commands::cursor_pos_in_window,
             commands::tool_execute,
             commands::tool_list,
             commands::action_execute,
