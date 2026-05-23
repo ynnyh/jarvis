@@ -11,6 +11,7 @@
 import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useConfigStore } from '../stores/config'
+import { normalizeZentaoBaseUrl } from '../composables/zentaoUrl'
 
 const emit = defineEmits<{
   (e: 'done'): void
@@ -40,6 +41,11 @@ const canNext = computed(() => {
 })
 
 async function testConnection() {
+  // 用户多半会从浏览器地址栏直接复制；先规范化再调，并把清洗后的值写回输入框
+  // 让用户看到我们实际用的是什么 URL
+  const cleaned = normalizeZentaoBaseUrl(baseUrl.value)
+  if (cleaned !== baseUrl.value) baseUrl.value = cleaned
+
   testState.value = 'testing'
   testMessage.value = ''
   try {
@@ -72,7 +78,7 @@ async function finish() {
     // 1. 密码进密钥链
     await invoke('credentials_set', { account: account.value, password: password.value })
     // 2. settings 写回（baseUrl + account + repoRoots）
-    store.config.zentao.baseUrl = baseUrl.value.trim()
+    store.config.zentao.baseUrl = normalizeZentaoBaseUrl(baseUrl.value)
     store.config.zentao.account = account.value.trim()
     store.config.repoRoots = [...repoRoots.value]
     // store 的 watch 会自动保存 + 触发 daemon reload
@@ -329,6 +335,9 @@ function prev() { if (step.value > 1) step.value-- }
   padding: 6px 10px;
   font-size: 11.5px !important;
   border-radius: 4px;
+  white-space: pre-line;       /* 后端消息里的 \n 直接换行 */
+  word-break: break-all;       /* 长 URL 强制换行，避免横向溢出 */
+  line-height: 1.5;
 }
 .msg-ok { color: rgba(134, 239, 172, 0.95) !important; background: rgba(34, 197, 94, 0.12); }
 .msg-fail { color: rgba(252, 165, 165, 0.95) !important; background: rgba(239, 68, 68, 0.12); }

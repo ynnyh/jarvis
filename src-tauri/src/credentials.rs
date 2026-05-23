@@ -65,9 +65,123 @@ pub struct ZentaoTestResult {
     pub message: String,
 }
 
+/// 把用户输入的禅道 URL 清洗成可拼 /api.php/v1/... 的根地址。
+///
+/// 行为同 desktop/src/composables/zentaoUrl.ts 的 normalizeZentaoBaseUrl —— 前端
+/// 应该已经清洗过，这里做服务端兜底（用户可能手动改了 settings.json）。
+///
+/// 规则：
+///   - 缺 scheme 补 http://
+///   - 丢 query / fragment
+///   - path 按 '/' 切段，遇到第一个 *.html / *.htm / *.php / *.json / *.jsp
+///     / *.asp / *.aspx 即截断（那是入口文件名而非路径前缀）
+///   - 去尾斜杠
+fn normalize_base_url(input: &str) -> String {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let with_scheme: String = if trimmed.to_lowercase().starts_with("http://")
+        || trimmed.to_lowercase().starts_with("https://")
+    {
+        trimmed.to_string()
+    } else {
+        format!("http://{}", trimmed)
+    };
+
+    let url = match reqwest::Url::parse(&with_scheme) {
+        Ok(u) => u,
+        Err(_) => return trimmed.to_string(),
+    };
+
+    let scheme = url.scheme();
+    let host = url.host_str().unwrap_or("");
+    let host_port = match url.port() {
+        Some(p) => format!("{}:{}", host, p),
+        None => host.to_string(),
+    };
+
+    let is_entry = |seg: &str| {
+        let l = seg.to_lowercase();
+        l.ends_with(".html") || l.ends_with(".htm")
+            || l.ends_with(".php") || l.ends_with(".json")
+            || l.ends_with(".jsp") || l.ends_with(".asp")
+            || l.ends_with(".aspx")
+    };
+
+    let mut kept: Vec<&str> = Vec::new();
+    for seg in url.path().split('/').filter(|s| !s.is_empty()) {
+        if is_entry(seg) {
+            break;
+        }
+        kept.push(seg);
+    }
+    let path = if kept.is_empty() {
+        String::new()
+    } else {
+        format!("/{}", kept.join("/"))
+    };
+
+    format!("{}://{}{}", scheme, host_port, path)
+}
+
+/// 根据响应状态码 + body 形态生成对用户友好的诊断信息。
+///
+/// 已知 4 种典型失败现场（按出现频率）：
+///   - HTTP 500 + HTML：禅道 API 没在后台启用，或者老版本压根没 v1 REST
+///   - HTTP 404：URL 路径不对（多半是 baseUrl 漏了 /zentao 子路径）
+///   - HTTP 200 + HTML：URL 命中了登录页或别的 HTML（baseUrl 还是有问题）
+///   - HTTP 200 + JSON 无 token：账号密码错误，或者 API 返回了别的 shape
+fn diagnose_failure(url: &str, status: u16, body: &str) -> String {
+    let trimmed = body.trim();
+    let snippet: String = trimmed.chars().take(200).collect();
+    let looks_html = trimmed.starts_with('<')
+        || trimmed.to_lowercase().contains("<!doctype html")
+        || trimmed.to_lowercase().contains("<html");
+
+    if status == 500 && looks_html {
+        return format!(
+            "禅道服务器内部错误（HTTP 500）。最常见原因：\n\
+             1) 后台 → 二次开发 → API 未启用 → 联系禅道管理员开启\n\
+             2) 禅道版本低于 12.3.3，没有 v1 REST 接口\n\
+             实际请求：{}",
+            url
+        );
+    }
+    if status == 404 {
+        return format!(
+            "找不到接口（HTTP 404）。多半是 baseUrl 漏了子路径（常见为 /zentao）。\n\
+             实际请求：{}",
+            url
+        );
+    }
+    if (status == 200 || status == 201) && looks_html {
+        return format!(
+            "禅道返回了 HTML 页面而不是 JSON，说明 baseUrl 命中了登录页或别的网页。\n\
+             检查 baseUrl 是否多了页面路径（如 /user-login-xxx.html）。\n\
+             实际请求：{}",
+            url
+        );
+    }
+    if status == 401 || status == 403 {
+        return format!(
+            "账号或密码错误（HTTP {}）。\n响应：{}",
+            status, snippet
+        );
+    }
+    if status >= 200 && status < 300 {
+        // 2xx 但没 token —— 大概率账号密码错
+        return format!(
+            "账号或密码错误，或禅道未返回 token。\n响应：{}",
+            snippet
+        );
+    }
+    format!("禅道返回 HTTP {}：{}", status, snippet)
+}
+
 #[tauri::command]
 pub async fn zentao_test_connection(req: ZentaoTestRequest) -> Result<ZentaoTestResult, String> {
-    let base = req.base_url.trim_end_matches('/');
+    let base = normalize_base_url(&req.base_url);
     if base.is_empty() {
         return Ok(ZentaoTestResult { ok: false, message: "禅道地址不能为空".to_string() });
     }
@@ -95,7 +209,10 @@ pub async fn zentao_test_connection(req: ZentaoTestRequest) -> Result<ZentaoTest
         Err(err) => {
             return Ok(ZentaoTestResult {
                 ok: false,
-                message: format!("无法连接禅道：{}。请检查地址是否正确、是否在公司网络。", err),
+                message: format!(
+                    "无法连接禅道：{}\n请检查地址是否正确、是否在公司网络。\n实际请求：{}",
+                    err, url
+                ),
             });
         }
     };
@@ -106,22 +223,26 @@ pub async fn zentao_test_connection(req: ZentaoTestRequest) -> Result<ZentaoTest
     if !status.is_success() {
         return Ok(ZentaoTestResult {
             ok: false,
-            message: format!("禅道返回 HTTP {}：{}", status.as_u16(), body.chars().take(120).collect::<String>()),
+            message: diagnose_failure(&url, status.as_u16(), &body),
         });
     }
 
-    // 成功的响应里应该有 token 字段
+    // 成功响应里应该有 token 字段
     let parsed: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
     let token = parsed.get("token").and_then(|t| t.as_str()).unwrap_or("");
     if token.is_empty() {
         return Ok(ZentaoTestResult {
             ok: false,
-            message: format!("账号或密码错误：{}", body.chars().take(160).collect::<String>()),
+            message: diagnose_failure(&url, status.as_u16(), &body),
         });
     }
 
     Ok(ZentaoTestResult {
         ok: true,
-        message: format!("连接成功，已获取 Token（{}...）", &token[..token.len().min(10)]),
+        message: format!(
+            "连接成功，已获取 Token（{}...）\nbaseUrl 已规范化为：{}",
+            &token[..token.len().min(10)],
+            base
+        ),
     })
 }

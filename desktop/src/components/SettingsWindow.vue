@@ -2,6 +2,7 @@
 import { computed, ref, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useConfigStore } from '../stores/config'
+import { normalizeZentaoBaseUrl } from '../composables/zentaoUrl'
 
 const store = useConfigStore()
 
@@ -41,6 +42,10 @@ const zentaoTestState = ref<'idle' | 'testing' | 'ok' | 'fail'>('idle')
 const zentaoTestMessage = ref('')
 
 async function testZentao() {
+  // 同 WelcomeWizard：测试前规范化，并把清洗后的值写回 store（store.watch 会持久化）
+  const cleaned = normalizeZentaoBaseUrl(store.config.zentao.baseUrl)
+  if (cleaned !== store.config.zentao.baseUrl) store.config.zentao.baseUrl = cleaned
+
   zentaoTestState.value = 'testing'
   zentaoTestMessage.value = ''
   try {
@@ -523,7 +528,9 @@ onMounted(loadExcluded)
   padding: 4px 8px;
   font-size: 11px;
   border-radius: 4px;
-  line-height: 1.4;
+  line-height: 1.5;
+  white-space: pre-line;       /* 多行诊断信息按 \n 换行 */
+  word-break: break-all;       /* 长 URL 强制换行 */
 }
 .msg-ok { color: rgba(134, 239, 172, 0.95); background: rgba(34, 197, 94, 0.12); }
 .msg-fail { color: rgba(252, 165, 165, 0.95); background: rgba(239, 68, 68, 0.12); }
