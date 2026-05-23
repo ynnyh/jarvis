@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { TaskService } from '../services/task-service.js'
 import { toolRegistry } from '../core/tool-registry.js'
 import type { Tool } from '../core/tool-registry.js'
+import { getZentaoCredentials } from '../config/settings.js'
 
 const inputSchema = z.object({
   status: z.array(z.enum(['wait', 'doing', 'done', 'closed', 'cancel'])).optional(),
@@ -10,10 +11,8 @@ const inputSchema = z.object({
 
 async function execute(input: z.infer<typeof inputSchema>) {
   const { ZenTaoProvider } = await import('../providers/zentao-provider.js')
-  const baseUrl = process.env.ZENTAO_BASE_URL || process.env.ZENTAO_URL || ''
-  const username = process.env.ZENTAO_ACCOUNT || process.env.ZENTAO_USER || ''
-  const password = process.env.ZENTAO_PASSWORD || process.env.ZENTAO_PASS || ''
-  const provider = new ZenTaoProvider({ baseUrl, username, password })
+  const { baseUrl, account, password } = getZentaoCredentials()
+  const provider = new ZenTaoProvider({ baseUrl, username: account, password })
   const service = new TaskService(provider)
   return service.getMyTasks()
 }

@@ -3,6 +3,7 @@ import { toolRegistry } from '../core/tool-registry.js'
 import type { Tool } from '../core/tool-registry.js'
 import { linkTasksWithCommits, type LinkCommitsOptions } from '../services/commit-link-service.js'
 import { TaskService } from '../services/task-service.js'
+import { getZentaoCredentials, getRepoRoots } from '../config/settings.js'
 
 const rangeEnum = z.enum([
   'today', 'yesterday', 'thisWeek', 'lastWeek', 'last7days', 'last30days', 'thisMonth',
@@ -21,10 +22,8 @@ const inputSchema = z.object({
 async function execute(input: z.infer<typeof inputSchema>) {
   // 1. 拉任务（默认：当前用户的全部任务）
   const { ZenTaoProvider } = await import('../providers/zentao-provider.js')
-  const baseUrl = process.env.ZENTAO_BASE_URL || process.env.ZENTAO_URL || ''
-  const username = process.env.ZENTAO_ACCOUNT || process.env.ZENTAO_USER || ''
-  const password = process.env.ZENTAO_PASSWORD || process.env.ZENTAO_PASS || ''
-  const provider = new ZenTaoProvider({ baseUrl, username, password })
+  const { baseUrl, account, password } = getZentaoCredentials()
+  const provider = new ZenTaoProvider({ baseUrl, username: account, password })
   const service = new TaskService(provider)
 
   const allTasks = await service.getMyTasks()
@@ -38,12 +37,12 @@ async function execute(input: z.infer<typeof inputSchema>) {
     name: t.name ?? t.title ?? '',
   }))
 
-  // 2. 关联
+  // 2. 关联（rootDir 入参优先；未传则用 settings.repoRoots）
   const options: LinkCommitsOptions = {
     range: input.range,
     since: input.since,
     until: input.until,
-    rootDir: input.rootDir,
+    rootDir: input.rootDir ?? getRepoRoots(),
     includeBody: input.includeBody ?? true,
   }
   return linkTasksWithCommits(taskInputs, options)

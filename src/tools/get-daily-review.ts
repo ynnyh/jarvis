@@ -4,6 +4,7 @@ import type { Tool } from '../core/tool-registry.js'
 import { linkTasksWithCommits } from '../services/commit-link-service.js'
 import { buildDailyReview } from '../services/daily-review-service.js'
 import { TaskService } from '../services/task-service.js'
+import { getZentaoCredentials, getRepoRoots } from '../config/settings.js'
 
 const inputSchema = z.object({
   /** 默认 today；做"周复盘"可传 thisWeek */
@@ -20,10 +21,8 @@ const inputSchema = z.object({
 async function execute(input: z.infer<typeof inputSchema>) {
   // 1. 拉禅道任务
   const { ZenTaoProvider } = await import('../providers/zentao-provider.js')
-  const baseUrl = process.env.ZENTAO_BASE_URL || process.env.ZENTAO_URL || ''
-  const username = process.env.ZENTAO_ACCOUNT || process.env.ZENTAO_USER || ''
-  const password = process.env.ZENTAO_PASSWORD || process.env.ZENTAO_PASS || ''
-  const provider = new ZenTaoProvider({ baseUrl, username, password })
+  const { baseUrl, account, password } = getZentaoCredentials()
+  const provider = new ZenTaoProvider({ baseUrl, username: account, password })
   const service = new TaskService(provider)
   const allTasks = await service.getMyTasks()
 
@@ -40,6 +39,7 @@ async function execute(input: z.infer<typeof inputSchema>) {
       range: input.range ?? 'today',
       since: input.since,
       until: input.until,
+      rootDir: getRepoRoots(),
       includeBody: true,
     },
   )

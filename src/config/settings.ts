@@ -117,3 +117,40 @@ export function reloadSettings(): JarvisSettings {
 export function settingsFilePath(): string {
   return FILE_PATH
 }
+
+// ===== 禅道凭证 =====
+//
+// 密码暂时还从 env 拿（task #12 会接 OS 密钥链）。
+// baseUrl 和 account 已经走 settings，但保留 env 回退以兼容当前 dev 环境。
+
+export interface ZentaoCredentials {
+  baseUrl: string
+  account: string
+  password: string
+}
+
+export function getZentaoCredentials(): ZentaoCredentials {
+  const s = getSettings()
+  return {
+    baseUrl: s.zentao.baseUrl
+      || process.env.ZENTAO_BASE_URL
+      || process.env.ZENTAO_URL
+      || '',
+    account: s.zentao.account
+      || process.env.ZENTAO_ACCOUNT
+      || process.env.ZENTAO_USER
+      || '',
+    password: process.env.ZENTAO_PASSWORD || process.env.ZENTAO_PASS || '',
+  }
+}
+
+export function getRepoRoots(): string[] {
+  const s = getSettings()
+  if (s.repoRoots && s.repoRoots.length > 0) return s.repoRoots
+  // 兼容旧 env
+  const raw = process.env.TENCENT_CODE_LOCAL_ROOTS
+  if (raw) {
+    return raw.split(/[;,]/).map(x => x.trim()).filter(Boolean)
+  }
+  return []
+}
