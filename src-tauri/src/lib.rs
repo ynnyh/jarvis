@@ -1,4 +1,5 @@
 mod commands;
+mod conversations;
 mod credentials;
 mod daemon_client;
 mod settings_extras;
@@ -124,6 +125,8 @@ pub fn run() {
             commands::toggle_avatar_window,
             commands::config_load,
             commands::config_save,
+            commands::chat_open,
+            commands::chat_close,
             credentials::credentials_set,
             credentials::credentials_get,
             credentials::credentials_delete,
@@ -132,6 +135,10 @@ pub fn run() {
             settings_extras::pick_directory,
             settings_extras::excluded_business_lines_load,
             settings_extras::excluded_business_lines_save,
+            conversations::conversations_list,
+            conversations::conversations_load,
+            conversations::conversations_save,
+            conversations::conversations_delete,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

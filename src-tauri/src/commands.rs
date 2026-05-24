@@ -207,6 +207,8 @@ fn config_path() -> PathBuf {
 /// 默认配置（与用户的实际作息一致：8-12 / 14-18，周一到周五）
 fn default_config() -> serde_json::Value {
     serde_json::json!({
+        // 助手显示名，用户可改。默认 Jarvis；影响 UI、问候、写工时审计文本
+        "assistantName": "Jarvis",
         "workSchedule": {
             "workDays": [1, 2, 3, 4, 5],          // 0=周日 ... 6=周六
             "periods": [
@@ -230,6 +232,14 @@ fn default_config() -> serde_json::Value {
         "zentao": {
             "baseUrl": "",                         // 如 http://zentao.example.com:9538/zentao
             "account": ""                          // 同事的禅道账号名
+        },
+        // LLM 接入（默认走 DeepSeek，OpenAI 兼容）。apiKey 这阶段先明文存 config，
+        // 用户已表态不在乎隐私。换厂商改 provider + baseUrl + model。
+        "llm": {
+            "provider": "deepseek",                // deepseek | openai | custom
+            "baseUrl": "https://api.deepseek.com", // 厂商根域名，客户端拼 /v1/chat/completions
+            "model": "deepseek-chat",              // deepseek-chat（V3）/ deepseek-reasoner（R1）
+            "apiKey": ""
         },
         // 本地代码根目录列表，用于扫描 git 提交。同事电脑可能放在 D:/work、C:/projects 等
         "repoRoots": []
@@ -606,4 +616,36 @@ pub async fn git_info() -> Result<GitInfo, String> {
         added: str_array(&status, "added"),
         untracked: str_array(&status, "untracked"),
     })
+}
+
+// ===== Chat 窗口切换 =====
+// 设计原则：avatar 与 chat 互斥可见。打开 chat 时 hide avatar，关闭 chat 时 show avatar。
+// chat 窗口配置 closable: true 但前端拦截了 onCloseRequested → 调 chat_close 隐藏而非销毁。
+
+#[tauri::command]
+pub async fn chat_open(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    if let Some(chat) = app.get_webview_window("chat") {
+        chat.show().map_err(|e| format!("show chat 失败: {}", e))?;
+        chat.set_focus().map_err(|e| format!("focus chat 失败: {}", e))?;
+    } else {
+        return Err("chat 窗口未注册".into());
+    }
+    if let Some(avatar) = app.get_webview_window("avatar") {
+        avatar.hide().map_err(|e| format!("hide avatar 失败: {}", e))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn chat_close(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    if let Some(chat) = app.get_webview_window("chat") {
+        chat.hide().map_err(|e| format!("hide chat 失败: {}", e))?;
+    }
+    if let Some(avatar) = app.get_webview_window("avatar") {
+        avatar.show().map_err(|e| format!("show avatar 失败: {}", e))?;
+        avatar.set_focus().ok();  // 失败不影响主流程
+    }
+    Ok(())
 }

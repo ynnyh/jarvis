@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { useAppStore } from '../stores/app'
+import { useConfigStore } from '../stores/config'
 
 const store = useAppStore()
+const configStore = useConfigStore()
 
 // Emits
 const emit = defineEmits<{
@@ -36,7 +38,7 @@ function startWork() {
       class="absolute top-full left-1/2 -translate-x-1/2 mt-3 w-56 glass rounded-2xl py-2 shadow-2xl z-50"
     >
       <div class="px-3 py-2 text-xs text-gray-400 border-b border-white/10 mb-1">
-        Jarvis 助手
+        {{ configStore.config.assistantName }} 助手
       </div>
 
       <!-- 任务提醒入口 -->

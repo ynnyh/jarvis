@@ -89,7 +89,7 @@ export function useTaskAlerts() {
               ? '⏰ 今天到期'
               : `⚡ ${a.daysUntilDue} 天后到期`
           sendNotification({
-            title: `Jarvis · ${prefix}`,
+            title: `${configStore.config.assistantName} · ${prefix}`,
             body: a.title,
           })
         }

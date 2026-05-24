@@ -93,6 +93,55 @@ async function saveZentaoPassword() {
   }
 }
 
+// ===== LLM =====
+const llmShowKey = ref(false)
+const llmTestState = ref<'idle' | 'testing' | 'ok' | 'fail'>('idle')
+const llmTestMessage = ref('')
+
+// 切换 provider 时把 baseUrl/model 顺手填成厂商默认值，避免用户手动配
+const LLM_PRESETS: Record<string, { baseUrl: string; model: string }> = {
+  deepseek: { baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat' },
+  openai: { baseUrl: 'https://api.openai.com', model: 'gpt-4o-mini' },
+  custom: { baseUrl: '', model: '' },
+}
+function onLlmProviderChange(next: string) {
+  const preset = LLM_PRESETS[next]
+  if (!preset) return
+  // custom 不覆盖已有内容；其余情况只在用户没改过时才填默认（避免抹掉用户的自定义值）
+  if (next === 'custom') return
+  store.config.llm.baseUrl = preset.baseUrl
+  store.config.llm.model = preset.model
+}
+
+async function testLlm() {
+  llmTestState.value = 'testing'
+  llmTestMessage.value = ''
+  // 先等一次保存（store watcher 250ms 防抖），保证 daemon 拿到的是最新 apiKey
+  await new Promise(r => setTimeout(r, 400))
+  try {
+    const r = await invoke<{ success: boolean; data?: any; error?: string }>('tool_execute', {
+      name: 'ask-llm',
+      input: {
+        messages: [
+          { role: 'system', content: '只回一个字：好' },
+          { role: 'user', content: 'ping' },
+        ],
+        maxTokens: 8,
+      },
+    })
+    if (r.success && r.data?.text) {
+      llmTestState.value = 'ok'
+      llmTestMessage.value = `连通：${r.data.model ?? store.config.llm.model} → “${String(r.data.text).slice(0, 40)}”`
+    } else {
+      llmTestState.value = 'fail'
+      llmTestMessage.value = r.error || '调用失败：无文本返回'
+    }
+  } catch (e: any) {
+    llmTestState.value = 'fail'
+    llmTestMessage.value = String(e?.message ?? e)
+  }
+}
+
 // ===== 代码文件夹（repoRoots） =====
 async function addRepoRoot() {
   const picked = await invoke<string | null>('pick_directory', {
@@ -166,6 +215,17 @@ onMounted(loadExcluded)
       </div>
 
       <div class="panel-body">
+        <!-- 助手名字 -->
+        <section class="section">
+          <h3 class="section-title">助手名字</h3>
+          <label class="field">
+            <span class="field-label">名字</span>
+            <input class="text-input" type="text" maxlength="16" placeholder="Jarvis"
+              v-model="store.config.assistantName" />
+          </label>
+          <p class="section-hint">影响菜单、问候、通知标题等所有显示文案，重启或切换面板即时生效</p>
+        </section>
+
         <!-- 禅道连接 -->
         <section class="section">
           <h3 class="section-title">禅道连接</h3>
@@ -198,10 +258,55 @@ onMounted(loadExcluded)
           <p class="section-hint">密码不会写入任何文件，仅保存在系统密钥链中</p>
         </section>
 
+        <!-- LLM 接入 -->
+        <section class="section">
+          <h3 class="section-title">LLM 接入</h3>
+          <p class="section-hint">日报、风险摘要、commit↔任务评分可选调用。apiKey 明文存 config.json，不写密钥链</p>
+          <label class="field">
+            <span class="field-label">服务商</span>
+            <select class="text-input"
+              :value="store.config.llm.provider"
+              @change="(e) => { const v = (e.target as HTMLSelectElement).value as any; store.config.llm.provider = v; onLlmProviderChange(v) }">
+              <option value="deepseek">DeepSeek</option>
+              <option value="openai">OpenAI</option>
+              <option value="custom">自定义（OpenAI 兼容）</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="field-label">地址</span>
+            <input class="text-input" type="url" placeholder="https://api.deepseek.com"
+              v-model="store.config.llm.baseUrl" />
+          </label>
+          <label class="field">
+            <span class="field-label">模型</span>
+            <input class="text-input" type="text" placeholder="deepseek-chat"
+              v-model="store.config.llm.model" />
+          </label>
+          <label class="field">
+            <span class="field-label">apiKey</span>
+            <input class="text-input" :type="llmShowKey ? 'text' : 'password'"
+              placeholder="sk-..." v-model="store.config.llm.apiKey" />
+            <button class="action-btn" style="margin-left:6px;padding:4px 8px;"
+              @click="llmShowKey = !llmShowKey">
+              {{ llmShowKey ? '隐藏' : '显示' }}
+            </button>
+          </label>
+          <div class="zentao-actions">
+            <button class="action-btn primary"
+              :disabled="llmTestState === 'testing' || !store.config.llm.apiKey"
+              @click="testLlm">
+              {{ llmTestState === 'testing' ? '测试中…' : '测试连接' }}
+            </button>
+          </div>
+          <p v-if="llmTestMessage" class="zentao-msg" :class="`msg-${llmTestState}`">
+            {{ llmTestMessage }}
+          </p>
+        </section>
+
         <!-- 代码文件夹（repoRoots） -->
         <section class="section">
           <h3 class="section-title">本地代码文件夹</h3>
-          <p class="section-hint">Jarvis 会扫描这些目录下的 git 仓库，关联到禅道任务以生成日报。每个目录第一层子文件夹的名字会被当作"业务线"</p>
+          <p class="section-hint">{{ store.config.assistantName }} 会扫描这些目录下的 git 仓库，关联到禅道任务以生成日报。每个目录第一层子文件夹的名字会被当作"业务线"</p>
           <ul class="path-list">
             <li v-for="(p, i) in store.config.repoRoots" :key="i" class="path-item">
               <span class="path-text">{{ p }}</span>

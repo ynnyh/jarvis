@@ -15,6 +15,22 @@ import { join } from 'path'
 export interface ZentaoSettings {
   baseUrl: string
   account: string
+  /** 手动注入的 zentaosid cookie 值。设了就跳过自动登录，直接用它发表单写工时。应急/调试用。 */
+  sessionCookie?: string
+}
+
+/**
+ * LLM 接入配置。当前默认走 DeepSeek（OpenAI 兼容），baseUrl 是厂商根域名，
+ * 客户端拼 `/v1/chat/completions`。换厂商只需改 provider/baseUrl/model。
+ *
+ * apiKey 这阶段先存 config 明文 + 环境变量回退，用户已表态不在乎隐私
+ * （"我可以自己接模型，不需要考虑隐私问题"）。后期再决定要不要进 keychain。
+ */
+export interface LlmSettings {
+  provider: 'deepseek' | 'openai' | 'custom'
+  baseUrl: string
+  model: string
+  apiKey: string
 }
 
 export interface WorkPeriod {
@@ -25,6 +41,7 @@ export interface WorkPeriod {
 
 export interface JarvisSettings {
   zentao: ZentaoSettings
+  llm: LlmSettings
   repoRoots: string[]
   workSchedule: {
     workDays: number[]
@@ -47,7 +64,13 @@ export interface JarvisSettings {
 const FILE_PATH = join(homedir(), '.jarvis', 'config.json')
 
 const DEFAULTS: JarvisSettings = {
-  zentao: { baseUrl: '', account: '' },
+  zentao: { baseUrl: '', account: '', sessionCookie: '' },
+  llm: {
+    provider: 'deepseek',
+    baseUrl: 'https://api.deepseek.com',
+    model: 'deepseek-chat',
+    apiKey: '',
+  },
   repoRoots: [],
   workSchedule: {
     workDays: [1, 2, 3, 4, 5],
@@ -127,10 +150,19 @@ export interface ZentaoCredentials {
   baseUrl: string
   account: string
   password: string
+  sessionCookie?: string
 }
 
 export function getZentaoCredentials(): ZentaoCredentials {
   const s = getSettings()
+  // 独立 cookie 文件 ~/.jarvis/zentaosid.txt —— Rust 端 config_save 不写它，
+  // 不会被前端 store 提交时擦掉。应急/调试通道，存浏览器 F12 复制出来的值即可。
+  let sessionCookieFromFile: string | undefined
+  try {
+    const raw = readFileSync(join(homedir(), '.jarvis', 'zentaosid.txt'), 'utf-8').trim()
+    if (raw) sessionCookieFromFile = raw
+  } catch { /* 文件不存在就走自动登录 */ }
+
   return {
     baseUrl: s.zentao.baseUrl
       || process.env.ZENTAO_BASE_URL
@@ -141,6 +173,10 @@ export function getZentaoCredentials(): ZentaoCredentials {
       || process.env.ZENTAO_USER
       || '',
     password: process.env.ZENTAO_PASSWORD || process.env.ZENTAO_PASS || '',
+    sessionCookie: s.zentao.sessionCookie
+      || sessionCookieFromFile
+      || process.env.ZENTAO_SESSION_COOKIE
+      || undefined,
   }
 }
 
@@ -153,4 +189,34 @@ export function getRepoRoots(): string[] {
     return raw.split(/[;,]/).map(x => x.trim()).filter(Boolean)
   }
   return []
+}
+
+// ===== LLM 凭证 =====
+//
+// apiKey 优先级：config.json > env (LLM_API_KEY / DEEPSEEK_API_KEY / OPENAI_API_KEY)
+// baseUrl/model 类似。允许 env 兜底是为了 dev 时不写 config 也能跑。
+
+export interface LlmCredentials {
+  provider: 'deepseek' | 'openai' | 'custom'
+  baseUrl: string
+  model: string
+  apiKey: string
+}
+
+export function getLlmCredentials(): LlmCredentials {
+  const s = getSettings()
+  return {
+    provider: s.llm.provider || 'deepseek',
+    baseUrl: s.llm.baseUrl
+      || process.env.LLM_BASE_URL
+      || 'https://api.deepseek.com',
+    model: s.llm.model
+      || process.env.LLM_MODEL
+      || 'deepseek-chat',
+    apiKey: s.llm.apiKey
+      || process.env.LLM_API_KEY
+      || process.env.DEEPSEEK_API_KEY
+      || process.env.OPENAI_API_KEY
+      || '',
+  }
 }

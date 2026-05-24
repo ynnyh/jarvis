@@ -13,6 +13,8 @@ export type CommitsRange =
   | 'last7days' | 'last30days' | 'thisMonth' | 'all'
 
 export interface JarvisConfig {
+  /** 助手显示名（用户可改）。默认 "Jarvis"；只影响 UI 文案、问候、写工时审计文本 */
+  assistantName: string
   workSchedule: {
     workDays: number[]      // 0=Sun, 1=Mon ... 6=Sat
     periods: WorkPeriod[]
@@ -37,12 +39,20 @@ export interface JarvisConfig {
     baseUrl: string           // 如 http://zentao.example.com:9538/zentao
     account: string           // 用户的禅道账号；密码在 OS 密钥链里，不存这里
   }
+  /** LLM 接入（默认 DeepSeek，OpenAI 兼容）。apiKey 这阶段明文存 config —— 用户已确认 */
+  llm: {
+    provider: 'deepseek' | 'openai' | 'custom'
+    baseUrl: string           // 厂商根域名，客户端拼 /v1/chat/completions
+    model: string             // 如 deepseek-chat / deepseek-reasoner / gpt-4o
+    apiKey: string
+  }
   repoRoots: string[]         // 扫描 git 提交的本地代码根目录列表
   /** 任务窗口里 commits 关联取多大时间范围 —— 默认本周，'all' 走全量 */
   commitsRange: CommitsRange
 }
 
 const defaultConfig = (): JarvisConfig => ({
+  assistantName: 'Jarvis',
   workSchedule: {
     workDays: [1, 2, 3, 4, 5],
     periods: [
@@ -65,6 +75,12 @@ const defaultConfig = (): JarvisConfig => ({
     todayModeSetOn: '',
   },
   zentao: { baseUrl: 'http://REDACTED_INTERNAL_IP:8989/zentao', account: '' },
+  llm: {
+    provider: 'deepseek',
+    baseUrl: 'https://api.deepseek.com',
+    model: 'deepseek-chat',
+    apiKey: '',
+  },
   repoRoots: [],
   commitsRange: 'thisWeek',
 })
@@ -89,6 +105,7 @@ export const useConfigStore = defineStore('config', () => {
       const merged: JarvisConfig = {
         ...defaults,
         ...remote,
+        assistantName: (remote.assistantName ?? '').trim() || defaults.assistantName,
         // notifications 是嵌套对象，浅合并会丢掉新字段 —— 显式合并
         notifications: { ...defaults.notifications, ...(remote.notifications ?? {}) },
         // zentao 同理，且要兜默认值：旧 settings.json 可能 baseUrl 为空串 ——
@@ -96,6 +113,12 @@ export const useConfigStore = defineStore('config', () => {
         zentao: {
           baseUrl: remote.zentao?.baseUrl?.trim() ? remote.zentao.baseUrl : defaults.zentao.baseUrl,
           account: remote.zentao?.account ?? defaults.zentao.account,
+        },
+        llm: {
+          provider: remote.llm?.provider ?? defaults.llm.provider,
+          baseUrl: remote.llm?.baseUrl?.trim() ? remote.llm.baseUrl : defaults.llm.baseUrl,
+          model: remote.llm?.model?.trim() ? remote.llm.model : defaults.llm.model,
+          apiKey: remote.llm?.apiKey ?? defaults.llm.apiKey,
         },
         commitsRange: remote.commitsRange ?? defaults.commitsRange,
       }

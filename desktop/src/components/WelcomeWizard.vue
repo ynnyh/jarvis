@@ -161,7 +161,7 @@ function prev() { if (step.value > 1) step.value-- }
       <header class="wizard-header">
         <div class="wizard-title">
           <span class="wizard-icon">🤖</span>
-          <span>欢迎使用 Jarvis</span>
+          <span>欢迎使用 {{ store.config.assistantName }}</span>
         </div>
         <div class="wizard-progress">
           <span v-for="i in totalSteps" :key="i" class="dot" :class="{ active: i <= step }" />
@@ -173,7 +173,7 @@ function prev() { if (step.value > 1) step.value-- }
         <!-- Step 1：欢迎 -->
         <section v-if="step === 1" class="step">
           <h2>你好 👋</h2>
-          <p>Jarvis 是你的个人任务助手，会自动同步禅道任务、追踪本地代码提交，并在下班前提醒你写日报。</p>
+          <p>{{ store.config.assistantName }} 是你的个人任务助手，会自动同步禅道任务、追踪本地代码提交，并在下班前提醒你写日报。</p>
           <p>开始之前，需要配置几项基本信息：</p>
           <ul class="prep-list">
             <li>· 禅道地址、账号和密码</li>
@@ -195,7 +195,7 @@ function prev() { if (step.value > 1) step.value-- }
             <input class="form-input" type="text" placeholder="禅道用户名"
               v-model="account" />
           </label>
-          <p class="hint">这个账号同时也是 Jarvis 过滤"我的任务"的标识。</p>
+          <p class="hint">这个账号同时也是 {{ store.config.assistantName }} 过滤"我的任务"的标识。</p>
         </section>
 
         <!-- Step 3：密码 + 测试 -->
@@ -216,7 +216,7 @@ function prev() { if (step.value > 1) step.value-- }
         <!-- Step 4：代码文件夹 -->
         <section v-if="step === 4" class="step">
           <h2>代码在哪？</h2>
-          <p>选择一个或多个本地代码根目录，Jarvis 会扫描里面的 git 仓库，把 commit 关联到禅道任务。</p>
+          <p>选择一个或多个本地代码根目录，{{ store.config.assistantName }} 会扫描里面的 git 仓库，把 commit 关联到禅道任务。</p>
           <ul class="path-list">
             <li v-for="(p, i) in repoRoots" :key="i" class="path-item">
               <span class="path-text">{{ p }}</span>

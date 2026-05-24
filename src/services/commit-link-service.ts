@@ -8,6 +8,7 @@ import {
 import { aliasesFor, loadBusinessAliases, type BusinessAliases } from '../config/business-aliases.js'
 import { loadExcludedBusinessLines } from '../config/excluded-business-lines.js'
 import { effortForCommit } from './commit-effort.js'
+import { getLlmClient } from '../llm/client.js'
 
 // ===== 类型 =====
 
@@ -33,6 +34,10 @@ export interface CommitLink {
   matchedKeywords?: string[]
   /** 工作量分数；commit 没有 stat 时为 1。用于工时反推。 */
   effort: number
+  /** LLM 评分的置信度 0~1。仅 soft + useLlm 时填充。 */
+  confidence?: number
+  /** LLM 给出的一句话理由。仅 soft + useLlm 时填充。 */
+  reason?: string
 }
 
 export interface TaskCommitLinks {
@@ -173,6 +178,10 @@ export interface LinkCommitsOptions {
   until?: string
   rootDir?: string | string[]
   includeBody?: boolean
+  /** 对 soft 匹配跑 LLM 评分；低于 minConfidence 的会被丢掉。失败回退到规则结果。 */
+  useLlm?: boolean
+  /** LLM 评分阈值，默认 0.4。低于阈值的 soft 匹配会被丢弃。 */
+  minConfidence?: number
 }
 
 export async function linkTasksWithCommits(
@@ -287,6 +296,31 @@ export async function linkTasksWithCommits(
     }
   }
 
+  // ----- 第三遍（可选）：用 LLM 给 soft 匹配打分，丢掉低置信度的 -----
+  if (options.useLlm) {
+    const threshold = options.minConfidence ?? 0.4
+    try {
+      const scoreMap = await scoreSoftMatchesWithLlm(tasks, taskLinks)
+      for (const [taskId, links] of taskLinks) {
+        const kept: CommitLink[] = []
+        for (const link of links) {
+          if (link.matchType !== 'soft') {
+            kept.push(link)
+            continue
+          }
+          const score = scoreMap.get(`${taskId}|${link.sha}`)
+          // LLM 没给到分数：保守保留（不删），但不写 confidence
+          if (!score) { kept.push(link); continue }
+          if (score.confidence < threshold) continue  // 丢弃
+          kept.push({ ...link, confidence: score.confidence, reason: score.reason })
+        }
+        taskLinks.set(taskId, kept)
+      }
+    } catch {
+      // LLM 失败：保留规则结果，调用方拿不到 confidence 字段就知道没评分
+    }
+  }
+
   // ----- 孤儿 commit -----
   const orphanByLine = new Map<string, CommitLink[]>()
   for (const group of groups) {
@@ -328,4 +362,105 @@ export async function linkTasksWithCommits(
     tasks: tasksOut,
     orphanCommits,
   }
+}
+
+// ===== LLM 评分 =====
+
+/**
+ * 给 soft 匹配打分。
+ *
+ * 输入：每个 (taskId, taskName) 候选的 commit 列表（只看 soft 类型）。
+ * 输出：Map<"taskId|sha", {confidence, reason}>。
+ *
+ * Prompt 策略：一次性把所有候选丢给 LLM 评分，避免每个 commit 一次请求。
+ * 要求严格输出 JSON 数组——不行则 throw，上层回退到规则结果。
+ * 温度 0.1——评分要稳定，不要发散。
+ */
+async function scoreSoftMatchesWithLlm(
+  tasks: TaskInput[],
+  taskLinks: Map<string, CommitLink[]>,
+): Promise<Map<string, { confidence: number; reason: string }>> {
+  const taskNameById = new Map(tasks.map(t => [String(t.id), t.name]))
+
+  type Candidate = { taskId: string; taskName: string; sha: string; title: string; businessLine: string; keywords?: string[] }
+  const candidates: Candidate[] = []
+  for (const [taskId, links] of taskLinks) {
+    const taskName = taskNameById.get(taskId) ?? ''
+    for (const link of links) {
+      if (link.matchType !== 'soft') continue
+      candidates.push({
+        taskId,
+        taskName,
+        sha: link.sha,
+        title: link.title,
+        businessLine: link.businessLine,
+        keywords: link.matchedKeywords,
+      })
+    }
+  }
+
+  const out = new Map<string, { confidence: number; reason: string }>()
+  if (candidates.length === 0) return out
+
+  const client = getLlmClient()
+  const res = await client.chat({
+    temperature: 0.1,
+    maxTokens: Math.min(4000, 200 + candidates.length * 60),
+    messages: [
+      {
+        role: 'system',
+        content:
+          '你是一个代码提交与任务关联的评分助手。\n' +
+          '给定一组 (任务, commit) 候选对，判断这个 commit 是否真的在推进这个任务。\n' +
+          '严格按 JSON 输出，每项包含 taskId、sha、confidence (0~1, 两位小数)、reason (一句话中文)。\n' +
+          '评分参考：\n' +
+          '- 0.8~1.0：commit 标题直接指向任务的功能点\n' +
+          '- 0.5~0.79：commit 在同业务线下，且涉及任务相关的模块\n' +
+          '- 0.2~0.49：仅业务线匹配，但 commit 在做不相干的事\n' +
+          '- 0~0.19：明显无关\n' +
+          '只输出 JSON 数组本身，不要 ```json 包裹，不要解释。',
+      },
+      {
+        role: 'user',
+        content:
+          '候选对：\n```json\n' + JSON.stringify(candidates, null, 2) + '\n```\n' +
+          '请返回形如 [{"taskId":"123","sha":"abc","confidence":0.8,"reason":"..."}, ...] 的 JSON 数组。',
+      },
+    ],
+  })
+
+  const parsed = parseLlmJsonArray(res.text)
+  for (const row of parsed) {
+    const taskId = String(row?.taskId ?? '')
+    const sha = String(row?.sha ?? '')
+    const confidence = Number(row?.confidence)
+    const reason = String(row?.reason ?? '')
+    if (!taskId || !sha || !Number.isFinite(confidence)) continue
+    out.set(`${taskId}|${sha}`, {
+      confidence: Math.max(0, Math.min(1, confidence)),
+      reason,
+    })
+  }
+  return out
+}
+
+/**
+ * 从 LLM 输出里抠出 JSON 数组。
+ * 容忍 ```json 围栏、前后多余文字。失败抛错让上层回退。
+ */
+function parseLlmJsonArray(text: string): any[] {
+  let s = text.trim()
+  // 剥 ```json ... ``` 围栏
+  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  if (fence) s = fence[1].trim()
+  // 抠出第一个 [...] 块
+  const start = s.indexOf('[')
+  const end = s.lastIndexOf(']')
+  if (start < 0 || end < 0 || end <= start) {
+    throw new Error(`LLM 输出不含 JSON 数组: ${text.slice(0, 200)}`)
+  }
+  const slice = s.slice(start, end + 1)
+  const parsed = JSON.parse(slice)
+  if (!Array.isArray(parsed)) throw new Error('LLM JSON 不是数组')
+  return parsed
 }

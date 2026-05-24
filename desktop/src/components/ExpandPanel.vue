@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import type { Task, RiskAnalysis } from '../stores/app'
+import { useConfigStore } from '../stores/config'
+
+const configStore = useConfigStore()
 
 const props = defineProps<{
   visible: boolean
@@ -34,7 +37,7 @@ const overdueCount = props.riskAnalysis?.overdueTasks.length || 0
       <div class="px-4 py-3 border-b border-white/10 flex items-center justify-between">
         <div class="flex items-center gap-2">
           <span class="text-xl">🤖</span>
-          <span class="font-semibold">Jarvis</span>
+          <span class="font-semibold">{{ configStore.config.assistantName }}</span>
         </div>
         <button @click="close" class="text-white/40 hover:text-white transition-colors">
           ✕
@@ -103,7 +106,7 @@ const overdueCount = props.riskAnalysis?.overdueTasks.length || 0
 
       <!-- 底部提示 -->
       <div class="px-4 py-3 bg-white/5 text-xs text-slate-500 text-center">
-        点击 Jarvis 可以随时找我
+        点击 {{ configStore.config.assistantName }} 可以随时找我
       </div>
     </div>
   </Transition>

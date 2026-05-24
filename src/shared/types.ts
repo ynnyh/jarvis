@@ -62,4 +62,6 @@ export interface ProviderConfig {
   apiToken?: string;
   username?: string;
   password?: string;
+  /** 手动注入的 session cookie 值（zentaosid），跳过 form login。临时通道，用于登录算法不通时应急。 */
+  sessionCookie?: string;
 }

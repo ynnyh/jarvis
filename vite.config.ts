@@ -11,6 +11,10 @@ export default defineConfig({
     minify: false,
     rollupOptions: {
       treeshake: false,
+      input: {
+        main: resolve(__dirname, 'desktop/index.html'),
+        chat: resolve(__dirname, 'desktop/chat.html'),
+      },
     },
   },
   resolve: {

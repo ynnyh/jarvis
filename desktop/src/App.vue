@@ -177,6 +177,13 @@ function menuShowSettings() {
   configStore.showSettingsWindow = true
 }
 
+function menuOpenChat() {
+  // 打开大窗对话：avatar 自动隐藏，聊天窗口接管
+  closeAllPanels()
+  showMenu.value = false
+  invoke('chat_open').catch(e => console.error('chat_open 失败:', e))
+}
+
 function menuCheckUpdate() {
   showMenu.value = false
   installUpdate()
@@ -257,7 +264,7 @@ watch(() => store.alertLevel, (level) => {
 
 onMounted(() => {
   configStore.load()
-  setTimeout(() => showAlert('Jarvis V2 已启动', '🤖', 'idle', 3000), 500)
+  setTimeout(() => showAlert(`${configStore.config.assistantName} V2 已启动`, '🤖', 'idle', 3000), 500)
   // 等数据加载后显示提醒
   watch(() => store.alertsLoaded, (loaded) => {
     if (loaded) showTaskAlertBubble()
@@ -296,13 +303,14 @@ onUnmounted(() => {
       </button>
       <button class="menu-item" @click="menuShowRisk"><span>⚠️</span><span>风险分析</span></button>
       <button class="menu-item" @click="menuShowReview"><span>📋</span><span>今日复盘</span></button>
+      <button class="menu-item" @click="menuOpenChat"><span>💬</span><span>聊天（大窗）</span></button>
       <button class="menu-item" @click="menuShowSettings"><span>⚙️</span><span>设置</span></button>
       <button class="menu-item" @click="menuCheckUpdate">
         <span>✨</span><span>检查更新</span>
         <span v-if="updater.available.value" class="menu-badge badge-soon">新</span>
       </button>
       <div class="menu-divider" />
-      <button class="menu-item menu-item-danger" @click="menuQuit"><span>🚪</span><span>退出 Jarvis</span></button>
+      <button class="menu-item menu-item-danger" @click="menuQuit"><span>🚪</span><span>退出 {{ configStore.config.assistantName }}</span></button>
     </div>
 
     <div class="menu-btn pointer-target" @click="toggleMenu">⋯</div>
