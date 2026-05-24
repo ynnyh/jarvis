@@ -62,6 +62,8 @@ const isSending = ref(false)
 const renamingId = ref<string | null>(null)
 const renamingValue = ref('')
 const messagesEl = ref<HTMLElement | null>(null)
+/** 已展开的 tool 消息索引（按当前对话内的下标）。切换对话时清空 */
+const expandedToolMsgs = ref<Set<number>>(new Set())
 
 const sortedConversations = computed(() =>
   [...conversations.value].sort((a, b) => b.updatedAt - a.updatedAt),
@@ -83,6 +85,7 @@ async function selectConversation(id: string) {
     const conv = await invoke<Conversation>('conversations_load', { id })
     currentId.value = id
     currentConversation.value = conv
+    expandedToolMsgs.value = new Set()
     await nextTick()
     scrollToBottom()
   } catch (e) {
@@ -243,6 +246,46 @@ function formatTime(ts: number): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
+/** Tool 消息默认折叠。展示一行摘要 + 尺寸；展开时 pretty-print JSON */
+function toolMsgPreview(content: string): string {
+  const sz = formatSize(content.length)
+  // 试着解 JSON 给个简洁摘要
+  try {
+    const v = JSON.parse(content)
+    if (Array.isArray(v)) return `📦 数组 · ${v.length} 项 · ${sz}`
+    if (v && typeof v === 'object') {
+      if (typeof v.error === 'string') return `❌ ${v.error.slice(0, 60)} · ${sz}`
+      const keys = Object.keys(v).slice(0, 4).join(', ')
+      return `📦 {${keys}${Object.keys(v).length > 4 ? ', …' : ''}} · ${sz}`
+    }
+    return `📦 ${String(v).slice(0, 60)} · ${sz}`
+  } catch {
+    return `📄 ${content.split('\n')[0].slice(0, 60)} · ${sz}`
+  }
+}
+
+function toolMsgFormatted(content: string): string {
+  try {
+    const v = JSON.parse(content)
+    return JSON.stringify(v, null, 2)
+  } catch {
+    return content
+  }
+}
+
+function formatSize(n: number): string {
+  if (n < 1024) return `${n} 字`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}KB`
+  return `${(n / 1024 / 1024).toFixed(1)}MB`
+}
+
+function toggleToolExpanded(idx: number) {
+  const s = new Set(expandedToolMsgs.value)
+  if (s.has(idx)) s.delete(idx)
+  else s.add(idx)
+  expandedToolMsgs.value = s
+}
+
 function onInputKeydown(e: KeyboardEvent) {
   // Enter 发送 / Shift+Enter 换行
   if (e.key === 'Enter' && !e.shiftKey) {
@@ -328,15 +371,30 @@ watch(() => configStore.config.assistantName, (n) => {
             </div>
             <div v-for="(msg, i) in currentConversation.messages" :key="i"
               class="msg" :class="`msg-${msg.role}`">
-              <div class="msg-role">
-                {{ msg.role === 'user' ? '我' : msg.role === 'assistant' ? configStore.config.assistantName : msg.role === 'tool' ? `🔧 ${msg.name || '工具'}` : msg.role }}
-                <span class="msg-time">{{ formatTime(msg.createdAt) }}</span>
-              </div>
-              <div class="msg-content" v-if="msg.content">{{ msg.content }}</div>
-              <div class="msg-content tool-call-hint"
-                v-else-if="msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length">
-                正在调用 {{ msg.tool_calls.map(t => t.function.name).join('、') }}…
-              </div>
+              <!-- tool 消息：折叠+格式化 -->
+              <template v-if="msg.role === 'tool'">
+                <div class="msg-role tool-header" @click="toggleToolExpanded(i)">
+                  <span class="tool-toggle">{{ expandedToolMsgs.has(i) ? '▾' : '▸' }}</span>
+                  <span>🔧 {{ msg.name || '工具' }}</span>
+                  <span class="msg-time">{{ formatTime(msg.createdAt) }}</span>
+                </div>
+                <div v-if="!expandedToolMsgs.has(i)" class="msg-content tool-preview">
+                  {{ toolMsgPreview(msg.content) }}
+                </div>
+                <pre v-else class="msg-content tool-expanded">{{ toolMsgFormatted(msg.content) }}</pre>
+              </template>
+              <!-- user / assistant -->
+              <template v-else>
+                <div class="msg-role">
+                  {{ msg.role === 'user' ? '我' : msg.role === 'assistant' ? configStore.config.assistantName : msg.role }}
+                  <span class="msg-time">{{ formatTime(msg.createdAt) }}</span>
+                </div>
+                <div class="msg-content" v-if="msg.content">{{ msg.content }}</div>
+                <div class="msg-content tool-call-hint"
+                  v-else-if="msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length">
+                  正在调用 {{ msg.tool_calls.map(t => t.function.name).join('、') }}…
+                </div>
+              </template>
             </div>
             <div v-if="isSending" class="msg msg-assistant">
               <div class="msg-role">{{ configStore.config.assistantName }}</div>
@@ -553,6 +611,35 @@ watch(() => configStore.config.assistantName, (n) => {
   border: 1px solid rgba(168, 85, 247, 0.25);
   font-family: ui-monospace, monospace;
   font-size: 11.5px;
+}
+.tool-header {
+  cursor: pointer;
+  user-select: none;
+}
+.tool-header:hover { color: rgba(255, 255, 255, 0.75); }
+.tool-toggle {
+  display: inline-block;
+  width: 12px;
+  color: rgba(168, 85, 247, 0.9);
+  font-family: ui-monospace, monospace;
+}
+.tool-preview {
+  color: rgba(255, 255, 255, 0.6);
+  font-style: italic;
+}
+.tool-expanded {
+  margin: 0;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+  max-height: 400px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.85);
 }
 .msg-system { display: none; }   /* 系统消息不可见 */
 

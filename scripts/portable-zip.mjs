@@ -17,6 +17,13 @@ import { fileURLToPath } from 'url'
 import { dirname, resolve } from 'path'
 import { existsSync, statSync, mkdirSync, readdirSync, readFileSync, writeFileSync, createWriteStream } from 'fs'
 import { execSync } from 'child_process'
+import os from 'os'
+
+if (os.platform() !== 'win32') {
+  console.log(`[portable-zip] 跳过：当前平台 ${os.platform()} 不是 Windows。`)
+  console.log(`[portable-zip] Mac/Linux 用户请用 tauri build 生成的 .dmg/.deb`)
+  process.exit(0)
+}
 
 const here = dirname(fileURLToPath(import.meta.url))
 const root = resolve(here, '..')

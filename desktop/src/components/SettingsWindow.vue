@@ -97,6 +97,44 @@ async function saveZentaoPassword() {
 const llmShowKey = ref(false)
 const llmTestState = ref<'idle' | 'testing' | 'ok' | 'fail'>('idle')
 const llmTestMessage = ref('')
+const ccImportState = ref<'idle' | 'importing' | 'ok' | 'fail'>('idle')
+const ccImportMessage = ref('')
+
+async function importFromCcSwitch() {
+  ccImportState.value = 'importing'
+  ccImportMessage.value = ''
+  try {
+    const r = await invoke<{ success: boolean; data?: any; error?: string }>('tool_execute', {
+      name: 'cc_switch_import',
+      input: {},
+    })
+    if (!r.success || !r.data) {
+      ccImportState.value = 'fail'
+      ccImportMessage.value = r.error || '调用失败'
+      return
+    }
+    const data = r.data as { found: boolean; reason?: string; provider?: { name: string; apiKey: string; baseUrl: string; model: string; wireApi?: string } }
+    if (!data.found || !data.provider) {
+      ccImportState.value = 'fail'
+      ccImportMessage.value = data.reason || '未找到 CC Switch 配置'
+      return
+    }
+    // 覆盖 LLM 字段。provider 切到 custom（CC Switch 的 baseUrl 一般不是 OpenAI/DeepSeek）
+    store.config.llm.provider = 'custom'
+    store.config.llm.apiKey = data.provider.apiKey
+    store.config.llm.baseUrl = data.provider.baseUrl
+    store.config.llm.model = data.provider.model
+    ccImportState.value = 'ok'
+    let msg = `已导入「${data.provider.name}」：${data.provider.model}`
+    if (data.provider.wireApi === 'responses') {
+      msg += '\n⚠ 该 provider 用的是 Codex responses API（/v1/responses），咱们的客户端走 /v1/chat/completions。如果连通失败，需要换条 baseUrl 或上游开 chat completions 端点。'
+    }
+    ccImportMessage.value = msg
+  } catch (e: any) {
+    ccImportState.value = 'fail'
+    ccImportMessage.value = String(e?.message ?? e)
+  }
+}
 
 // 切换 provider 时把 baseUrl/model 顺手填成厂商默认值，避免用户手动配
 const LLM_PRESETS: Record<string, { baseUrl: string; model: string }> = {
@@ -297,9 +335,18 @@ onMounted(loadExcluded)
               @click="testLlm">
               {{ llmTestState === 'testing' ? '测试中…' : '测试连接' }}
             </button>
+            <button class="action-btn"
+              :disabled="ccImportState === 'importing'"
+              @click="importFromCcSwitch"
+              title="从 ~/.cc-switch/ 读取当前激活的 Codex（OpenAI）provider 一键填入">
+              {{ ccImportState === 'importing' ? '导入中…' : '🔄 从 CC Switch 导入' }}
+            </button>
           </div>
           <p v-if="llmTestMessage" class="zentao-msg" :class="`msg-${llmTestState}`">
             {{ llmTestMessage }}
+          </p>
+          <p v-if="ccImportMessage" class="zentao-msg" :class="`msg-${ccImportState === 'importing' ? 'testing' : ccImportState}`">
+            {{ ccImportMessage }}
           </p>
         </section>
 

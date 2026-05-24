@@ -1,43 +1,51 @@
 # Jarvis 桌面端构建与分发
 
-适用范围：把 Jarvis 打包成可以发给同事直接安装的 Windows .msi（macOS .dmg / Linux 包同理，但当前重点在 Windows）。
+适用范围：把 Jarvis 打成 Windows `.exe` 安装包 / macOS `.dmg`。
 
 ## 准备
 
 - Node 20+
 - Rust（stable，含 `cargo` 与 `rustup`）
-- Windows 平台需安装 WiX Toolset（Tauri 第一次 `tauri build` 时会引导）
+- Windows 平台首次 `tauri build` 会引导装 NSIS（约 5MB）
+- macOS 不需要额外依赖（Apple Silicon 推荐）
 
 ## 构建步骤
 
-| 目标 | 命令 | 产物 | 网络要求 |
-|---|---|---|---|
-| **便携 zip（推荐）** | `npm run desktop:portable` | `dist/Jarvis-portable-<date>.zip`（~29 MB） | 仅首次拉 node.exe |
-| 完整 .msi/.nsis 安装包 | `npm run desktop:build` | `src-tauri/target/release/bundle/...` | 首次还要拉 WiX 或 NSIS |
-| 仅 binary（不打包） | `npm run desktop:build-binary` | `src-tauri/target/release/jarvis.exe` + `bundled/` | 仅首次拉 node.exe |
-
-便携 zip 是最稳的路线——同事下载后解压即用，不需要安装器，也不依赖 GitHub 能否访问。MSI/NSIS 路线只有在构建机能访问 `github.com/wixtoolset/wix3/releases` 或 `github.com/tauri-apps/binary-releases` 时才走得通。
+| 目标 | 命令 | 产物 |
+|---|---|---|
+| 安装包（Windows） | `npm run desktop:build` | `src-tauri/target/release/bundle/nsis/*-setup.exe` |
+| 安装包（macOS） | `npm run desktop:build` | `src-tauri/target/release/bundle/dmg/*.dmg` |
+| 便携 zip（仅 Windows） | `npm run desktop:portable` | `dist/Jarvis-portable-<date>.zip` |
+| 仅 binary（不打包） | `npm run desktop:build-binary` | `src-tauri/target/release/jarvis(.exe)` + `bundled/` |
 
 ```bash
 npm install              # 一次
-npm run desktop:portable # 出 zip
+npm run desktop:build    # 出安装包
 ```
 
-`desktop:portable` 内部串了：
+`desktop:build` 内部串了：
 
 | 步骤 | 输出 |
 |---|---|
-| `desktop:bundle-daemon` | `src-tauri/bundled/daemon.mjs`（约 650 KB，所有 Node deps 内联） |
-| `desktop:fetch-node` | `src-tauri/bundled/node.exe`（约 66 MB，Node 20 LTS Windows x64） |
-| `tauri build --no-bundle` | `src-tauri/target/release/jarvis.exe` + 同级 `bundled/` 副本 |
-| `node scripts/portable-zip.mjs` | `dist/Jarvis-portable-<date>.zip` |
+| `desktop:bundle-daemon` | `src-tauri/bundled/daemon.mjs`（约 690 KB，所有 Node deps 内联） |
+| `desktop:fetch-node` | Windows: `bundled/node.exe`（66 MB）/ macOS: `bundled/node`（~50 MB，从官方 tarball 抽 bin/node） |
+| `tauri build` | NSIS（Windows）/ DMG（macOS） |
 
 ## 第一次构建会下载什么
 
-- `node.exe`（66 MB）从 `https://nodejs.org/dist/v20.18.1/win-x64/node.exe`
-  - 内网无法访问公网时：手动下载 `node.exe` v20 win-x64，放到 `src-tauri/bundled/node.exe`，再跑 `desktop:build`。脚本检测到文件存在且大小合理（>10MB）会跳过下载。
+- Node 便携二进制（按宿主平台自动选）：
+  - Windows x64 → `https://nodejs.org/dist/v20.18.1/win-x64/node.exe`
+  - macOS arm64 → `https://nodejs.org/dist/v20.18.1/node-v20.18.1-darwin-arm64.tar.gz`
+  - macOS x64   → `node-v20.18.1-darwin-x64.tar.gz`
+  - 内网无法访问公网时：手动下载对应平台的 node 二进制，放到 `src-tauri/bundled/node`（Mac/Linux 别忘 chmod +x），再跑 `desktop:build`。脚本检测到文件存在且大小合理（>10MB）会跳过下载。
   - 想换版本：`NODE_BUNDLE_VERSION=v20.20.0 npm run desktop:fetch-node`
 - esbuild 不联网，本地把 `dist/daemon/server.js` 及全部运行时依赖打成单 ESM 文件。
+
+## macOS 注意事项
+
+- 本仓库 macOS 包**未做 Apple Developer 签名与公证**。用户首次打开会被 Gatekeeper 拦下（"未知开发者"），需要在「系统设置 → 隐私与安全性」里手动放行一次。
+- Tauri updater 走自家 Ed25519 签名（`tauri-plugin-updater`），跟 Apple 公证是两条线 —— 自动更新仍正常工作。
+- 如果以后要做 Apple 公证：申请 Apple Developer（¥688/年）→ 在 CI 里加 `APPLE_CERTIFICATE` / `APPLE_SIGNING_IDENTITY` / `APPLE_ID` / `APPLE_PASSWORD` 等 secrets，Tauri 会自动调 codesign + notarytool。
 
 ## 产物布局（便携 zip 解压后 / 安装后）
 

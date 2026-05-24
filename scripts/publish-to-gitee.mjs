@@ -1,23 +1,26 @@
 #!/usr/bin/env node
 /**
- * 把刚 build 出来的 NSIS 安装包 + updater 产物推到 Gitee Releases，
+ * 把 build matrix 各平台的产物推到 Gitee Releases，
  * 同时把 latest.json 写到 Gitee 仓库 main 分支根目录（供 tauri-plugin-updater 拉取）。
  *
- * 用法：
- *   GITEE_TOKEN=xxx GITEE_OWNER=ynnyh GITEE_REPO=jarvis \
- *     node scripts/publish-to-gitee.mjs
+ * 输入：
+ *   ARTIFACTS_DIR        必填，目录里每个子目录是一个 actions artifact（每个 artifact 来自一个 platform 的 build job）
+ *                        子目录结构：{某 artifact 名}/{安装包} + {签名文件} + PLATFORM_ID
+ *   GITEE_TOKEN          必填，Gitee 私人访问令牌
+ *   GITEE_OWNER          可选，默认 ynnyh
+ *   GITEE_REPO           可选，默认 jarvis
+ *   RELEASE_NOTES        可选
  *
- * 环境变量：
- *   GITEE_TOKEN     必填，Gitee 私人访问令牌（projects 权限）
- *   GITEE_OWNER     可选，默认 ynnyh
- *   GITEE_REPO      可选，默认 jarvis
- *   RELEASE_NOTES   可选，写进 release body + latest.json.notes，默认 "Jarvis vX.Y.Z"
+ * 行为：
+ *   - 扫所有子目录，按 PLATFORM_ID 区分平台
+ *   - 安装包文件 = 任意非 .sig 非 PLATFORM_ID 文件；签名 = 同名 .sig
+ *   - 全部上传到 release，写一个含所有平台的 latest.json
  *
- * 工作流（Actions）里把这三个 env 注入即可。
+ * 兼容旧调用：未给 ARTIFACTS_DIR 时回退到只扫 src-tauri/target/release/bundle/nsis（保留本机一键发布能力）。
  */
 
 import fs from 'node:fs/promises'
-import { readFileSync } from 'node:fs'
+import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -29,6 +32,7 @@ const GITEE_OWNER = process.env.GITEE_OWNER || 'ynnyh'
 const GITEE_REPO = process.env.GITEE_REPO || 'jarvis'
 const TOKEN = process.env.GITEE_TOKEN
 const API = 'https://gitee.com/api/v5'
+const ARTIFACTS_DIR = process.env.ARTIFACTS_DIR
 
 if (!TOKEN) {
   console.error('❌ 缺少 GITEE_TOKEN 环境变量')
@@ -42,28 +46,63 @@ const version = tauriConf.version
 const tag = `v${version}`
 console.log(`发布版本：${tag}`)
 
-// --- 2. 定位 NSIS 产物 ---
-const bundleDir = path.join(repoRoot, 'src-tauri/target/release/bundle/nsis')
-let files
-try {
-  files = await fs.readdir(bundleDir)
-} catch {
-  console.error(`❌ 找不到 ${bundleDir}，确认已跑 tauri build`)
+// --- 2. 收集所有平台的产物 ---
+/** @type {Array<{platformId: string, installerPath: string, installerName: string, sigPath: string}>} */
+const platforms = []
+
+if (ARTIFACTS_DIR && existsSync(ARTIFACTS_DIR)) {
+  // CI 路径：每个子目录是一个 platform 的 artifact
+  const dirs = readdirSync(ARTIFACTS_DIR).filter(d => statSync(path.join(ARTIFACTS_DIR, d)).isDirectory())
+  for (const d of dirs) {
+    const sub = path.join(ARTIFACTS_DIR, d)
+    const platformIdFile = path.join(sub, 'PLATFORM_ID')
+    if (!existsSync(platformIdFile)) {
+      console.warn(`  ⚠ ${d} 缺 PLATFORM_ID，跳过`)
+      continue
+    }
+    const platformId = readFileSync(platformIdFile, 'utf8').trim()
+    const all = readdirSync(sub).filter(f => f !== 'PLATFORM_ID')
+    const sig = all.find(f => f.endsWith('.sig'))
+    const installer = all.find(f => f !== sig)
+    if (!installer || !sig) {
+      console.warn(`  ⚠ ${d} 缺安装包或签名（installer=${installer}, sig=${sig}），跳过`)
+      continue
+    }
+    platforms.push({
+      platformId,
+      installerPath: path.join(sub, installer),
+      installerName: installer,
+      sigPath: path.join(sub, sig),
+    })
+  }
+} else {
+  // 本机回退：扫 nsis/ 目录
+  const bundleDir = path.join(repoRoot, 'src-tauri/target/release/bundle/nsis')
+  if (!existsSync(bundleDir)) {
+    console.error(`❌ 找不到 ${bundleDir} 且未给 ARTIFACTS_DIR`)
+    process.exit(1)
+  }
+  const files = readdirSync(bundleDir)
+  const installer = files.find(f => f.endsWith('-setup.exe'))
+  const sig = files.find(f => f.endsWith('-setup.exe.sig'))
+  if (!installer || !sig) {
+    console.error('❌ nsis 目录里找不到 -setup.exe / .sig')
+    process.exit(1)
+  }
+  platforms.push({
+    platformId: 'windows-x86_64',
+    installerPath: path.join(bundleDir, installer),
+    installerName: installer,
+    sigPath: path.join(bundleDir, sig),
+  })
+}
+
+if (platforms.length === 0) {
+  console.error('❌ 没扫到任何平台产物')
   process.exit(1)
 }
 
-const setupExe = files.find(f => f.endsWith('-setup.exe'))
-const setupExeSig = files.find(f => f.endsWith('-setup.exe.sig'))
-
-if (!setupExe || !setupExeSig) {
-  console.error('❌ 未找到 NSIS 安装包 / 签名文件')
-  console.error('   确认 tauri.conf.json 里 bundle.createUpdaterArtifacts = true')
-  console.error('   并且签名环境变量 TAURI_SIGNING_PRIVATE_KEY[_PASSWORD] 已设置')
-  console.error(`   bundleDir 实际内容：${files.join(', ')}`)
-  process.exit(1)
-}
-
-const signature = readFileSync(path.join(bundleDir, setupExeSig), 'utf8').trim()
+console.log(`扫到 ${platforms.length} 个平台：${platforms.map(p => p.platformId).join(', ')}`)
 
 // --- 3. 创建（或复用）Release ---
 async function createOrFindRelease() {
@@ -87,7 +126,6 @@ async function createOrFindRelease() {
   }
 
   const text = await res.text()
-  // 已存在 → 查回来复用
   if (res.status === 422 || text.includes('已存在') || text.includes('exist')) {
     const r2 = await fetch(
       `${API}/repos/${GITEE_OWNER}/${GITEE_REPO}/releases/tags/${tag}?access_token=${TOKEN}`,
@@ -114,10 +152,8 @@ async function uploadAsset(filePath, name) {
   )
   if (!r.ok) {
     const t = await r.text()
-    // 同名已存在 → 视为成功，构造 URL（Gitee release 附件 URL 是稳定的）
     if (t.includes('已存在') || t.includes('exist')) {
       console.log(`  ↪ ${name} 已存在，跳过上传`)
-      // 用约定 URL（与 Gitee 实际返回一致）
       return `https://gitee.com/${GITEE_OWNER}/${GITEE_REPO}/releases/download/${tag}/${name}`
     }
     throw new Error(`上传 ${name} 失败：${r.status} ${t}`)
@@ -127,20 +163,21 @@ async function uploadAsset(filePath, name) {
   return j.browser_download_url
 }
 
-const setupExeUrl = await uploadAsset(path.join(bundleDir, setupExe), setupExe)
-await uploadAsset(path.join(bundleDir, setupExeSig), setupExeSig)
+const platformEntries = {}
+for (const p of platforms) {
+  console.log(`\n→ ${p.platformId}: ${p.installerName}`)
+  const url = await uploadAsset(p.installerPath, p.installerName)
+  await uploadAsset(p.sigPath, path.basename(p.sigPath))
+  const signature = readFileSync(p.sigPath, 'utf8').trim()
+  platformEntries[p.platformId] = { signature, url }
+}
 
-// --- 5. 写 latest.json 到仓库 main 分支根目录 ---
+// --- 5. 写 latest.json ---
 const latest = {
   version,
   notes: process.env.RELEASE_NOTES || `Jarvis ${tag}`,
   pub_date: new Date().toISOString(),
-  platforms: {
-    'windows-x86_64': {
-      signature,
-      url: setupExeUrl,
-    },
-  },
+  platforms: platformEntries,
 }
 const latestStr = JSON.stringify(latest, null, 2)
 const latestB64 = Buffer.from(latestStr, 'utf8').toString('base64')
@@ -176,7 +213,7 @@ if (!r.ok) {
   console.error('   如果是 404：先在 Gitee 网页给仓库初始化 main 分支（建个 README 即可）')
   process.exit(1)
 }
-console.log(`✓ latest.json 已发布：`)
+console.log(`\n✓ latest.json 已发布（${platforms.length} 个平台）：`)
 console.log(`   https://gitee.com/${GITEE_OWNER}/${GITEE_REPO}/raw/main/latest.json`)
 
 console.log(`\n🎉 ${tag} 全部发布完成`)

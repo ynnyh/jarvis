@@ -7,9 +7,24 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-publish:
-    runs-on: windows-latest
-    timeout-minutes: 30
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform_id: windows-x86_64
+            bundle_subdir: nsis
+            artifact_glob: '*-setup.exe'
+            artifact_sig_glob: '*-setup.exe.sig'
+          - os: macos-latest
+            platform_id: darwin-aarch64
+            bundle_subdir: dmg
+            artifact_glob: '*.dmg'
+            artifact_sig_glob: '*.dmg.sig'
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
 
     steps:
       - name: Checkout
@@ -39,11 +54,49 @@ jobs:
       - name: Prebuild (bundle daemon + fetch node)
         run: npm run desktop:prebuild
 
-      - name: Build Tauri (NSIS + updater artifacts)
+      - name: Build Tauri (NSIS / DMG + updater artifacts)
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npx tauri build
+
+      - name: Stage artifacts
+        shell: bash
+        run: |
+          mkdir -p staging
+          cp src-tauri/target/release/bundle/${{ matrix.bundle_subdir }}/${{ matrix.artifact_glob }} staging/
+          cp src-tauri/target/release/bundle/${{ matrix.bundle_subdir }}/${{ matrix.artifact_sig_glob }} staging/
+          echo "${{ matrix.platform_id }}" > staging/PLATFORM_ID
+          ls -la staging/
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-${{ matrix.platform_id }}-${{ github.ref_name }}
+          path: staging/*
+          retention-days: 14
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+          pattern: jarvis-*-${{ github.ref_name }}
+
+      - name: List artifacts
+        run: ls -R artifacts/
 
       - name: Publish to Gitee
         env:
@@ -51,13 +104,5 @@ jobs:
           GITEE_OWNER: ynnyh
           GITEE_REPO: jarvis
           RELEASE_NOTES: ${{ github.event.head_commit.message }}
+          ARTIFACTS_DIR: artifacts
         run: node scripts/publish-to-gitee.mjs
-
-      - name: Upload artifacts (for inspection)
-        uses: actions/upload-artifact@v4
-        with:
-          name: jarvis-nsis-${{ github.ref_name }}
-          path: |
-            src-tauri/target/release/bundle/nsis/*.exe
-            src-tauri/target/release/bundle/nsis/*.exe.sig
-          retention-days: 14
