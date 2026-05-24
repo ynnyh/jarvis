@@ -1,6 +1,6 @@
 [package]
 name = "jarvis"
-version = "0.4.0"
+version = "0.4.1"
 description = "Jarvis Desktop AI Assistant"
 authors = ["you"]
 license = ""
@@ -30,3 +30,8 @@ tokio = { version = "1", features = ["sync", "time", "process", "rt"] }
 once_cell = "1"
 keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native-sync-persistent"] }
 rfd = "0.15"
+
+# 非 Windows 平台需要 libc::kill 来检测 daemon 进程存活
+# Windows 走 tasklist，不需要 libc
+[target.'cfg(not(windows))'.dependencies]
+libc = "0.2"
