@@ -124,10 +124,12 @@ async function importFromCcSwitch() {
     store.config.llm.apiKey = data.provider.apiKey
     store.config.llm.baseUrl = data.provider.baseUrl
     store.config.llm.model = data.provider.model
+    // wireApi：CC Switch 检测到 responses 就跟着切，没检测到就保持 chat（兼容更广）
+    store.config.llm.wireApi = data.provider.wireApi === 'responses' ? 'responses' : 'chat'
     ccImportState.value = 'ok'
     let msg = `已导入「${data.provider.name}」：${data.provider.model}`
     if (data.provider.wireApi === 'responses') {
-      msg += '\n⚠ 该 provider 用的是 Codex responses API（/v1/responses），咱们的客户端走 /v1/chat/completions。如果连通失败，需要换条 baseUrl 或上游开 chat completions 端点。'
+      msg += '\n✓ 检测到 Codex responses API，已切到 /v1/responses 协议'
     }
     ccImportMessage.value = msg
   } catch (e: any) {
@@ -328,6 +330,13 @@ onMounted(loadExcluded)
               @click="llmShowKey = !llmShowKey">
               {{ llmShowKey ? '隐藏' : '显示' }}
             </button>
+          </label>
+          <label class="field">
+            <span class="field-label">协议</span>
+            <select class="text-input" v-model="store.config.llm.wireApi">
+              <option value="chat">Chat Completions（/v1/chat/completions，默认）</option>
+              <option value="responses">Responses（/v1/responses，Codex 协议）</option>
+            </select>
           </label>
           <div class="zentao-actions">
             <button class="action-btn primary"

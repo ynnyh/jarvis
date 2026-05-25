@@ -42,9 +42,11 @@ export interface JarvisConfig {
   /** LLM 接入（默认 DeepSeek，OpenAI 兼容）。apiKey 这阶段明文存 config —— 用户已确认 */
   llm: {
     provider: 'deepseek' | 'openai' | 'custom'
-    baseUrl: string           // 厂商根域名，客户端拼 /v1/chat/completions
+    baseUrl: string           // 厂商根域名，客户端按 wireApi 拼端点
     model: string             // 如 deepseek-chat / deepseek-reasoner / gpt-4o
     apiKey: string
+    /** 'chat'=/v1/chat/completions（默认）；'responses'=/v1/responses（Codex CLI 协议） */
+    wireApi?: 'chat' | 'responses'
   }
   repoRoots: string[]         // 扫描 git 提交的本地代码根目录列表
   /** 任务窗口里 commits 关联取多大时间范围 —— 默认本周，'all' 走全量 */
@@ -80,6 +82,7 @@ const defaultConfig = (): JarvisConfig => ({
     baseUrl: 'https://api.deepseek.com',
     model: 'deepseek-chat',
     apiKey: '',
+    wireApi: 'chat',
   },
   repoRoots: [],
   commitsRange: 'thisWeek',
@@ -119,6 +122,7 @@ export const useConfigStore = defineStore('config', () => {
           baseUrl: remote.llm?.baseUrl?.trim() ? remote.llm.baseUrl : defaults.llm.baseUrl,
           model: remote.llm?.model?.trim() ? remote.llm.model : defaults.llm.model,
           apiKey: remote.llm?.apiKey ?? defaults.llm.apiKey,
+          wireApi: remote.llm?.wireApi === 'responses' ? 'responses' : 'chat',
         },
         commitsRange: remote.commitsRange ?? defaults.commitsRange,
       }

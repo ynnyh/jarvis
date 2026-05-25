@@ -31,6 +31,13 @@ export interface LlmSettings {
   baseUrl: string
   model: string
   apiKey: string
+  /**
+   * 上游 API 协议。
+   * - 'chat'（默认）：标准 OpenAI Chat Completions，发到 /v1/chat/completions
+   * - 'responses'：OpenAI Responses API（Codex CLI 协议），发到 /v1/responses
+   *   CC Switch 导入 Codex provider 时检测到 wire_api="responses" 会写这里。
+   */
+  wireApi?: 'chat' | 'responses'
 }
 
 export interface WorkPeriod {
@@ -70,6 +77,7 @@ const DEFAULTS: JarvisSettings = {
     baseUrl: 'https://api.deepseek.com',
     model: 'deepseek-chat',
     apiKey: '',
+    wireApi: 'chat',
   },
   repoRoots: [],
   workSchedule: {
@@ -201,6 +209,7 @@ export interface LlmCredentials {
   baseUrl: string
   model: string
   apiKey: string
+  wireApi: 'chat' | 'responses'
 }
 
 export function getLlmCredentials(): LlmCredentials {
@@ -218,5 +227,6 @@ export function getLlmCredentials(): LlmCredentials {
       || process.env.DEEPSEEK_API_KEY
       || process.env.OPENAI_API_KEY
       || '',
+    wireApi: s.llm.wireApi === 'responses' ? 'responses' : 'chat',
   }
 }
