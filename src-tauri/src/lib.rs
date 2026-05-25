@@ -75,27 +75,35 @@ pub fn run() {
                     height: logical_h,
                 }));
 
-                // 获取主显示器信息并设置位置到右下角
-                let monitor = window.primary_monitor().ok().flatten()
-                    .or_else(|| window.current_monitor().ok().flatten())
+                // 优先窗口当前所在屏（current），fallback 系统主屏（primary），再 fallback 第一个可用屏。
+                // 历史教训：用 primary 优先在「笔记本主屏 + 外接副屏」场景会把窗口丢到用户没在看的屏，
+                // 用户感受是「欢迎页下一步按钮看不见」（窗口被定位到主屏右下，y 算出来超出当前屏底边）。
+                let monitor = window.current_monitor().ok().flatten()
+                    .or_else(|| window.primary_monitor().ok().flatten())
                     .or_else(|| window.available_monitors().ok().and_then(|m| m.first().cloned()));
 
                 if let Some(monitor) = monitor {
-                    let monitor_size = monitor.size();
-                    let monitor_position = monitor.position();
-                    let scale = window.scale_factor().unwrap_or(1.0);
+                    // monitor.position() / size() 返回 PhysicalPosition/Size。
+                    // 全部除以 scale_factor 转 logical 再算，最后用 LogicalPosition set 出去——
+                    // macOS NSWindow 坐标系是 logical，Windows 也能直接用 logical 设置。
+                    // 历史教训：之前用 PhysicalPosition + monitor 的 physical size 算位置，
+                    // macOS 上 set_position(Physical) 行为和 Windows 不一致（macOS 把数当 logical 用），
+                    // 高分屏笔记本上 y 算出 540 物理但被当 540 logical 用，导致 540+560>900 屏高，
+                    // 窗口下半部分被裁，欢迎页"下一步"按钮看不见。
+                    let scale = monitor.scale_factor();
+                    let m_x = monitor.position().x as f64 / scale;
+                    let m_y = monitor.position().y as f64 / scale;
+                    let m_w = monitor.size().width as f64 / scale;
+                    let m_h = monitor.size().height as f64 / scale;
 
-                    // monitor 返回的是 physical 坐标，窗口实际物理像素 = logical × scale
-                    let physical_w = (logical_w * scale) as i32;
-                    let physical_h = (logical_h * scale) as i32;
-                    let margin = (20.0 * scale) as i32;
-                    // Windows 任务栏在 150% 缩放下 ~60px，统一用 logical 50px 兜底
-                    let taskbar = (50.0 * scale) as i32;
+                    let margin: f64 = 20.0;
+                    // 底部留 80：涵盖 Windows 任务栏 (~40) 和 macOS Dock (~80)，宁多勿少
+                    let bottom_pad: f64 = 80.0;
 
-                    let x = monitor_position.x + monitor_size.width as i32 - physical_w - margin;
-                    let y = monitor_position.y + monitor_size.height as i32 - physical_h - margin - taskbar;
+                    let x = m_x + m_w - logical_w - margin;
+                    let y = m_y + m_h - logical_h - bottom_pad;
 
-                    let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }));
+                    let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }));
                 }
 
                 // 确保窗口可见并聚焦

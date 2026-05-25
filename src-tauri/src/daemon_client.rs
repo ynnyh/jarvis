@@ -201,6 +201,10 @@ fn spawn_daemon() -> std::io::Result<()> {
     );
     // DETACHED_PROCESS (0x00000008) | CREATE_NO_WINDOW (0x08000000)
     let mut cmd = std::process::Command::new(&node);
+    // bundled node 是 v22.x，node:sqlite 还是 experimental 需要显式开
+    if node.to_string_lossy().contains("bundled") {
+        cmd.arg("--experimental-sqlite");
+    }
     cmd.arg(&script)
         .current_dir(&workdir)
         .creation_flags(0x00000008 | 0x08000000)
@@ -224,6 +228,10 @@ fn spawn_daemon() -> std::io::Result<()> {
         workdir.display()
     );
     let mut cmd = std::process::Command::new(&node);
+    // bundled node 是 v22.x，node:sqlite 还是 experimental 需要显式开
+    if node.to_string_lossy().contains("bundled") {
+        cmd.arg("--experimental-sqlite");
+    }
     cmd.arg(&script)
         .current_dir(&workdir)
         .stdin(std::process::Stdio::null())

@@ -9,7 +9,7 @@ on:
 jobs:
   build:
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         include:
           - os: windows-latest
@@ -18,7 +18,7 @@ jobs:
             platform_id: darwin-aarch64
 
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 40
+    timeout-minutes: 35
 
     steps:
       - name: Checkout
@@ -33,28 +33,36 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # Swatinem/rust-cache 智能处理 Cargo.lock 变化：jarvis crate 自己版本号变了不会
+      # invalidate 所有依赖，比手写 actions/cache 友好很多
       - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
+
+      # bundled/node.exe 和 macOS node 二进制版本固定（由 fetch-node.mjs 决定），
+      # 不应每次都从 nodejs.org 重下 ~80MB，按脚本 hash 缓存
+      - name: Cache bundled runtime
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            src-tauri/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          path: src-tauri/bundled
+          key: ${{ runner.os }}-bundled-${{ hashFiles('scripts/fetch-node.mjs') }}
 
       - name: Install npm deps
-        run: npm ci
+        run: npm ci --no-audit --no-fund
+        timeout-minutes: 5
 
       - name: Prebuild (bundle daemon + fetch node)
         run: npm run desktop:prebuild
+        timeout-minutes: 8
 
       - name: Build Tauri (NSIS / DMG + updater artifacts)
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npx tauri build
+        timeout-minutes: 25
 
       - name: Stage artifacts (Windows)
         if: matrix.os == 'windows-latest'
@@ -74,13 +82,12 @@ jobs:
           set -e
           mkdir -p staging
           BUNDLE=src-tauri/target/release/bundle
-          echo "=== bundle/ tree（诊断用） ==="
-          find "$BUNDLE" -maxdepth 4 \( -type f -o -type d \) | sort
-          echo "==="
           # 动态找 updater sig（可能在 macos/ / updater/ / 任意子目录）
           SIG=$(find "$BUNDLE" -name "*.sig" | head -1)
           if [ -z "$SIG" ]; then
             echo "❌ 找不到任何 .sig 文件 —— updater artifact 没生成"
+            echo "=== bundle/ tree（诊断用） ==="
+            find "$BUNDLE" -maxdepth 4 \( -type f -o -type d \) | sort
             exit 1
           fi
           TARGET="${SIG%.sig}"
@@ -122,6 +129,7 @@ jobs:
 
       - name: Install npm deps (for undici)
         run: npm ci --no-audit --no-fund
+        timeout-minutes: 5
 
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
@@ -140,3 +148,4 @@ jobs:
           RELEASE_NOTES: ${{ github.event.head_commit.message }}
           ARTIFACTS_DIR: artifacts
         run: node scripts/publish-to-gitee.mjs
+        timeout-minutes: 25

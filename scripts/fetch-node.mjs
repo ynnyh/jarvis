@@ -23,7 +23,7 @@ const here = dirname(fileURLToPath(import.meta.url))
 const root = resolve(here, '..')
 const outdir = resolve(root, 'src-tauri/bundled')
 
-const NODE_VERSION = process.env.NODE_BUNDLE_VERSION || 'v20.18.1'
+const NODE_VERSION = process.env.NODE_BUNDLE_VERSION || 'v22.11.0'
 
 const platform = os.platform()
 const arch = os.arch()
