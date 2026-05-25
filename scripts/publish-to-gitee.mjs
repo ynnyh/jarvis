@@ -23,15 +23,6 @@ import fs from 'node:fs/promises'
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { Agent, setGlobalDispatcher } from 'undici'
-
-// Gitee 上传大文件时响应可能慢——把 headers/body 超时拉长到 10/30 分钟，
-// 默认 5 分钟头部超时在 .app.tar.gz / .dmg 这种几十 MB 文件上会撞墙
-setGlobalDispatcher(new Agent({
-  headersTimeout: 10 * 60 * 1000,
-  bodyTimeout: 30 * 60 * 1000,
-  connectTimeout: 60 * 1000,
-}))
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
