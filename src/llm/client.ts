@@ -105,14 +105,29 @@ export function getLlmClient(): LlmClient {
 }
 
 /**
- * 规范化 baseUrl：去尾斜杠 + 去掉末尾的 /v1（如果有）。
+ * 拼接最终请求 URL。endpoint 形如 'chat/completions' 或 'responses'（不带前导 /）。
  *
- * 厂商文档约定不一：DeepSeek 教写 `https://api.deepseek.com`（不带 /v1），
- * Codex CLI / OpenAI 文档默认 `https://api.openai.com/v1`（带 /v1）。
- * 我们自己后面要拼 `/v1/xxx`，所以这里统一吃掉，避免出现 `/v1/v1/...`。
+ * 厂商 baseUrl 约定五花八门：
+ *   - DeepSeek 教写 `https://api.deepseek.com`（裸 host，需要我们补 /v1）
+ *   - OpenAI / Codex CLI 写 `https://api.openai.com/v1`（已带 /v1）
+ *   - 自建代理 / Codex 风格反代写 `http://host:port/codex` 或 `/openai` 等自定义前缀
+ *     —— 这种 baseUrl 已经是"完整 API 前缀"，再补 /v1 就会 404
+ *
+ * 启发式：URL 的 pathname 只有 `/` 时认为是裸 host，补 `/v1/<endpoint>`；
+ *        否则认为 baseUrl 已含完整前缀，直接 append `/<endpoint>`。
  */
-function normalizeBaseUrl(raw: string): string {
-  return raw.replace(/\/+$/, '').replace(/\/v1$/, '')
+function buildEndpointUrl(rawBase: string, endpoint: string): string {
+  const trimmed = rawBase.replace(/\/+$/, '')
+  let pathname = '/'
+  try {
+    pathname = new URL(trimmed).pathname || '/'
+  } catch {
+    // baseUrl 不是合法 URL —— 让 fetch 自己报错，这里保持原行为补 /v1
+  }
+  const hasCustomPrefix = pathname !== '/' && pathname !== ''
+  return hasCustomPrefix
+    ? `${trimmed}/${endpoint}`
+    : `${trimmed}/v1/${endpoint}`
 }
 
 // ============================================================================
@@ -123,8 +138,7 @@ async function chatViaChatCompletions(
   req: ChatRequest,
   cred: ReturnType<typeof getLlmCredentials>,
 ): Promise<ChatResponse> {
-  const baseUrl = normalizeBaseUrl(cred.baseUrl)
-  const url = `${baseUrl}/v1/chat/completions`
+  const url = buildEndpointUrl(cred.baseUrl, 'chat/completions')
   const model = req.model || cred.model
   const timeoutMs = req.timeoutMs ?? 60_000
 
@@ -274,8 +288,7 @@ async function chatViaResponses(
   req: ChatRequest,
   cred: ReturnType<typeof getLlmCredentials>,
 ): Promise<ChatResponse> {
-  const baseUrl = normalizeBaseUrl(cred.baseUrl)
-  const url = `${baseUrl}/v1/responses`
+  const url = buildEndpointUrl(cred.baseUrl, 'responses')
   const model = req.model || cred.model
   const timeoutMs = req.timeoutMs ?? 60_000
 

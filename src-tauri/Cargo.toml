@@ -1,6 +1,6 @@
 [package]
 name = "jarvis"
-version = "0.4.12"
+version = "0.4.13"
 description = "Jarvis Desktop AI Assistant"
 authors = ["you"]
 license = ""
