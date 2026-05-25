@@ -69,11 +69,31 @@ jobs:
         if: matrix.os == 'macos-latest'
         shell: bash
         run: |
+          set -e
           mkdir -p staging
-          # macOS：DMG 给人下载，.app.tar.gz + .sig 给 tauri-plugin-updater
-          cp src-tauri/target/release/bundle/dmg/*.dmg staging/
-          cp src-tauri/target/release/bundle/macos/*.app.tar.gz staging/
-          cp src-tauri/target/release/bundle/macos/*.app.tar.gz.sig staging/
+          BUNDLE=src-tauri/target/release/bundle
+          echo "=== bundle/ tree（诊断用） ==="
+          find "$BUNDLE" -maxdepth 4 \( -type f -o -type d \) | sort
+          echo "==="
+          # 动态找 updater sig（可能在 macos/ / updater/ / 任意子目录）
+          SIG=$(find "$BUNDLE" -name "*.sig" | head -1)
+          if [ -z "$SIG" ]; then
+            echo "❌ 找不到任何 .sig 文件 —— updater artifact 没生成"
+            exit 1
+          fi
+          TARGET="${SIG%.sig}"
+          if [ ! -f "$TARGET" ]; then
+            echo "❌ 找到 sig=$SIG 但对应 target $TARGET 不存在"
+            exit 1
+          fi
+          cp "$SIG" "$TARGET" staging/
+          # DMG 是用户下载入口，找到就一起上传
+          DMG=$(find "$BUNDLE" -name "*.dmg" | head -1)
+          if [ -n "$DMG" ]; then
+            cp "$DMG" staging/
+          else
+            echo "⚠ 没找到 .dmg —— 用户只能走 .app.tar.gz 手动展开"
+          fi
           echo "${{ matrix.platform_id }}" > staging/PLATFORM_ID
           ls -la staging/
 
