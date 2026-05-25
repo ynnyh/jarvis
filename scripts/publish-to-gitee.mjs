@@ -23,6 +23,15 @@ import fs from 'node:fs/promises'
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { Agent, setGlobalDispatcher } from 'undici'
+
+// Gitee 上传大文件时响应可能慢——把 headers/body 超时拉长到 10/30 分钟，
+// 默认 5 分钟头部超时在 .app.tar.gz / .dmg 这种几十 MB 文件上会撞墙
+setGlobalDispatcher(new Agent({
+  headersTimeout: 10 * 60 * 1000,
+  bodyTimeout: 30 * 60 * 1000,
+  connectTimeout: 60 * 1000,
+}))
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -157,24 +166,52 @@ const release = await createOrFindRelease()
 // --- 4. 上传附件 ---
 async function uploadAsset(filePath, name) {
   const data = await fs.readFile(filePath)
-  const form = new FormData()
-  form.append('access_token', TOKEN)
-  form.append('file', new Blob([data]), name)
-  const r = await fetch(
-    `${API}/repos/${GITEE_OWNER}/${GITEE_REPO}/releases/${release.id}/attach_files`,
-    { method: 'POST', body: form },
-  )
-  if (!r.ok) {
-    const t = await r.text()
-    if (t.includes('已存在') || t.includes('exist')) {
-      console.log(`  ↪ ${name} 已存在，跳过上传`)
-      return `https://gitee.com/${GITEE_OWNER}/${GITEE_REPO}/releases/download/${tag}/${name}`
+  const maxAttempts = 3
+  let lastErr
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const form = new FormData()
+      form.append('access_token', TOKEN)
+      form.append('file', new Blob([data]), name)
+      const r = await fetch(
+        `${API}/repos/${GITEE_OWNER}/${GITEE_REPO}/releases/${release.id}/attach_files`,
+        { method: 'POST', body: form },
+      )
+      if (!r.ok) {
+        const t = await r.text()
+        if (t.includes('已存在') || t.includes('exist')) {
+          console.log(`  ↪ ${name} 已存在，跳过上传`)
+          return `https://gitee.com/${GITEE_OWNER}/${GITEE_REPO}/releases/download/${tag}/${name}`
+        }
+        // 5xx / 429 值得重试，4xx 直接报
+        if (r.status >= 500 || r.status === 429) {
+          throw new Error(`HTTP ${r.status}: ${t}`)
+        }
+        throw new Error(`上传 ${name} 失败：${r.status} ${t}`)
+      }
+      const j = await r.json()
+      console.log(`  ↪ 上传 ${name}: ${j.browser_download_url}`)
+      return j.browser_download_url
+    } catch (e) {
+      lastErr = e
+      const isTimeout =
+        e?.cause?.code === 'UND_ERR_HEADERS_TIMEOUT' ||
+        e?.cause?.code === 'UND_ERR_BODY_TIMEOUT' ||
+        e?.cause?.code === 'UND_ERR_CONNECT_TIMEOUT' ||
+        e?.cause?.code === 'ECONNRESET' ||
+        e?.code === 'ECONNRESET' ||
+        /HTTP 5\d\d/.test(String(e?.message)) ||
+        /HTTP 429/.test(String(e?.message))
+      if (attempt < maxAttempts && isTimeout) {
+        const backoff = 5000 * attempt
+        console.warn(`  ⚠ ${name} 第 ${attempt}/${maxAttempts} 次失败（${e?.cause?.code || e?.code || e?.message}），${backoff}ms 后重试`)
+        await new Promise(r => setTimeout(r, backoff))
+        continue
+      }
+      throw e
     }
-    throw new Error(`上传 ${name} 失败：${r.status} ${t}`)
   }
-  const j = await r.json()
-  console.log(`  ↪ 上传 ${name}: ${j.browser_download_url}`)
-  return j.browser_download_url
+  throw lastErr
 }
 
 const platformEntries = {}
