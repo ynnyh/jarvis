@@ -14,14 +14,8 @@ jobs:
         include:
           - os: windows-latest
             platform_id: windows-x86_64
-            bundle_subdir: nsis
-            artifact_glob: '*-setup.exe'
-            artifact_sig_glob: '*-setup.exe.sig'
           - os: macos-latest
             platform_id: darwin-aarch64
-            bundle_subdir: dmg
-            artifact_glob: '*.dmg'
-            artifact_sig_glob: '*.dmg.sig'
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
@@ -60,12 +54,26 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npx tauri build
 
-      - name: Stage artifacts
+      - name: Stage artifacts (Windows)
+        if: matrix.os == 'windows-latest'
         shell: bash
         run: |
           mkdir -p staging
-          cp src-tauri/target/release/bundle/${{ matrix.bundle_subdir }}/${{ matrix.artifact_glob }} staging/
-          cp src-tauri/target/release/bundle/${{ matrix.bundle_subdir }}/${{ matrix.artifact_sig_glob }} staging/
+          # Windows: NSIS installer 同时也是 updater 目标，sig 直接在 nsis/ 下
+          cp src-tauri/target/release/bundle/nsis/*-setup.exe staging/
+          cp src-tauri/target/release/bundle/nsis/*-setup.exe.sig staging/
+          echo "${{ matrix.platform_id }}" > staging/PLATFORM_ID
+          ls -la staging/
+
+      - name: Stage artifacts (macOS)
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          mkdir -p staging
+          # macOS：DMG 给人下载，.app.tar.gz + .sig 给 tauri-plugin-updater
+          cp src-tauri/target/release/bundle/dmg/*.dmg staging/
+          cp src-tauri/target/release/bundle/macos/*.app.tar.gz staging/
+          cp src-tauri/target/release/bundle/macos/*.app.tar.gz.sig staging/
           echo "${{ matrix.platform_id }}" > staging/PLATFORM_ID
           ls -la staging/
 

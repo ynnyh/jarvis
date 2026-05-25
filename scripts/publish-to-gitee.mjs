@@ -52,6 +52,11 @@ const platforms = []
 
 if (ARTIFACTS_DIR && existsSync(ARTIFACTS_DIR)) {
   // CI 路径：每个子目录是一个 platform 的 artifact
+  // 一个 platform 可能有多个文件：
+  //   Windows: *-setup.exe + *-setup.exe.sig
+  //   macOS:   *.dmg + *.app.tar.gz + *.app.tar.gz.sig
+  // 约定：以 .sig 结尾的文件就是签名；签名去掉 .sig 后缀对应的就是 updater target。
+  // 其余文件作为"额外发行物"上传（如 macOS 的 .dmg 给用户下载装）。
   const dirs = readdirSync(ARTIFACTS_DIR).filter(d => statSync(path.join(ARTIFACTS_DIR, d)).isDirectory())
   for (const d of dirs) {
     const sub = path.join(ARTIFACTS_DIR, d)
@@ -63,16 +68,23 @@ if (ARTIFACTS_DIR && existsSync(ARTIFACTS_DIR)) {
     const platformId = readFileSync(platformIdFile, 'utf8').trim()
     const all = readdirSync(sub).filter(f => f !== 'PLATFORM_ID')
     const sig = all.find(f => f.endsWith('.sig'))
-    const installer = all.find(f => f !== sig)
-    if (!installer || !sig) {
-      console.warn(`  ⚠ ${d} 缺安装包或签名（installer=${installer}, sig=${sig}），跳过`)
+    if (!sig) {
+      console.warn(`  ⚠ ${d} 缺 .sig 文件，跳过`)
       continue
     }
+    const updaterTarget = sig.replace(/\.sig$/, '')
+    if (!all.includes(updaterTarget)) {
+      console.warn(`  ⚠ ${d} 有 ${sig} 但找不到 ${updaterTarget}，跳过`)
+      continue
+    }
+    const extras = all.filter(f => f !== sig && f !== updaterTarget)
     platforms.push({
       platformId,
-      installerPath: path.join(sub, installer),
-      installerName: installer,
+      updaterPath: path.join(sub, updaterTarget),
+      updaterName: updaterTarget,
       sigPath: path.join(sub, sig),
+      sigName: sig,
+      extras: extras.map(name => ({ path: path.join(sub, name), name })),
     })
   }
 } else {
@@ -91,9 +103,11 @@ if (ARTIFACTS_DIR && existsSync(ARTIFACTS_DIR)) {
   }
   platforms.push({
     platformId: 'windows-x86_64',
-    installerPath: path.join(bundleDir, installer),
-    installerName: installer,
+    updaterPath: path.join(bundleDir, installer),
+    updaterName: installer,
     sigPath: path.join(bundleDir, sig),
+    sigName: sig,
+    extras: [],
   })
 }
 
@@ -165,11 +179,17 @@ async function uploadAsset(filePath, name) {
 
 const platformEntries = {}
 for (const p of platforms) {
-  console.log(`\n→ ${p.platformId}: ${p.installerName}`)
-  const url = await uploadAsset(p.installerPath, p.installerName)
-  await uploadAsset(p.sigPath, path.basename(p.sigPath))
+  console.log(`\n→ ${p.platformId}`)
+  // 1. 上传 updater target（latest.json 的 url 指向它）
+  const updaterUrl = await uploadAsset(p.updaterPath, p.updaterName)
+  // 2. 上传 sig
+  await uploadAsset(p.sigPath, p.sigName)
+  // 3. 上传额外发行物（如 macOS 的 .dmg，给用户下载装的入口）
+  for (const ex of p.extras) {
+    await uploadAsset(ex.path, ex.name)
+  }
   const signature = readFileSync(p.sigPath, 'utf8').trim()
-  platformEntries[p.platformId] = { signature, url }
+  platformEntries[p.platformId] = { signature, url: updaterUrl }
 }
 
 // --- 5. 写 latest.json ---
