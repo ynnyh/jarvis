@@ -214,20 +214,36 @@ async function uploadAsset(filePath, name) {
   throw lastErr
 }
 
+// 并发上传：每个文件独立 connection，Gitee 单连接慢但多连接可压一半时间
+// 失败重试逻辑在 uploadAsset 内部，Promise.all 失败 fail-fast
 const platformEntries = {}
+const uploadJobs = []
+
 for (const p of platforms) {
-  console.log(`\n→ ${p.platformId}`)
-  // 1. 上传 updater target（latest.json 的 url 指向它）
-  const updaterUrl = await uploadAsset(p.updaterPath, p.updaterName)
-  // 2. 上传 sig
-  await uploadAsset(p.sigPath, p.sigName)
-  // 3. 上传额外发行物（如 macOS 的 .dmg，给用户下载装的入口）
-  for (const ex of p.extras) {
-    await uploadAsset(ex.path, ex.name)
+  const fileCount = 1 + 1 + p.extras.length
+  console.log(`→ ${p.platformId}: 排队 ${fileCount} 个上传`)
+  platformEntries[p.platformId] = {
+    signature: readFileSync(p.sigPath, 'utf8').trim(),
+    url: null, // 待 updater 上传完填
   }
-  const signature = readFileSync(p.sigPath, 'utf8').trim()
-  platformEntries[p.platformId] = { signature, url: updaterUrl }
+  // updater target（latest.json 的 url 指向它）
+  uploadJobs.push(
+    uploadAsset(p.updaterPath, p.updaterName).then(url => {
+      platformEntries[p.platformId].url = url
+    }),
+  )
+  // sig
+  uploadJobs.push(uploadAsset(p.sigPath, p.sigName))
+  // 额外发行物（macOS .dmg 等）
+  for (const ex of p.extras) {
+    uploadJobs.push(uploadAsset(ex.path, ex.name))
+  }
 }
+
+console.log(`\n并发上传 ${uploadJobs.length} 个文件...`)
+const t0 = Date.now()
+await Promise.all(uploadJobs)
+console.log(`✓ 全部上传完成（${((Date.now() - t0) / 1000).toFixed(1)}s）`)
 
 // --- 5. 写 latest.json ---
 const latest = {

@@ -116,7 +116,7 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 50
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -148,4 +148,4 @@ jobs:
           RELEASE_NOTES: ${{ github.event.head_commit.message }}
           ARTIFACTS_DIR: artifacts
         run: node scripts/publish-to-gitee.mjs
-        timeout-minutes: 25
+        timeout-minutes: 45
