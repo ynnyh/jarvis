@@ -104,6 +104,17 @@ export function getLlmClient(): LlmClient {
   return _client
 }
 
+/**
+ * 规范化 baseUrl：去尾斜杠 + 去掉末尾的 /v1（如果有）。
+ *
+ * 厂商文档约定不一：DeepSeek 教写 `https://api.deepseek.com`（不带 /v1），
+ * Codex CLI / OpenAI 文档默认 `https://api.openai.com/v1`（带 /v1）。
+ * 我们自己后面要拼 `/v1/xxx`，所以这里统一吃掉，避免出现 `/v1/v1/...`。
+ */
+function normalizeBaseUrl(raw: string): string {
+  return raw.replace(/\/+$/, '').replace(/\/v1$/, '')
+}
+
 // ============================================================================
 // Chat Completions 实现（/v1/chat/completions）
 // ============================================================================
@@ -112,7 +123,7 @@ async function chatViaChatCompletions(
   req: ChatRequest,
   cred: ReturnType<typeof getLlmCredentials>,
 ): Promise<ChatResponse> {
-  const baseUrl = cred.baseUrl.replace(/\/+$/, '')
+  const baseUrl = normalizeBaseUrl(cred.baseUrl)
   const url = `${baseUrl}/v1/chat/completions`
   const model = req.model || cred.model
   const timeoutMs = req.timeoutMs ?? 60_000
@@ -263,7 +274,7 @@ async function chatViaResponses(
   req: ChatRequest,
   cred: ReturnType<typeof getLlmCredentials>,
 ): Promise<ChatResponse> {
-  const baseUrl = cred.baseUrl.replace(/\/+$/, '')
+  const baseUrl = normalizeBaseUrl(cred.baseUrl)
   const url = `${baseUrl}/v1/responses`
   const model = req.model || cred.model
   const timeoutMs = req.timeoutMs ?? 60_000
