@@ -2,6 +2,8 @@ mod commands;
 mod conversations;
 mod credentials;
 mod daemon_client;
+mod llm;
+mod settings;
 mod settings_extras;
 
 use tauri::Manager;
@@ -116,16 +118,6 @@ pub fn run() {
             commands::drag_window,
             commands::cursor_pos_in_window,
             commands::tool_execute,
-            commands::tool_list,
-            commands::action_execute,
-            commands::action_list,
-            commands::memory_add,
-            commands::memory_list,
-            commands::agent_get_state,
-            commands::scheduler_start,
-            commands::scheduler_status,
-            commands::context_build,
-            commands::git_info,
             commands::get_proactive_reminders,
             commands::fetch_task_alerts,
             commands::open_zentao_task,

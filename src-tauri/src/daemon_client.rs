@@ -309,6 +309,7 @@ async fn request(method: reqwest::Method, path: &str, body: Option<Value>) -> Re
         .map_err(|e| format!("daemon {} returned invalid JSON: {} (raw: {})", path, e, &text[..text.len().min(200)]))
 }
 
+#[allow(dead_code)]
 pub async fn get(path: &str) -> Result<Value, String> {
     request(reqwest::Method::GET, path, None).await
 }
