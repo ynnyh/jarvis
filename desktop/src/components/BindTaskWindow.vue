@@ -18,6 +18,7 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useAppStore } from '../stores/app'
 import { useConfigStore } from '../stores/config'
+import { useExpandedAvatarWindow } from '../composables/useExpandedAvatarWindow'
 
 interface RepoRecommendation {
   repoRoot: string
@@ -180,6 +181,10 @@ watch(currentTask, (t) => {
   if (t) fetchRecommendations()
 }, { immediate: false })
 
+// 绑定窗打开期间把 avatar 窗口撑大到 640×720，关闭恢复 400×560，
+// 不直接看到 avatar 容器的小尺寸把字挤得难以辨认。
+useExpandedAvatarWindow(computed(() => store.showBindTaskWindow))
+
 onMounted(() => {
   if (currentTask.value) fetchRecommendations()
 })
@@ -295,12 +300,12 @@ function priorityLabel(p: string): string {
   background: rgba(0, 0, 0, 0.2);
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
-.panel-title { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
-.title-icon { font-size: 14px; }
+.panel-title { display: flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 600; }
+.title-icon { font-size: 16px; }
 .queue-badge {
   margin-left: 6px;
-  padding: 1px 6px;
-  font-size: 10px;
+  padding: 2px 7px;
+  font-size: 11.5px;
   font-weight: 500;
   color: rgba(167, 139, 250, 0.95);
   background: rgba(167, 139, 250, 0.12);
@@ -328,27 +333,27 @@ function priorityLabel(p: string): string {
 }
 
 .task-card {
-  padding: 10px;
+  padding: 12px 14px;
   background: rgba(0, 0, 0, 0.22);
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 10px;
 }
 .task-title {
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 600;
-  line-height: 1.4;
+  line-height: 1.45;
   color: rgba(255, 255, 255, 0.95);
 }
 .task-meta {
-  margin-top: 6px;
-  display: flex; flex-wrap: wrap; gap: 4px;
+  margin-top: 8px;
+  display: flex; flex-wrap: wrap; gap: 5px;
 }
 .meta-pill {
-  padding: 1px 6px;
-  font-size: 10.5px;
+  padding: 2px 8px;
+  font-size: 12px;
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.06);
-  color: rgba(255, 255, 255, 0.7);
+  color: rgba(255, 255, 255, 0.75);
 }
 .meta-pill.priority-urgent { color: rgba(248, 113, 113, 0.95); background: rgba(239, 68, 68, 0.12); }
 .meta-pill.priority-high { color: rgba(251, 191, 36, 0.95); background: rgba(245, 158, 11, 0.12); }
@@ -358,12 +363,12 @@ function priorityLabel(p: string): string {
 
 .phase-text {
   display: flex; align-items: center; gap: 6px; justify-content: center;
-  padding: 8px 10px;
-  font-size: 12px;
+  padding: 10px 12px;
+  font-size: 13.5px;
   text-align: center;
   border-radius: 8px;
   background: rgba(0, 0, 0, 0.18);
-  color: rgba(255, 255, 255, 0.78);
+  color: rgba(255, 255, 255, 0.82);
 }
 .phase-text.phase-error { color: rgba(248, 113, 113, 0.95); background: rgba(239, 68, 68, 0.1); }
 
@@ -382,14 +387,14 @@ function priorityLabel(p: string): string {
 }
 .rec-header {
   display: flex; justify-content: space-between; align-items: center;
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.5);
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.55);
   padding: 0 2px;
 }
 
 .rec-row {
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 10px;
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
   text-align: left;
   background: rgba(0, 0, 0, 0.18);
   border: 1px solid rgba(255, 255, 255, 0.06);
@@ -403,8 +408,8 @@ function priorityLabel(p: string): string {
 .rec-row.top:not(.selected) { border-color: rgba(167, 139, 250, 0.25); }
 
 .rec-check {
-  width: 14px;
-  font-size: 14px;
+  width: 16px;
+  font-size: 16px;
   color: rgba(255, 255, 255, 0.55);
   text-align: center;
 }
@@ -413,15 +418,15 @@ function priorityLabel(p: string): string {
 .rec-main { flex: 1; min-width: 0; }
 .rec-line1 { display: flex; align-items: center; gap: 6px; }
 .rec-path {
-  font-size: 12.5px;
+  font-size: 14px;
   font-weight: 500;
   font-family: ui-monospace, SFMono-Regular, monospace;
-  color: rgba(255, 255, 255, 0.92);
+  color: rgba(255, 255, 255, 0.95);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .rec-badge {
-  padding: 1px 5px;
-  font-size: 9.5px;
+  padding: 2px 6px;
+  font-size: 11px;
   font-weight: 600;
   color: rgba(167, 139, 250, 0.95);
   background: rgba(167, 139, 250, 0.14);
@@ -434,19 +439,19 @@ function priorityLabel(p: string): string {
   background: rgba(245, 158, 11, 0.14);
 }
 .rec-reason {
-  margin-top: 2px;
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.55);
+  margin-top: 3px;
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.6);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
 .rec-score {
-  width: 32px;
-  font-size: 12px;
+  width: 38px;
+  font-size: 14px;
   font-weight: 600;
   font-family: ui-monospace, SFMono-Regular, monospace;
   text-align: right;
-  color: rgba(255, 255, 255, 0.65);
+  color: rgba(255, 255, 255, 0.7);
 }
 .rec-row.selected .rec-score { color: rgba(0, 212, 255, 0.95); }
 
@@ -457,8 +462,8 @@ function priorityLabel(p: string): string {
   margin-top: 2px;
 }
 .action-link {
-  padding: 5px 8px;
-  font-size: 11px;
+  padding: 7px 10px;
+  font-size: 12.5px;
   background: transparent;
   border: 1px dashed;
   border-radius: 6px;
@@ -492,8 +497,8 @@ function priorityLabel(p: string): string {
 }
 .primary-btn {
   flex: 1;
-  padding: 7px 10px;
-  font-size: 12px;
+  padding: 10px 14px;
+  font-size: 13.5px;
   font-weight: 500;
   color: white;
   background: linear-gradient(135deg, rgba(0, 212, 255, 0.9), rgba(59, 130, 246, 0.9));
@@ -512,8 +517,8 @@ function priorityLabel(p: string): string {
   cursor: not-allowed;
 }
 .secondary-btn {
-  padding: 7px 14px;
-  font-size: 12px;
+  padding: 10px 18px;
+  font-size: 13.5px;
   color: rgba(255, 255, 255, 0.7);
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.08);

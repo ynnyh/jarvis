@@ -3,6 +3,7 @@ import { ref, computed, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useAppStore } from '../stores/app'
 import { useDailyReview } from '../composables/useDailyReview'
+import { useExpandedAvatarWindow } from '../composables/useExpandedAvatarWindow'
 import { cleanCommitTitle } from '../composables/cleanCommitTitle'
 
 const store = useAppStore()
@@ -114,6 +115,120 @@ function formatTime(iso: string): string {
   if (!m) return iso
   return `${m[2]}-${m[3]} ${m[4]}:${m[5]}`
 }
+
+// ===== 一键写入禅道工时 =====
+//
+// 闸门 0 试发完成后扩面（用户已确认机制 OK 且可手动删除），用户认可
+// suggestedHours 方案 B：弹窗给出 AI 估算工时 + 自动拼接的工作内容，
+// 允许二次编辑后提交。同项目多 commit 合并去重一段。
+//
+// 单次会话内每个任务写过一次就标灰防重复点（防误触）。失败保留 modal
+// 让用户看错误并重试。modal 用 Teleport 出去，配 useExpandedAvatarWindow
+// 撑大 avatar 窗口避免编辑器太挤。
+
+interface WriteTaskRow {
+  taskId: string
+  taskName: string
+  suggestedHours?: number
+  commits: Array<{ title: string }>
+}
+
+const writeModal = ref<{
+  task: WriteTaskRow
+  hours: string
+  content: string
+  submitting: boolean
+  error: string
+  result: 'idle' | 'ok' | 'fail'
+} | null>(null)
+
+/** 本会话写入过的任务集合（taskId）。刷新窗口不丢，重启 app 会清空 —— 由
+ *  禅道自己的工时记录兜底，避免误重写。 */
+const writtenTasks = ref<Set<string>>(new Set())
+
+// 撑大窗口：modal 打开时 avatar 扩到 640×720
+useExpandedAvatarWindow(computed(() => writeModal.value !== null))
+
+// review 窗被外部关掉时（如点了 menu / closeAllPanels），把可能挂着的写工时
+// modal 一起清掉。modal 是 Teleport 到 body 的，不会跟着内层 v-if 隐藏。
+watch(() => store.showReviewWindow, (open) => {
+  if (!open && writeModal.value) writeModal.value = null
+})
+
+function buildWorkContent(commits: Array<{ title: string }>): string {
+  const seen = new Set<string>()
+  const lines: string[] = []
+  for (const c of commits) {
+    const cleaned = cleanCommitTitle(c.title)
+    if (!cleaned || seen.has(cleaned)) continue
+    seen.add(cleaned)
+    lines.push(`- ${cleaned}`)
+  }
+  return lines.join('\n')
+}
+
+function openWriteModal(task: WriteTaskRow) {
+  if (writtenTasks.value.has(task.taskId)) return
+  writeModal.value = {
+    task,
+    hours: task.suggestedHours ? String(task.suggestedHours) : '',
+    content: buildWorkContent(task.commits),
+    submitting: false,
+    error: '',
+    result: 'idle',
+  }
+}
+
+function closeWriteModal() {
+  if (writeModal.value?.submitting) return
+  writeModal.value = null
+}
+
+async function submitWrite() {
+  const m = writeModal.value
+  if (!m || m.submitting) return
+  const hoursNum = parseFloat(m.hours)
+  if (!Number.isFinite(hoursNum) || hoursNum <= 0) {
+    m.error = '工时必须是正数（小数也行，比如 0.5）'
+    return
+  }
+  if (!m.content.trim()) {
+    m.error = '工作内容不能为空'
+    return
+  }
+  m.submitting = true
+  m.error = ''
+  try {
+    const result = await invoke<{ success: boolean; data?: any; error?: string }>('tool_execute', {
+      name: 'log-task-effort',
+      input: {
+        taskId: m.task.taskId,
+        hours: hoursNum,
+        work: m.content,
+      },
+    })
+    if (result.success && result.data?.ok) {
+      m.result = 'ok'
+      writtenTasks.value = new Set([...writtenTasks.value, m.task.taskId])
+      // 成功后 1.2s 自动关 modal，按钮上的 ✓ 标记由 writtenTasks 保留
+      setTimeout(() => {
+        if (writeModal.value === m) writeModal.value = null
+      }, 1200)
+    } else {
+      m.result = 'fail'
+      m.error = result.error || '禅道返回未知错误'
+    }
+  } catch (e: any) {
+    m.result = 'fail'
+    m.error = e?.message ?? String(e)
+  } finally {
+    m.submitting = false
+  }
+}
+
+function isTaskWritten(taskId: string): boolean {
+  return writtenTasks.value.has(taskId)
+}
 </script>
 
 <template>
@@ -200,13 +315,22 @@ function formatTime(iso: string): string {
             <span>📝 按任务（用于禅道填报）</span>
             <span class="section-count">{{ store.reviewData.advancedTasks.length }} 个任务</span>
           </h3>
-          <p class="section-hint">点击右侧 📋 复制该任务对应的工作内容（去重后的 commit 标题），粘贴到禅道工作记录字段</p>
+          <p class="section-hint">点 ✍️ 写工时到禅道（弹窗内可编辑工时和内容）；点 📋 仅复制工作内容</p>
           <ul class="task-fill-list">
             <li v-for="t in store.reviewData.advancedTasks" :key="t.taskId" class="task-fill-item">
               <div class="task-fill-row">
                 <span class="task-fill-id" @click="openTask(t.taskId)" title="打开禅道任务">#{{ t.taskId }}</span>
                 <span class="task-fill-name">{{ t.taskName }}</span>
                 <span v-if="t.suggestedHours" class="hours-pill">~{{ t.suggestedHours }}h</span>
+                <button
+                  class="write-mini"
+                  :class="{ written: isTaskWritten(t.taskId) }"
+                  :disabled="isTaskWritten(t.taskId)"
+                  @click="openWriteModal(t)"
+                  :title="isTaskWritten(t.taskId) ? '本会话已写入（去禅道可继续修改）' : `写入工时到禅道 #${t.taskId}`"
+                >
+                  {{ isTaskWritten(t.taskId) ? '✓ 已写入' : '✍️ 写工时' }}
+                </button>
                 <button
                   class="copy-mini"
                   :class="`mini-${taskCopyState[t.taskId] || 'idle'}`"
@@ -324,6 +448,76 @@ function formatTime(iso: string): string {
       </footer>
     </div>
   </Transition>
+
+  <!-- 写工时编辑器（Teleport 到 body 避免 panel 容器层级限制） -->
+  <Teleport to="body">
+    <Transition name="modal">
+      <div v-if="writeModal" class="modal-overlay pointer-target" @click.self="closeWriteModal">
+        <div class="modal-card">
+          <header class="modal-header">
+            <h3 class="modal-title">✍️ 写入工时到禅道</h3>
+            <button class="modal-close" :disabled="writeModal.submitting" @click="closeWriteModal">×</button>
+          </header>
+
+          <div class="modal-body">
+            <p class="modal-meta">
+              <strong>任务：</strong>
+              <span class="modal-task-id">#{{ writeModal.task.taskId }}</span>
+              <span class="modal-task-name">{{ writeModal.task.taskName }}</span>
+            </p>
+
+            <div class="form-row">
+              <label class="form-label">工时（小时）</label>
+              <input
+                v-model="writeModal.hours"
+                class="form-input"
+                type="text"
+                inputmode="decimal"
+                :disabled="writeModal.submitting || writeModal.result === 'ok'"
+                placeholder="如 0.5、1、1.5"
+              />
+              <p class="form-hint">AI 按 commit 量估算 {{ writeModal.task.suggestedHours || '—' }}h，按实际填写即可</p>
+            </div>
+
+            <div class="form-row">
+              <label class="form-label">工作内容（同任务多 commit 已合并去重）</label>
+              <textarea
+                v-model="writeModal.content"
+                class="form-textarea"
+                :disabled="writeModal.submitting || writeModal.result === 'ok'"
+                rows="8"
+                placeholder="给禅道看的工作记录文本"
+              />
+            </div>
+
+            <p v-if="writeModal.error" class="form-error">{{ writeModal.error }}</p>
+            <p v-if="writeModal.result === 'ok'" class="form-success">
+              ✓ 已写入禅道。需要改去禅道工作日志里编辑或删除即可。
+            </p>
+          </div>
+
+          <footer class="modal-actions">
+            <button
+              class="modal-btn modal-btn-cancel"
+              :disabled="writeModal.submitting"
+              @click="closeWriteModal"
+            >
+              取消
+            </button>
+            <button
+              class="modal-btn modal-btn-confirm"
+              :disabled="writeModal.submitting || writeModal.result === 'ok'"
+              @click="submitWrite"
+            >
+              <span v-if="writeModal.submitting">提交中…</span>
+              <span v-else-if="writeModal.result === 'ok'">已写入</span>
+              <span v-else>确认写入</span>
+            </button>
+          </footer>
+        </div>
+      </div>
+    </Transition>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -531,6 +725,192 @@ function formatTime(iso: string): string {
   border-color: rgba(239, 68, 68, 0.5);
   color: rgba(252, 165, 165, 0.95);
 }
+
+/* ===== 一键写工时按钮 ===== */
+.write-mini {
+  height: 24px;
+  padding: 0 8px;
+  background: rgba(167, 139, 250, 0.18);
+  border: 1px solid rgba(167, 139, 250, 0.4);
+  border-radius: 4px;
+  color: rgba(196, 181, 253, 0.95);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+.write-mini:hover:not(:disabled) {
+  background: rgba(167, 139, 250, 0.32);
+  border-color: rgba(167, 139, 250, 0.7);
+}
+.write-mini:disabled,
+.write-mini.written {
+  background: rgba(34, 197, 94, 0.18);
+  border-color: rgba(34, 197, 94, 0.4);
+  color: rgba(134, 239, 172, 0.95);
+  cursor: not-allowed;
+}
+
+/* ===== 写工时编辑器 modal ===== */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(3px);
+  z-index: 220;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.modal-card {
+  width: 100%;
+  max-width: 560px;
+  max-height: calc(100vh - 60px);
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(135deg, rgba(22, 32, 58, 0.99), rgba(15, 23, 42, 0.99));
+  border: 1px solid rgba(167, 139, 250, 0.35);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.92);
+}
+.modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px;
+  background: rgba(167, 139, 250, 0.1);
+  border-bottom: 1px solid rgba(167, 139, 250, 0.18);
+}
+.modal-title {
+  margin: 0;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: rgba(196, 181, 253, 0.98);
+}
+.modal-close {
+  width: 26px; height: 26px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 18px; line-height: 1;
+  color: rgba(255, 255, 255, 0.55);
+  background: transparent; border: none; border-radius: 6px;
+  cursor: pointer;
+}
+.modal-close:hover:not(:disabled) { background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.95); }
+.modal-close:disabled { cursor: not-allowed; opacity: 0.35; }
+
+.modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.modal-meta { margin: 0; font-size: 13px; line-height: 1.55; color: rgba(255, 255, 255, 0.85); }
+.modal-meta strong { color: rgba(147, 197, 253, 0.9); margin-right: 6px; font-weight: 600; }
+.modal-task-id {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  color: rgba(0, 212, 255, 0.95);
+  margin-right: 6px;
+}
+.modal-task-name { color: rgba(255, 255, 255, 0.92); }
+
+.form-row { display: flex; flex-direction: column; gap: 4px; }
+.form-label {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: rgba(196, 181, 253, 0.95);
+}
+.form-input {
+  padding: 8px 10px;
+  font-size: 13.5px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  color: rgba(255, 255, 255, 0.95);
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  outline: none;
+}
+.form-input:focus { border-color: rgba(167, 139, 250, 0.5); }
+.form-input:disabled { opacity: 0.5; cursor: not-allowed; }
+.form-textarea {
+  padding: 10px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  outline: none;
+  resize: vertical;
+  min-height: 120px;
+  font-family: inherit;
+}
+.form-textarea:focus { border-color: rgba(167, 139, 250, 0.5); }
+.form-textarea:disabled { opacity: 0.5; cursor: not-allowed; }
+.form-hint {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.5);
+}
+.form-error {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  color: rgba(252, 165, 165, 0.95);
+  background: rgba(239, 68, 68, 0.12);
+  border-left: 2px solid rgba(239, 68, 68, 0.6);
+  border-radius: 4px;
+}
+.form-success {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  color: rgba(134, 239, 172, 0.95);
+  background: rgba(34, 197, 94, 0.12);
+  border-left: 2px solid rgba(34, 197, 94, 0.6);
+  border-radius: 4px;
+}
+
+.modal-actions {
+  display: flex; gap: 8px; justify-content: flex-end;
+  padding: 12px 16px;
+  background: rgba(0, 0, 0, 0.25);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+.modal-btn {
+  padding: 8px 18px;
+  font-size: 13px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.modal-btn:disabled { cursor: not-allowed; opacity: 0.45; }
+.modal-btn-cancel {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.7);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+.modal-btn-cancel:hover:not(:disabled) { background: rgba(255, 255, 255, 0.06); color: rgba(255, 255, 255, 0.95); }
+.modal-btn-confirm {
+  background: linear-gradient(135deg, rgba(167, 139, 250, 0.9), rgba(139, 92, 246, 0.9));
+  color: white;
+  font-weight: 500;
+}
+.modal-btn-confirm:hover:not(:disabled) {
+  box-shadow: 0 4px 14px rgba(167, 139, 250, 0.4);
+  transform: translateY(-1px);
+}
+
+.modal-enter-active, .modal-leave-active { transition: opacity 0.2s; }
+.modal-enter-active .modal-card, .modal-leave-active .modal-card { transition: transform 0.2s, opacity 0.2s; }
+.modal-enter-from, .modal-leave-to { opacity: 0; }
+.modal-enter-from .modal-card, .modal-leave-to .modal-card { transform: translateY(10px) scale(0.97); opacity: 0; }
 
 /* 业务线分组 */
 .commits-block {
