@@ -47,10 +47,31 @@ pub fn cursor_pos_in_window(
     let cursor = app.cursor_position().map_err(|e| e.to_string())?;
     let win_pos = window.outer_position().map_err(|e| e.to_string())?;
     let scale = window.scale_factor().map_err(|e| e.to_string())?;
-    // 物理坐标差换算成 CSS 逻辑坐标
-    let x = (cursor.x - win_pos.x as f64) / scale;
-    let y = (cursor.y - win_pos.y as f64) / scale;
-    Ok((x, y, cursor.x, cursor.y, win_pos.x, win_pos.y, scale))
+
+    // 历史教训：Tauri 2.x 在 macOS 上 `app.cursor_position()` 类型标的是
+    // PhysicalPosition，但实测返回的是 **logical** 像素；`outer_position()` 仍是
+    // physical。直接 (cur - win)/scale 在 retina 副屏（scale=2）上把 cursor 多除
+    // 一次 → CSS 坐标变成真实值的两倍 → elementFromPoint 落到窗口外 → 永远判定
+    // 不在 UI 上 → setIgnoreCursorEvents(true) → 整窗被穿透。主屏 1920 (scale=1)
+    // logical==physical 歪打正着没事，副屏一定挂。
+    //
+    // 修法：macOS 上先把 win 转 logical 再减 logical 的 cursor。其它平台保持
+    // 原算法（实测 Windows 上两者都是 physical，原公式正确）。
+    #[cfg(target_os = "macos")]
+    {
+        let win_x_logical = win_pos.x as f64 / scale;
+        let win_y_logical = win_pos.y as f64 / scale;
+        let x = cursor.x - win_x_logical;
+        let y = cursor.y - win_y_logical;
+        return Ok((x, y, cursor.x, cursor.y, win_pos.x, win_pos.y, scale));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let x = (cursor.x - win_pos.x as f64) / scale;
+        let y = (cursor.y - win_pos.y as f64) / scale;
+        Ok((x, y, cursor.x, cursor.y, win_pos.x, win_pos.y, scale))
+    }
 }
 
 // ===== 应用控制 =====
