@@ -25,7 +25,10 @@ const SELECTOR = '.pointer-target'
 
 export function useCursorPassthrough() {
   const win = getCurrentWindow()
-  let isIgnoring = false
+  // 起始记 null —— 表示"OS 实际状态未知"。这样首次 setIgnore() 一定真调下去，
+  // 避免本地 tracker 和 OS 不一致导致永久卡 passthrough（macOS transparent 窗口
+  // 复现过：本地以为 false 实际 true，从此所有点击都被穿透到桌面）。
+  let isIgnoring: boolean | null = null
   let timer: ReturnType<typeof setInterval> | null = null
   let polling = false
 

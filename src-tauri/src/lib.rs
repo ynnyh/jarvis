@@ -115,6 +115,12 @@ pub fn run() {
                 // 确保窗口可见并聚焦
                 let _ = window.show();
                 let _ = window.set_focus();
+
+                // 显式把 ignoreCursorEvents 钉死成 false —— macOS 上 transparent + macOSPrivateApi
+                // 的窗口默认状态不保证，前端 useCursorPassthrough 假设初始是 false 后做早返回
+                // 优化，若 OS 实际是 true，前端永远叫不动它，整个窗口被穿透，用户看到的就是
+                // 无法拖动、无法点击、左右键都不行。在这里钉死避免该不变量被破坏。
+                let _ = window.set_ignore_cursor_events(false);
             }
             Ok(())
         })
