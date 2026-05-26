@@ -86,8 +86,27 @@ pub struct ToolResult {
 
 #[tauri::command]
 pub async fn tool_execute(name: String, input: Option<serde_json::Value>) -> Result<ToolResult, String> {
-    let body = input.unwrap_or(serde_json::json!({}));
-    match daemon_client::post(&format!("/tool/{}", name), body).await {
+    let input = input.unwrap_or(serde_json::json!({}));
+
+    // 已迁到 Rust 的 tool 走 native dispatch；未迁的继续 fallback 给 daemon。
+    // M5 渐进式迁移：每加一个 case 就让一个 tool 不再依赖 daemon，M6 daemon 删干净。
+    let native: Option<Result<serde_json::Value, String>> = match name.as_str() {
+        "get_tasks" => Some(crate::tools::get_tasks(input.clone()).await),
+        "log-task-effort" => Some(crate::tools::log_task_effort(input.clone()).await),
+        "ask-llm" => Some(crate::tools::ask_llm(input.clone()).await),
+        "cc_switch_import" => Some(crate::tools::cc_switch_import(input.clone()).await),
+        _ => None,
+    };
+
+    if let Some(r) = native {
+        return Ok(match r {
+            Ok(data) => ToolResult { success: true, data: Some(data), error: None },
+            Err(e) => ToolResult { success: false, data: None, error: Some(e) },
+        });
+    }
+
+    // 未迁 tool（chat_send / get_task_commits / get_daily_review）走 daemon
+    match daemon_client::post(&format!("/tool/{}", name), input).await {
         Ok(data) => Ok(ToolResult { success: true, data: Some(data), error: None }),
         Err(e) => Ok(ToolResult { success: false, data: None, error: Some(e) }),
     }
@@ -284,11 +303,13 @@ pub async fn fetch_task_alerts() -> Result<Vec<TaskAlert>, String> {
         .or_else(|| std::env::var("ZENTAO_ACCOUNT").ok())
         .unwrap_or_default();
 
-    // 通过守护进程调 get_tasks（daemon 内部 60s 超时；reqwest client 也是 60s）
-    let parsed = match daemon_client::post("/tool/get_tasks", serde_json::json!({})).await {
+    // 走原生 Rust zentao client，避开 daemon HTTP 中转。
+    // 旧实现走 daemon_client::post("/tool/get_tasks")，M5 之后 daemon 在退场，
+    // 直接调 tools::get_tasks 拿数据，前端契约不变。
+    let parsed = match crate::tools::get_tasks(serde_json::json!({})).await {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("[fetch_task_alerts] daemon call failed: {}", e);
+            eprintln!("[fetch_task_alerts] zentao 调用失败: {}", e);
             return Err(e);
         }
     };

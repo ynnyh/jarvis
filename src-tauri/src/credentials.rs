@@ -169,23 +169,15 @@ pub async fn zentao_test_connection(req: ZentaoTestRequest) -> Result<ZentaoTest
         return Ok(ZentaoTestResult { ok: false, message: "账号不能为空".to_string() });
     }
 
-    // === 为什么不直接用 reqwest 发 HTTP？===
-    // 实测某些禅道前置（nginx + WAF）会把 reqwest 的请求拦成 HTTP 403 + HTML
-    // "禁止访问"页 —— 即使 UA / Accept 已完全对齐 Node 端，并禁用了系统代理也
-    // 仍然 403。但同一台机器、同一组凭证从 Node 18+ fetch（undici）发出去能
-    // 201 拿到 token —— daemon 长期在这条路径上工作。
-    //
-    // 推测 WAF 在做 TCP/HTTP 客户端指纹识别（header 顺序、TLS-on-clear-port
-    // 探测、HTTP/1.1 vs HTTP/2、Connection 字段等），reqwest 和 undici 输出
-    // 不同。直接对齐 header 已经不够。
-    //
-    // 解决：把整个 HTTP 调用外包给打包好的 node.exe，跑 bundled/zentao-test.mjs
-    // helper（30 行 fetch + 诊断），从 stdout 读 `__JARVIS_RESULT__{...}` 一行
-    // 拿结果。100% 复用 daemon 同一套网络栈。
-    spawn_node_zentao_test(&base, &req.account, &req.password).await
+    // 直接用原生 Rust zentao client 探活。原来这里 spawn 过 bundled/node + zentao-test.mjs
+    // 是为了绕某些有 WAF 的禅道前置（reqwest 指纹被拦），用户当前环境
+    // 是内网 IP，按 Occam's razor 直接走 reqwest；遇到 WAF 再加 hyper 兜底。
+    let result = crate::zentao::test_connection(&base, &req.account, &req.password).await;
+    Ok(ZentaoTestResult { ok: result.ok, message: result.message })
 }
 
 /// 调 bundled node.exe + zentao-test.mjs 完成实际连接测试，从 stdout 取 JSON。
+#[allow(dead_code)]
 async fn spawn_node_zentao_test(
     base: &str,
     account: &str,
@@ -284,6 +276,7 @@ async fn spawn_node_zentao_test(
 /// 找 bundled/node.exe + bundled/zentao-test.mjs。逻辑同 daemon_client.rs 的
 /// resolve_daemon_launch —— 生产从 exe 同级 resources/bundled 找，dev 从项目
 /// 根 src-tauri/bundled 找；找不到 node.exe 时回退到系统 node（适配 dev）。
+#[allow(dead_code)]
 fn resolve_zentao_test_helper() -> Option<(PathBuf, PathBuf)> {
     let exe = std::env::current_exe().ok();
     let exe_dir = exe.as_ref().and_then(|p| p.parent()).map(PathBuf::from);

@@ -5,6 +5,7 @@ mod daemon_client;
 mod llm;
 mod settings;
 mod settings_extras;
+mod tools;
 mod zentao;
 
 use tauri::Manager;

@@ -33,6 +33,8 @@ rfd = "0.15"
 md-5 = "0.10"
 hex = "0.4"
 urlencoding = "2.1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+regex = "1"
 
 # 非 Windows 平台需要 libc::kill 来检测 daemon 进程存活
 # Windows 走 tasklist，不需要 libc
