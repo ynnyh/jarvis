@@ -222,22 +222,61 @@ pub async fn recommend_repos_for_task(
         return Ok(vec![]);
     }
 
+    // 先把用户配的 repoRoots 展开成真实 git 仓库列表。
+    // 用户配的可能是包含多个项目的容器目录（D:/coding，下面是各项目分组，再下面才是
+    // 具体仓库），直接当 repo 用没法读 README / git log。这里递归扫到 .git 标识为止。
+    //
+    // 若用户配的本身就是 git 仓库（少数情况），find_git_repos 会原样返回，行为兼容。
+    // 若扫不到任何 .git（极少数：用户配的全是空文件夹），降级用 repoRoots 原值 ——
+    // 至少 UX 不会完全崩，LLM 会拿到几乎空的画像做兜底排序。
+    let discovered = crate::git_scan::find_git_repos(&repo_roots, 5).await;
+    let raw_candidates: Vec<String> = if discovered.is_empty() {
+        repo_roots.clone()
+    } else {
+        discovered
+    };
+
+    // 应用用户在设置里维护的"业务线排除"清单（~/.jarvis/excluded-business-lines.json）。
+    // 业务线 = repoRoot 下第一层目录名。比如用户排除了"deer-flow"，那 D:/coding/deer-flow
+    // 及其子仓库都不应该出现在推荐列表里。commit_link 早就这么做了，绑定推荐之前漏了，
+    // 导致用户已经标记不想统计的项目还是被 LLM 拿来推荐 —— 这也是用户报告的问题。
+    let excluded = crate::git_scan::load_excluded_business_lines();
+    let candidate_paths: Vec<String> = raw_candidates
+        .into_iter()
+        .filter(|p| {
+            let bl = crate::commit_link::extract_business_line(p, &repo_roots);
+            !excluded.contains(&bl)
+        })
+        .collect();
+
+    if candidate_paths.is_empty() {
+        return Err(
+            "找不到可推荐的 git 项目：repoRoots 下没有 git 仓库，或全部命中业务线排除表。\
+请检查「设置 → 代码根目录 / 排除业务线」"
+                .to_string(),
+        );
+    }
+
     // 唯一候选直接置顶，跳过 LLM
-    if repo_roots.len() == 1 {
+    if candidate_paths.len() == 1 {
         return Ok(vec![RepoRecommendation {
-            repo_root: repo_roots[0].clone(),
+            repo_root: candidate_paths[0].clone(),
             score: 100,
             reason: "唯一候选项目".to_string(),
             is_top: true,
         }]);
     }
 
-    let mut profiles = Vec::with_capacity(repo_roots.len());
-    for r in &repo_roots {
+    let mut profiles = Vec::with_capacity(candidate_paths.len());
+    for r in &candidate_paths {
         profiles.push(build_profile(r).await);
     }
 
     let prompt = build_prompt(&task_title, &task_description, &deadline, &profiles);
+
+    // max_tokens 随候选数线性增长：每个候选输出 ~40 tokens（index/score/reason）
+    // 配合 300 token 的固定开销，10 候选 700 / 30 候选 1500，封顶 2500 避免离谱。
+    let max_out = (300 + (profiles.len() as u32) * 40).min(2500);
 
     let req = crate::llm::ChatRequest {
         messages: vec![crate::llm::ChatMessage {
@@ -248,9 +287,10 @@ pub async fn recommend_repos_for_task(
             name: None,
         }],
         temperature: Some(0.2),
-        max_tokens: Some(512),
+        max_tokens: Some(max_out),
         model: None,
-        timeout_ms: Some(30_000),
+        // 候选多时 LLM 会更慢，45s 给点缓冲
+        timeout_ms: Some(45_000),
         tools: None,
         tool_choice: None,
     };

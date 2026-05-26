@@ -88,6 +88,49 @@ function enterMultiMode() {
   multiSelectMode.value = true
 }
 
+/**
+ * 浏览选择任意目录。覆盖三种场景：
+ * - 自动扫到的 git 仓都不对（项目还没初始化 git）
+ * - 想绑定到非 git 项目（纯文档 / 配置仓）
+ * - 临时项目放在 repoRoots 之外
+ *
+ * 选中后插入推荐列表（手动条目无 score/AI 推荐角标），并自动勾上。
+ */
+async function browseAndPickRepo() {
+  try {
+    const picked = await invoke<string | null>('pick_directory', {
+      title: '选择要绑定的项目目录',
+    })
+    if (!picked) return  // 用户取消
+
+    // 已经在列表里就只是勾上，不重复添加
+    const existing = recommendations.value.find(r => r.repoRoot === picked)
+    if (existing) {
+      toggleRepo(picked)
+      return
+    }
+
+    const manualEntry: RepoRecommendation = {
+      repoRoot: picked,
+      score: 0,            // 0 分但标"手动选择"，渲染层会跳过分数
+      reason: '手动选择',
+      isTop: false,
+    }
+    recommendations.value = [...recommendations.value, manualEntry]
+
+    // 自动勾上手动选择的项；单选模式下顶替原选择
+    if (multiSelectMode.value) {
+      const s = new Set(selectedRepos.value)
+      s.add(picked)
+      selectedRepos.value = s
+    } else {
+      selectedRepos.value = new Set([picked])
+    }
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
 async function handleConfirm() {
   const task = currentTask.value
   if (!task || saving.value) return
@@ -200,14 +243,20 @@ function priorityLabel(p: string): string {
               <div class="rec-line1">
                 <span class="rec-path" :title="r.repoRoot">{{ shortPath(r.repoRoot) }}</span>
                 <span v-if="r.isTop" class="rec-badge">AI 推荐</span>
+                <span v-if="r.reason === '手动选择'" class="rec-badge rec-badge-manual">手动</span>
               </div>
               <div class="rec-reason">{{ r.reason || '—' }}</div>
             </div>
-            <span class="rec-score">{{ r.score }}</span>
+            <span v-if="r.reason !== '手动选择'" class="rec-score">{{ r.score }}</span>
           </button>
-          <button v-if="!multiSelectMode && recommendations.length > 1" class="multi-link" @click="enterMultiMode">
-            + 再关联一个项目（跨仓任务）
-          </button>
+          <div class="rec-actions">
+            <button v-if="!multiSelectMode && recommendations.length > 1" class="action-link" @click="enterMultiMode">
+              + 再关联一个项目（跨仓任务）
+            </button>
+            <button class="action-link browse-link" @click="browseAndPickRepo" title="选择任意目录（非 git 项目也可）">
+              📁 浏览选择其它目录
+            </button>
+          </div>
         </div>
       </div>
 
@@ -380,6 +429,10 @@ function priorityLabel(p: string): string {
   letter-spacing: 0.4px;
   flex-shrink: 0;
 }
+.rec-badge-manual {
+  color: rgba(251, 191, 36, 0.95);
+  background: rgba(245, 158, 11, 0.14);
+}
 .rec-reason {
   margin-top: 2px;
   font-size: 11px;
@@ -397,17 +450,38 @@ function priorityLabel(p: string): string {
 }
 .rec-row.selected .rec-score { color: rgba(0, 212, 255, 0.95); }
 
-.multi-link {
+.rec-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   margin-top: 2px;
+}
+.action-link {
   padding: 5px 8px;
   font-size: 11px;
-  color: rgba(167, 139, 250, 0.85);
   background: transparent;
-  border: 1px dashed rgba(167, 139, 250, 0.3);
+  border: 1px dashed;
   border-radius: 6px;
   cursor: pointer;
+  text-align: center;
+  font-family: inherit;
 }
-.multi-link:hover { background: rgba(167, 139, 250, 0.08); color: rgba(167, 139, 250, 1); }
+.action-link:not(.browse-link) {
+  color: rgba(167, 139, 250, 0.85);
+  border-color: rgba(167, 139, 250, 0.3);
+}
+.action-link:not(.browse-link):hover {
+  background: rgba(167, 139, 250, 0.08);
+  color: rgba(167, 139, 250, 1);
+}
+.browse-link {
+  color: rgba(251, 191, 36, 0.85);
+  border-color: rgba(251, 191, 36, 0.3);
+}
+.browse-link:hover {
+  background: rgba(251, 191, 36, 0.08);
+  color: rgba(251, 191, 36, 1);
+}
 
 .panel-footer {
   display: flex;
