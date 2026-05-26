@@ -30,11 +30,12 @@ pub async fn drag_window(window: tauri::WebviewWindow) -> Result<(), String> {
     window.start_dragging().map_err(|e| e.to_string())
 }
 
-/// 返回鼠标相对窗口左上角的逻辑坐标（CSS px）。
+/// 返回鼠标相对窗口左上角的逻辑坐标（CSS px），以及若干 raw 字段方便前端做诊断。
+///
+/// 返回 tuple: (x_css, y_css, raw_cursor_x, raw_cursor_y, raw_win_x, raw_win_y, scale_factor)
 ///
 /// 为什么不靠 WebView 的 mousemove + :hover：windowed 透明窗口启用 ignoreCursorEvents
-/// 之后，OS 不再向 WebView 派发鼠标事件，CSS :hover 卡在最后一次状态。把 ignore 临时
-/// 关掉再读 :hover 也不可靠 —— 静止的鼠标不会触发 WM_MOUSEMOVE，:hover 仍是旧值。
+/// 之后，OS 不再向 WebView 派发鼠标事件，CSS :hover 卡在最后一次状态。
 ///
 /// 用 Tauri 的 cursor_position() 直接从 OS 取真实坐标，再换算到窗口本地 CSS 坐标，
 /// 让前端 document.elementFromPoint(x, y) 自己判断鼠标下到底是不是可点击元素。
@@ -42,14 +43,14 @@ pub async fn drag_window(window: tauri::WebviewWindow) -> Result<(), String> {
 pub fn cursor_pos_in_window(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
-) -> Result<(f64, f64), String> {
+) -> Result<(f64, f64, f64, f64, i32, i32, f64), String> {
     let cursor = app.cursor_position().map_err(|e| e.to_string())?;
     let win_pos = window.outer_position().map_err(|e| e.to_string())?;
     let scale = window.scale_factor().map_err(|e| e.to_string())?;
     // 物理坐标差换算成 CSS 逻辑坐标
     let x = (cursor.x - win_pos.x as f64) / scale;
     let y = (cursor.y - win_pos.y as f64) / scale;
-    Ok((x, y))
+    Ok((x, y, cursor.x, cursor.y, win_pos.x, win_pos.y, scale))
 }
 
 // ===== 应用控制 =====

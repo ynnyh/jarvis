@@ -81,11 +81,14 @@ pub fn run() {
                     height: logical_h,
                 }));
 
-                // 优先窗口当前所在屏（current），fallback 系统主屏（primary），再 fallback 第一个可用屏。
-                // 历史教训：用 primary 优先在「笔记本主屏 + 外接副屏」场景会把窗口丢到用户没在看的屏，
-                // 用户感受是「欢迎页下一步按钮看不见」（窗口被定位到主屏右下，y 算出来超出当前屏底边）。
-                let monitor = window.current_monitor().ok().flatten()
-                    .or_else(|| window.primary_monitor().ok().flatten())
+                // 屏幕选择优先 primary（系统设置里用户标的"主显示器"）→ current → 第一个可用。
+                // 历史教训 1（已废）：用 current 优先，结果在「外接 1920 设为主屏 + mac 笔记本副屏」
+                // 场景下，启动时窗口默认在 mac 自己屏上，current 拿到的就是 mac，定位完小人就跑
+                // 副屏去了，用户看不见。
+                // 历史教训 2：早期用 primary 优先，在「笔记本作为 primary + 用户在看外接」场景下也
+                // 把窗口丢到笔记本屏。但那种场景下用户应该把外接设为主屏 —— 现在尊重用户的主屏选择。
+                let monitor = window.primary_monitor().ok().flatten()
+                    .or_else(|| window.current_monitor().ok().flatten())
                     .or_else(|| window.available_monitors().ok().and_then(|m| m.first().cloned()));
 
                 if let Some(monitor) = monitor {

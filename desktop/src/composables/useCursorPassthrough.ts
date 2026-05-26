@@ -12,22 +12,32 @@ import { invoke } from '@tauri-apps/api/core'
  *   - document.elementFromPoint(x, y) 看看那个像素下是不是 .pointer-target
  *   - 是 → 关穿透（窗口接事件）；不是 → 开穿透（鼠标穿过去落桌面）
  *
- * 为什么不沿用 v1 的 mousemove + :hover + 150ms 探针：
- *   开了 ignoreCursorEvents 之后 OS 根本不向 WebView 派发鼠标事件，:hover
- *   状态卡在 OFF。临时关穿透再查 :hover 也救不回来 —— 静止鼠标不触发
- *   WM_MOUSEMOVE，hover 仍是旧值。结果就是用户从空白区移到小人上后小人
- *   永远不可点。
- *
  * 标记可交互元素：在 root 元素（小人、菜单、气泡、各 panel）上加 class="pointer-target"。
  */
 const POLL_INTERVAL = 120
 const SELECTOR = '.pointer-target'
 
-export function useCursorPassthrough() {
+export interface PassthroughDebug {
+  /** Rust 给的窗口本地 CSS x（除过 scale） */
+  x: number
+  y: number
+  /** Rust 给的原始物理 cursor.x、win_pos.x */
+  rawCursorX: number
+  rawCursorY: number
+  rawWinX: number
+  rawWinY: number
+  scale: number
+  innerW: number
+  innerH: number
+  elTag: string
+  onUI: boolean
+  ignoring: boolean | null
+  err: string
+}
+
+export function useCursorPassthrough(debug?: (info: PassthroughDebug) => void) {
   const win = getCurrentWindow()
-  // 起始记 null —— 表示"OS 实际状态未知"。这样首次 setIgnore() 一定真调下去，
-  // 避免本地 tracker 和 OS 不一致导致永久卡 passthrough（macOS transparent 窗口
-  // 复现过：本地以为 false 实际 true，从此所有点击都被穿透到桌面）。
+  // 起始 null：本地 tracker 不知道 OS 真实状态，首次 setIgnore 必下发
   let isIgnoring: boolean | null = null
   let timer: ReturnType<typeof setInterval> | null = null
   let polling = false
@@ -38,9 +48,6 @@ export function useCursorPassthrough() {
       await win.setIgnoreCursorEvents(value)
       isIgnoring = value
     } catch (e) {
-      // 历史教训：capabilities/default.json 漏了 set-ignore-cursor-events
-      // 权限时这里被静默吞了，整套穿透看上去什么都没发生。出问题要 console
-      // 报，别让人查半天。
       console.error('[passthrough] setIgnoreCursorEvents 失败：', e)
     }
   }
@@ -48,30 +55,51 @@ export function useCursorPassthrough() {
   async function tick() {
     if (polling) return
     polling = true
+    const info: PassthroughDebug = {
+      x: 0, y: 0,
+      rawCursorX: 0, rawCursorY: 0,
+      rawWinX: 0, rawWinY: 0, scale: 1,
+      innerW: window.innerWidth, innerH: window.innerHeight,
+      elTag: '-', onUI: false, ignoring: isIgnoring, err: '',
+    }
     try {
-      const [x, y] = await invoke<[number, number]>('cursor_pos_in_window')
-      // 鼠标在窗口外 → 维持当前状态（不主动改）。0..rect 之间才在窗口内。
+      // cursor_pos_in_window 返回 6 元 tuple：[x, y, rawCursorX, rawCursorY, rawWinX, rawWinY, scale]
+      // 老版本只返回 [x, y]，向后兼容：长度 < 7 时把 raw 字段填 0
+      const raw = await invoke<number[]>('cursor_pos_in_window')
+      const [x, y, rcx = 0, rcy = 0, rwx = 0, rwy = 0, sc = 1] = raw
+      info.x = x; info.y = y
+      info.rawCursorX = rcx; info.rawCursorY = rcy
+      info.rawWinX = rwx; info.rawWinY = rwy
+      info.scale = sc
+
       const w = window.innerWidth
       const h = window.innerHeight
-      if (x < 0 || y < 0 || x >= w || y >= h) return
+      if (x < 0 || y < 0 || x >= w || y >= h) {
+        // 鼠标在窗口外
+        info.elTag = '(outside)'
+        debug?.(info)
+        return
+      }
 
       const el = document.elementFromPoint(x, y)
+      info.elTag = el ? `${el.tagName.toLowerCase()}${el.className ? '.' + String(el.className).split(' ')[0] : ''}` : '(null)'
       const onUI = !!(el && el.closest && el.closest(SELECTOR))
-      // onUI=true  → 关穿透（让窗口收事件）
-      // onUI=false → 开穿透（鼠标穿过窗口空白区到桌面）
+      info.onUI = onUI
       await setIgnore(!onUI)
-    } catch (e) {
-      // 调 cursor_pos_in_window 失败一般是 capability 没配 / 权限问题。
-      // 安全策略：失败时关穿透，至少保证 UI 可用 —— 否则用户点不到小人。
+      info.ignoring = isIgnoring
+      debug?.(info)
+    } catch (e: any) {
+      info.err = e?.message ?? String(e)
       console.error('[passthrough] cursor_pos_in_window 失败：', e)
       await setIgnore(false)
+      info.ignoring = isIgnoring
+      debug?.(info)
     } finally {
       polling = false
     }
   }
 
   onMounted(() => {
-    // 启动时显式同步状态 —— 默认不穿透，保证 wizard / 小人立刻可点
     setIgnore(false)
     timer = setInterval(tick, POLL_INTERVAL)
   })
@@ -79,7 +107,6 @@ export function useCursorPassthrough() {
   onUnmounted(() => {
     if (timer) clearInterval(timer)
     timer = null
-    // 关穿透避免遗留状态影响其它窗口（同 app 多窗口场景）
     setIgnore(false)
   })
 }

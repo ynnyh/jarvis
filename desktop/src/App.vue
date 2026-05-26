@@ -8,7 +8,7 @@ import { useTaskCommits } from './composables/useTaskCommits'
 import { useDailyReview } from './composables/useDailyReview'
 import { useEveningReminder } from './composables/useEveningReminder'
 import { useWorkdayNudges } from './composables/useWorkdayNudges'
-import { useCursorPassthrough } from './composables/useCursorPassthrough'
+import { useCursorPassthrough, type PassthroughDebug } from './composables/useCursorPassthrough'
 import { useUpdater } from './composables/useUpdater'
 import TaskWindow from './components/TaskWindow.vue'
 import SettingsWindow from './components/SettingsWindow.vue'
@@ -36,7 +36,16 @@ useWorkdayNudges({
     showAlert(text, emoji, 'happy', 12000)
   },
 })
-useCursorPassthrough()
+// passthrough 诊断面板：mac 上排查"整窗不可点"必需。窗口左上角浮一个小框，
+// 显示 Rust 给的原始 cursor / win_pos / scale 以及前端推得的 (x,y) 和当前
+// elementFromPoint 命中的元素。鼠标移到小人上时数字应该指向 svg/.avatar；如果
+// 永远是 body 或者数字明显不对就能定位计算 bug。
+const passthroughDebug = ref<PassthroughDebug | null>(null)
+const isMac = navigator.userAgent.includes('Mac')
+useCursorPassthrough((info) => {
+  if (!isMac) return  // 只在 mac 上显示，Windows 上没问题不打扰
+  passthroughDebug.value = info
+})
 
 const updater = useUpdater({
   onAvailable: (version) => {
@@ -307,6 +316,16 @@ onUnmounted(() => {
 
 <template>
   <div class="jarvis-container" @contextmenu.prevent="toggleMenu">
+    <!-- mac passthrough 诊断面板（临时） -->
+    <div v-if="passthroughDebug" class="debug-overlay pointer-target">
+      <div>cursor css: {{ passthroughDebug.x.toFixed(0) }}, {{ passthroughDebug.y.toFixed(0) }}</div>
+      <div>raw cur: {{ passthroughDebug.rawCursorX.toFixed(0) }}, {{ passthroughDebug.rawCursorY.toFixed(0) }}</div>
+      <div>raw win: {{ passthroughDebug.rawWinX }}, {{ passthroughDebug.rawWinY }} · s={{ passthroughDebug.scale }}</div>
+      <div>inner: {{ passthroughDebug.innerW }}x{{ passthroughDebug.innerH }}</div>
+      <div>el: {{ passthroughDebug.elTag }}</div>
+      <div>onUI: {{ passthroughDebug.onUI }} · ignoring: {{ passthroughDebug.ignoring }}</div>
+      <div v-if="passthroughDebug.err">err: {{ passthroughDebug.err }}</div>
+    </div>
     <div v-if="showMenu" class="menu pointer-target">
       <button class="menu-item" @click="menuShowAlerts">
         <span>🔔</span><span>任务提醒</span>
@@ -395,6 +414,24 @@ onUnmounted(() => {
   user-select: none;
   overflow: visible;
   background: transparent;
+}
+
+/* mac 调试面板：固定窗口左上角，半透明背景，等宽字体好看数字 */
+.debug-overlay {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 999;
+  padding: 6px 8px;
+  font-size: 10px;
+  line-height: 1.4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(0, 0, 0, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  pointer-events: auto;
+  white-space: nowrap;
 }
 
 .avatar-group {
