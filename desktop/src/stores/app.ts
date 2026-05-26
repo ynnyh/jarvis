@@ -103,6 +103,7 @@ export const useAppStore = defineStore('app', () => {
 
   // ===== 风险分析派生数据 =====
   const showRiskWindow = ref(false)
+  const showUpdateWindow = ref(false)
 
   interface UrgencyEntry {
     alert: TaskAlert
@@ -298,6 +299,7 @@ export const useAppStore = defineStore('app', () => {
     stackedDays,
     alertLevel,
     showRiskWindow,
+    showUpdateWindow,
     urgencyScored,
     myRemainingHours,
     hoursByDay,

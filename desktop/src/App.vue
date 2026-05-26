@@ -14,6 +14,7 @@ import TaskWindow from './components/TaskWindow.vue'
 import SettingsWindow from './components/SettingsWindow.vue'
 import RiskWindow from './components/RiskWindow.vue'
 import ReviewWindow from './components/ReviewWindow.vue'
+import UpdateWindow from './components/UpdateWindow.vue'
 import WelcomeWizard from './components/WelcomeWizard.vue'
 
 const store = useAppStore()
@@ -39,23 +40,16 @@ useCursorPassthrough()
 
 const updater = useUpdater({
   onAvailable: (version) => {
-    // 新版本到位，挂常驻气泡（duration=0），用户点了才安装
-    showAlert(`新版本 v${version} 可用，点这里更新`, '✨', 'happy', 0)
+    // 新版本到位，挂常驻气泡（duration=0），告诉用户去菜单里看详情。
+    // 不自动弹更新窗口 —— 用户可能正在专注做事，被弹窗打断很烦。
+    showAlert(`新版本 v${version} 可用（菜单→检查更新）`, '✨', 'happy', 0)
   },
 })
 updater.start()
 
-async function installUpdate() {
-  if (!updater.available.value) {
-    // 没现成的就立刻查一次
-    const found = await updater.checkNow()
-    if (!found) {
-      showAlert('当前已是最新版本', '✓', 'happy', 4000)
-      return
-    }
-  }
-  showAlert('正在下载更新…', '⬇️', 'thinking', 0)
-  await updater.installAndRestart()
+function openUpdateWindow() {
+  closeAllPanels()
+  store.showUpdateWindow = true
 }
 
 type JarvisState = 'idle' | 'thinking' | 'working' | 'warning' | 'happy'
@@ -142,6 +136,7 @@ function closeAllPanels() {
   store.showTaskWindow = false
   store.showRiskWindow = false
   store.showReviewWindow = false
+  store.showUpdateWindow = false
   configStore.showSettingsWindow = false
 }
 
@@ -186,7 +181,7 @@ function menuOpenChat() {
 
 function menuCheckUpdate() {
   showMenu.value = false
-  installUpdate()
+  openUpdateWindow()
 }
 
 // --- 拖拽 + 点击 ---
@@ -384,6 +379,8 @@ onUnmounted(() => {
     <ReviewWindow />
     <!-- 设置面板 -->
     <SettingsWindow />
+    <!-- 更新窗口 -->
+    <UpdateWindow :updater="updater" />
     <!-- 首启引导：配置不完整时全屏覆盖，写完后消失 -->
     <WelcomeWizard v-if="needsWizard" @done="onWizardDone" />
   </div>
