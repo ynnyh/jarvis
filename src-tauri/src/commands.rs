@@ -30,9 +30,7 @@ pub async fn drag_window(window: tauri::WebviewWindow) -> Result<(), String> {
     window.start_dragging().map_err(|e| e.to_string())
 }
 
-/// 返回鼠标相对窗口左上角的逻辑坐标（CSS px），以及若干 raw 字段方便前端做诊断。
-///
-/// 返回 tuple: (x_css, y_css, raw_cursor_x, raw_cursor_y, raw_win_x, raw_win_y, scale_factor)
+/// 返回鼠标相对窗口左上角的逻辑坐标（CSS px）。
 ///
 /// 为什么不靠 WebView 的 mousemove + :hover：windowed 透明窗口启用 ignoreCursorEvents
 /// 之后，OS 不再向 WebView 派发鼠标事件，CSS :hover 卡在最后一次状态。
@@ -43,7 +41,7 @@ pub async fn drag_window(window: tauri::WebviewWindow) -> Result<(), String> {
 pub fn cursor_pos_in_window(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
-) -> Result<(f64, f64, f64, f64, i32, i32, f64), String> {
+) -> Result<(f64, f64), String> {
     let cursor = app.cursor_position().map_err(|e| e.to_string())?;
     let win_pos = window.outer_position().map_err(|e| e.to_string())?;
     let scale = window.scale_factor().map_err(|e| e.to_string())?;
@@ -61,16 +59,14 @@ pub fn cursor_pos_in_window(
     {
         let win_x_logical = win_pos.x as f64 / scale;
         let win_y_logical = win_pos.y as f64 / scale;
-        let x = cursor.x - win_x_logical;
-        let y = cursor.y - win_y_logical;
-        return Ok((x, y, cursor.x, cursor.y, win_pos.x, win_pos.y, scale));
+        Ok((cursor.x - win_x_logical, cursor.y - win_y_logical))
     }
 
     #[cfg(not(target_os = "macos"))]
     {
         let x = (cursor.x - win_pos.x as f64) / scale;
         let y = (cursor.y - win_pos.y as f64) / scale;
-        Ok((x, y, cursor.x, cursor.y, win_pos.x, win_pos.y, scale))
+        Ok((x, y))
     }
 }
 
@@ -297,7 +293,7 @@ fn read_dotenv_value(root: &PathBuf, key: &str) -> Option<String> {
 }
 
 #[tauri::command]
-pub async fn fetch_task_alerts() -> Result<Vec<TaskAlert>, String> {
+pub async fn fetch_task_alerts(app: tauri::AppHandle) -> Result<Vec<TaskAlert>, String> {
     let root = project_root();
 
     // 读取 .env 里的 ZENTAO_ACCOUNT，用作"只看我自己"的过滤条件
@@ -324,6 +320,70 @@ pub async fn fetch_task_alerts() -> Result<Vec<TaskAlert>, String> {
     } else {
         vec![]
     };
+
+    // 新任务发现：先对全量"我的活跃任务"做 snapshot diff（不受 deadline 过滤影响 —
+    // 即使任务没截止日期或在 1 个月后，也应该被识别为新任务）。
+    // 首次启动 snapshot 不存在，diff 返回空 —— 老用户升级时不会被堆积存量任务轰炸。
+    {
+        use tauri::Emitter;
+        let my_tasks: Vec<crate::task_snapshot::TaskRef> = tasks
+            .iter()
+            .filter(|task| {
+                let status = task.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                if status == "done" || status == "closed" || status == "cancel" {
+                    return false;
+                }
+                if me.is_empty() {
+                    return true; // 没配 ZENTAO_ACCOUNT 就全量当成自己的
+                }
+                let assignee = task.get("assignee").and_then(|v| v.as_str()).unwrap_or("");
+                let team_has_me = task
+                    .get("team")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter().any(|m| {
+                            m.get("account").and_then(|a| a.as_str()) == Some(me.as_str())
+                        })
+                    })
+                    .unwrap_or(false);
+                assignee == me || team_has_me
+            })
+            .map(|task| {
+                let id = task
+                    .get("id")
+                    .map(|v| {
+                        v.as_str()
+                            .map(|s| s.to_string())
+                            .unwrap_or_else(|| v.to_string().trim_matches('"').to_string())
+                    })
+                    .unwrap_or_default();
+                let title = task
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .or(task.get("name").and_then(|v| v.as_str()))
+                    .unwrap_or("")
+                    .to_string();
+                let priority = task
+                    .get("priority")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("normal")
+                    .to_string();
+                let deadline = task
+                    .get("deadline")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                crate::task_snapshot::TaskRef { id, title, priority, deadline }
+            })
+            .filter(|t| !t.id.is_empty())
+            .collect();
+
+        let new_tasks = crate::task_snapshot::diff_and_persist(&my_tasks);
+        if !new_tasks.is_empty() {
+            // 前端 App.vue 监听 "new-tasks-detected" 事件，逐个弹绑定窗
+            let _ = app.emit("new-tasks-detected", &new_tasks);
+        }
+    }
 
     // 获取今天的日期
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();

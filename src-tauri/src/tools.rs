@@ -554,7 +554,10 @@ pub async fn get_task_commits(input: Value) -> Result<Value, String> {
         until: parsed.until.as_deref(),
         root_dirs: &root_dirs,
         include_body: parsed.include_body.unwrap_or(true),
-        use_llm: parsed.use_llm.unwrap_or(false),
+        // v0.6.0 起默认 true：新流程的多候选场景只有走 LLM 才能正确归属，
+        // 关掉就只剩单候选直归 + exact 显式 ID，对多任务并行的 repo 形同没用。
+        // 没配 LLM 也安全 —— 分类失败时这些 commit 留作孤儿，不会乱关联。
+        use_llm: parsed.use_llm.unwrap_or(true),
         min_confidence: 0.4,
     };
     let result = commit_link::link_tasks_with_commits(&task_inputs, options).await?;
@@ -832,7 +835,8 @@ pub async fn get_daily_review(input: Value) -> Result<Value, String> {
             until: parsed.until.as_deref(),
             root_dirs: &root_dirs,
             include_body: true,
-            use_llm: parsed.use_llm.unwrap_or(false),
+            // 同 get_task_commits：v0.6.0 起 LLM 默认开，确保多候选 commit 能归属
+            use_llm: parsed.use_llm.unwrap_or(true),
             min_confidence: 0.4,
         },
     )

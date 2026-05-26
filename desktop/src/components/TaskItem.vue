@@ -32,6 +32,38 @@ const commits = computed(() => store.visibleCommitsForTask(props.task.id))
 const exactCount = computed(() => commits.value.filter(c => c.matchType === 'exact').length)
 const softCount = computed(() => commits.value.filter(c => c.matchType === 'soft').length)
 
+// 绑定状态：未绑定显示灰色 🔗，已绑定显示绿色 ✓ 项目名缩写
+const bindingEntry = computed(() => store.taskBindings[props.task.id] ?? null)
+const isBound = computed(() => store.isTaskBound(props.task.id))
+const boundRepoLabel = computed(() => {
+  if (!bindingEntry.value) return ''
+  const roots = bindingEntry.value.repoRoots
+  if (roots.length === 0) return ''
+  // 取最后一层目录名作为短标签；多仓显示 "N 个项目"
+  if (roots.length === 1) {
+    const parts = roots[0].replace(/\\/g, '/').split('/').filter(Boolean)
+    return parts[parts.length - 1] || roots[0]
+  }
+  return `${roots.length} 个项目`
+})
+
+function openBindWindow(e: Event) {
+  e.stopPropagation()
+  // 把当前任务推到队列首位（unshift 等价：清掉再 push），然后打开绑定窗。
+  // 用 enqueue + 立即打开的方式，确保即使队列里有其它任务，用户手动触发的也会被优先处理。
+  // 实现上：直接重写 pendingBindTasks，避免引入额外 store 方法。
+  const t = {
+    id: props.task.id,
+    title: props.task.title,
+    priority: props.task.priority,
+    deadline: props.task.deadline,
+  }
+  // 去掉队列里同 id 的旧条目，把当前任务塞到队首
+  const rest = store.pendingBindTasks.filter(x => x.id !== t.id)
+  store.pendingBindTasks.splice(0, store.pendingBindTasks.length, t, ...rest)
+  store.showBindTaskWindow = true
+}
+
 const dueLabel = computed(() => {
   const d = props.task.daysUntilDue
   if (d < 0) return `逾期 ${-d} 天`
@@ -128,6 +160,15 @@ function feedbackOf(sha: string): 'accepted' | 'rejected' | undefined {
       <span v-if="task.estimatedHours > 0" class="muted">
         · {{ task.consumedHours }}/{{ task.estimatedHours }}h
       </span>
+      <button
+        class="bind-chip"
+        :class="{ bound: isBound, unbound: !isBound }"
+        :title="isBound ? `已绑定：${boundRepoLabel}（点击修改）` : '未绑定项目，点击绑定'"
+        @click="openBindWindow"
+      >
+        <span class="bind-chip-icon">{{ isBound ? '✓' : '🔗' }}</span>
+        <span class="bind-chip-text">{{ isBound ? boundRepoLabel : '未绑定' }}</span>
+      </button>
     </div>
 
     <!-- 闸门 0：写回链路练手按钮（仅 #10257） -->
@@ -263,6 +304,47 @@ function feedbackOf(sha: string): 'accepted' | 'rejected' | undefined {
 }
 .muted { color: #6b7280; }
 .team-tag { font-size: 10px; }
+
+/* ===== 绑定状态角标 ===== */
+.bind-chip {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  font-size: 10px;
+  border-radius: 8px;
+  border: 1px solid;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  font-family: inherit;
+}
+.bind-chip.unbound {
+  background: rgba(148, 163, 184, 0.08);
+  border-color: rgba(148, 163, 184, 0.25);
+  color: rgba(148, 163, 184, 0.85);
+}
+.bind-chip.unbound:hover {
+  background: rgba(167, 139, 250, 0.12);
+  border-color: rgba(167, 139, 250, 0.45);
+  color: rgba(167, 139, 250, 0.95);
+}
+.bind-chip.bound {
+  background: rgba(34, 197, 94, 0.1);
+  border-color: rgba(34, 197, 94, 0.3);
+  color: rgba(134, 239, 172, 0.95);
+}
+.bind-chip.bound:hover {
+  background: rgba(34, 197, 94, 0.18);
+  border-color: rgba(34, 197, 94, 0.55);
+}
+.bind-chip-icon { font-size: 9.5px; line-height: 1; }
+.bind-chip-text {
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* ----- 相关提交折叠区 ----- */
 .commits-section {

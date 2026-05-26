@@ -1,24 +1,29 @@
-// 任务 ↔ commit 关联服务。
+// 任务 ↔ commit 关联服务（v2，绑定优先架构）。
 //
-// 移植自 src/services/commit-link-service.ts。
+// 重写理由：v1 用业务线（rootDir 下第一层目录名）的关键词去匹配任务标题，
+// 命中率全靠运气，"瞎猜瞎关联"是用户原话。v2 引入显式的 task↔repo 绑定表
+// （task_bindings 模块），消除关键词猜测。
 //
-// 两遍匹配：
-//   1. 精确匹配：commit message 含 #任务号 → 直接关联
-//   2. 软关联：业务线（rootDir 下第一层目录名）的关键词命中任务名 → 候选关联
+// 两遍 + 可选第三遍匹配：
+//   Pass 1 (Exact): commit message 含 #任务号 → 直接关联，最高优先级，不走 LLM
+//   Pass 2 (Binding): commit 所在 repo 反查 task_bindings 拿到候选任务集
+//                     - 集合 == 0 → 归零散修复桶
+//                     - 集合 == 1 → 直接归属（1:1 绑定的常见路径）
+//                     - 集合 > 1  → 走 Pass 3 LLM 分类
+//   Pass 3 (LLM, 可选): 用 commit_classifier 对多候选场景做归属判定
 //
-// 可选第三遍：用 LLM 给 soft 匹配评分，丢掉低置信度的（LLM 失败回退到规则结果）。
+// 旧的关键词/业务线软关联整套逻辑下线，避免错关联。
 
 #![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::collections::{HashMap, HashSet};
 
+use crate::commit_classifier;
 use crate::git_scan::{
-    self, effort_for_commit, list_my_local_commits, DateRange,
-    ListMyLocalCommitsInput, LocalCommit, MatchDimension, RangePreset,
+    self, effort_for_commit, list_my_local_commits, DateRange, ListMyLocalCommitsInput,
+    LocalCommit, MatchDimension, RangePreset,
 };
-use crate::llm::{self, ChatMessage, ChatRequest, Role};
 
 // ============================================================================
 // 类型
@@ -34,7 +39,9 @@ pub struct TaskInput {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum MatchType {
+    /// commit message 显式写了 #任务号
     Exact,
+    /// 通过 task↔repo 绑定推断（可能含 LLM 二次判定）
     Soft,
 }
 
@@ -49,11 +56,14 @@ pub struct CommitLink {
     pub business_line: String,
     pub repo_name: String,
     pub match_type: MatchType,
+    /// v2 不再使用关键词，保留字段是为了前端老组件平滑过渡（永远是 None）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub matched_keywords: Option<Vec<String>>,
     pub effort: f64,
+    /// LLM 给出的置信度 0~1（绑定+LLM 路径才有；纯绑定唯一候选给固定 0.9）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub confidence: Option<f64>,
+    /// LLM 给的归属理由 / 绑定路径给的固定文案
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }
@@ -89,12 +99,14 @@ pub struct LinkCommitsOptions<'a> {
     pub until: Option<&'a str>,
     pub root_dirs: &'a [String],
     pub include_body: bool,
+    /// true 时多候选场景走 LLM 分类；false 时多候选 commit 直接归零散桶
     pub use_llm: bool,
+    /// LLM 分类的置信度下限。低于此值视为"未归属"，落入零散桶
     pub min_confidence: f64,
 }
 
 // ============================================================================
-// 工具：path 规整 / 业务线提取
+// 路径与业务线
 // ============================================================================
 
 fn norm_path(p: &str) -> String {
@@ -107,6 +119,8 @@ fn basename(p: &str) -> String {
     np.rsplit('/').next().unwrap_or("").to_string()
 }
 
+/// 业务线 = rootDir 下第一层目录名（外接磁盘 `D:/coding/物流/foo` → "物流"）。
+/// 仅用于零散修复桶的分组展示，不再参与匹配判定。
 pub fn extract_business_line(repo_path: &str, root_dirs: &[String]) -> String {
     let np = norm_path(repo_path);
     for root in root_dirs {
@@ -123,39 +137,6 @@ pub fn extract_business_line(repo_path: &str, root_dirs: &[String]) -> String {
         }
     }
     basename(&np)
-}
-
-const TRIM_PREFIXES: &[&str] = &["示例公司", "胜利工贸", "钰海工贸", "通才铁前", "通才", "鸿丰达"];
-
-pub fn extract_repo_keywords(business_line: &str, aliases: &HashMap<String, Vec<String>>) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    let mut seen: HashSet<String> = HashSet::new();
-    let push = |s: String, out: &mut Vec<String>, seen: &mut HashSet<String>| {
-        if s.chars().count() >= 2 && !seen.contains(&s) {
-            seen.insert(s.clone());
-            out.push(s);
-        }
-    };
-    push(business_line.to_string(), &mut out, &mut seen);
-    for prefix in TRIM_PREFIXES {
-        if business_line.starts_with(prefix) && business_line.len() > prefix.len() {
-            let rest = business_line[prefix.len()..].to_string();
-            push(rest, &mut out, &mut seen);
-        }
-    }
-    // 末尾 mes 后缀
-    let lower = business_line.to_lowercase();
-    if lower.ends_with("mes") && lower.len() > 3 {
-        let prefix_len = business_line.len() - 3;
-        push(business_line[..prefix_len].to_string(), &mut out, &mut seen);
-        push("mes".to_string(), &mut out, &mut seen);
-    }
-    if let Some(aliased) = aliases.get(business_line) {
-        for a in aliased {
-            push(a.clone(), &mut out, &mut seen);
-        }
-    }
-    out
 }
 
 // ============================================================================
@@ -189,34 +170,37 @@ pub fn extract_task_ids_from_message(commit: &LocalCommit) -> Vec<String> {
 }
 
 // ============================================================================
-// 软关联
+// 主入口
 // ============================================================================
 
 struct CommitItem {
     commit: LocalCommit,
     repo_path: String,
     repo_name: String,
-}
-
-struct BusinessGroup {
     business_line: String,
-    keywords: Vec<String>,
-    commits: Vec<CommitItem>,
 }
 
-fn match_task_against_group(task_name: &str, group: &BusinessGroup) -> Vec<String> {
-    let lower = task_name.to_lowercase();
-    group
-        .keywords
-        .iter()
-        .filter(|kw| lower.contains(&kw.to_lowercase()))
-        .cloned()
-        .collect()
+fn make_link(
+    item: &CommitItem,
+    match_type: MatchType,
+    confidence: Option<f64>,
+    reason: Option<String>,
+) -> CommitLink {
+    CommitLink {
+        sha: item.commit.sha.clone(),
+        short_sha: item.commit.short_sha.clone(),
+        title: item.commit.title.clone(),
+        authored_date: item.commit.authored_date.clone(),
+        repo_path: item.repo_path.clone(),
+        repo_name: item.repo_name.clone(),
+        business_line: item.business_line.clone(),
+        match_type,
+        matched_keywords: None,
+        effort: effort_for_commit(&item.commit),
+        confidence,
+        reason,
+    }
 }
-
-// ============================================================================
-// 主入口
-// ============================================================================
 
 pub async fn link_tasks_with_commits(
     tasks: &[TaskInput],
@@ -230,16 +214,15 @@ pub async fn link_tasks_with_commits(
         author: None,
         match_mode: MatchDimension::Author,
         include_body: options.include_body,
-        include_stat: true, // effort 估算需要
+        include_stat: true,
         max_depth: 5,
     })
     .await?;
 
-    let aliases = git_scan::load_business_aliases();
     let excluded = git_scan::load_excluded_business_lines();
     let root_dirs = raw.root_dirs.clone();
 
-    // 过滤排除的业务线
+    // 过滤排除业务线后的 repo 列表
     let raw_repos: Vec<_> = raw
         .repos
         .into_iter()
@@ -248,55 +231,38 @@ pub async fn link_tasks_with_commits(
 
     let effective_total_commits: usize = raw_repos.iter().map(|r| r.commits.len()).sum();
 
-    // 按业务线聚合
-    let mut group_map: HashMap<String, BusinessGroup> = HashMap::new();
+    // 按 repo 维度展平所有 commit
+    let mut items_by_repo: HashMap<String, Vec<CommitItem>> = HashMap::new();
     for r in raw_repos {
         let business_line = extract_business_line(&r.repo_path, &root_dirs);
-        let group = group_map.entry(business_line.clone()).or_insert_with(|| BusinessGroup {
-            business_line: business_line.clone(),
-            keywords: extract_repo_keywords(&business_line, &aliases),
-            commits: Vec::new(),
-        });
         let repo_name = basename(&r.repo_path);
+        let bucket = items_by_repo.entry(r.repo_path.clone()).or_default();
         for c in r.commits {
-            group.commits.push(CommitItem {
+            bucket.push(CommitItem {
                 commit: c,
                 repo_path: r.repo_path.clone(),
                 repo_name: repo_name.clone(),
+                business_line: business_line.clone(),
             });
         }
     }
-    let groups: Vec<BusinessGroup> = group_map.into_values().collect();
 
-    let task_by_id: HashMap<String, &TaskInput> = tasks.iter().map(|t| (t.id.clone(), t)).collect();
+    let task_by_id: HashMap<String, &TaskInput> =
+        tasks.iter().map(|t| (t.id.clone(), t)).collect();
 
     let mut task_links: HashMap<String, Vec<CommitLink>> = HashMap::new();
-    let mut used_commit_keys: HashSet<String> = HashSet::new();
+    // 用 (repo_path, sha) 唯一标识一条 commit；走完所有 pass 后剩下的就是孤儿
+    let mut used_keys: HashSet<String> = HashSet::new();
+    let make_key = |item: &CommitItem| format!("{}:{}", item.repo_path, item.commit.sha);
 
-    let to_link = |item: &CommitItem, business_line: &str, match_type: MatchType, matched_keywords: Option<Vec<String>>| -> CommitLink {
-        CommitLink {
-            sha: item.commit.sha.clone(),
-            short_sha: item.commit.short_sha.clone(),
-            title: item.commit.title.clone(),
-            authored_date: item.commit.authored_date.clone(),
-            repo_path: item.repo_path.clone(),
-            repo_name: item.repo_name.clone(),
-            business_line: business_line.to_string(),
-            match_type,
-            matched_keywords,
-            effort: effort_for_commit(&item.commit),
-            confidence: None,
-            reason: None,
-        }
-    };
-
-    // 第一遍：精确匹配
-    for group in &groups {
-        for item in &group.commits {
+    // ---- Pass 1: 精确匹配 ----
+    for items in items_by_repo.values() {
+        for item in items {
             let ids = extract_task_ids_from_message(&item.commit);
             if ids.is_empty() {
                 continue;
             }
+            let mut hit_any = false;
             for id in ids {
                 if !task_by_id.contains_key(&id) {
                     continue;
@@ -304,81 +270,114 @@ pub async fn link_tasks_with_commits(
                 task_links
                     .entry(id)
                     .or_default()
-                    .push(to_link(item, &group.business_line, MatchType::Exact, None));
-                used_commit_keys.insert(format!("{}:{}", item.repo_path, item.commit.sha));
+                    .push(make_link(item, MatchType::Exact, None, None));
+                hit_any = true;
+            }
+            if hit_any {
+                used_keys.insert(make_key(item));
             }
         }
     }
 
-    // 第二遍：软关联
-    for task in tasks {
-        let task_id = task.id.clone();
-        for group in &groups {
-            let hits = match_task_against_group(&task.name, group);
-            if hits.is_empty() {
-                continue;
+    // ---- Pass 2 + 3: 绑定匹配（必要时 LLM 多候选判定）----
+    // 按 repo 处理，每个 repo 单独决定走哪条路径
+    for (repo_path, items) in &items_by_repo {
+        // 候选任务 = 绑定到该 repo 的 task_id ∩ 当前活跃任务集
+        let bound_task_ids: Vec<String> = crate::task_bindings::task_ids_for_repo(repo_path)
+            .into_iter()
+            .filter(|tid| task_by_id.contains_key(tid))
+            .collect();
+
+        if bound_task_ids.is_empty() {
+            // 该 repo 没有任何绑定任务 → Pass 1 没命中的 commit 全部进入孤儿桶
+            continue;
+        }
+
+        // 这个 repo 的"待归属"commits = 全部 commits - Pass 1 已用 - 已属其它绑定任务
+        let pending_items: Vec<&CommitItem> = items
+            .iter()
+            .filter(|it| !used_keys.contains(&make_key(it)))
+            .collect();
+        if pending_items.is_empty() {
+            continue;
+        }
+
+        if bound_task_ids.len() == 1 {
+            // 唯一候选：直接全归过去（1:1 的典型场景，省 LLM 调用）
+            let task_id = bound_task_ids.into_iter().next().unwrap();
+            for it in pending_items {
+                task_links.entry(task_id.clone()).or_default().push(make_link(
+                    it,
+                    MatchType::Soft,
+                    Some(0.9),
+                    Some("绑定唯一候选任务".to_string()),
+                ));
+                used_keys.insert(make_key(it));
             }
-            for item in &group.commits {
-                let key = format!("{}:{}", item.repo_path, item.commit.sha);
-                if used_commit_keys.contains(&key) {
-                    continue;
-                }
-                task_links
-                    .entry(task_id.clone())
-                    .or_default()
-                    .push(to_link(item, &group.business_line, MatchType::Soft, Some(hits.clone())));
+            continue;
+        }
+
+        // 多候选：尽量走 LLM；如果用户关了 use_llm，就保守留作孤儿
+        if !options.use_llm {
+            continue;
+        }
+
+        // 构造 LLM 候选 + 输入
+        let candidates: Vec<TaskInput> = bound_task_ids
+            .iter()
+            .filter_map(|tid| task_by_id.get(tid).map(|t| (*t).clone()))
+            .collect();
+        let pending_commits: Vec<LocalCommit> =
+            pending_items.iter().map(|it| it.commit.clone()).collect();
+
+        let classification = match commit_classifier::classify_commits_to_tasks(
+            &pending_commits,
+            &candidates,
+        )
+        .await
+        {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!(
+                    "[commit_link] repo={} LLM 分类失败，归零散桶: {}",
+                    repo_path, e
+                );
+                HashMap::new()
             }
+        };
+
+        for it in pending_items {
+            let sha = &it.commit.sha;
+            let Some(res) = classification.get(sha) else {
+                continue; // LLM 没给出该 sha 的判定 → 留作孤儿
+            };
+            let Some(task_id) = &res.task_id else {
+                continue; // LLM 说不属于任何候选 → 孤儿
+            };
+            if res.confidence < options.min_confidence {
+                continue; // 低置信度也丢
+            }
+            task_links.entry(task_id.clone()).or_default().push(make_link(
+                it,
+                MatchType::Soft,
+                Some(res.confidence),
+                Some(res.reason.clone()),
+            ));
+            used_keys.insert(make_key(it));
         }
     }
 
-    // 第三遍（可选）：LLM 评分
-    if options.use_llm {
-        if let Ok(score_map) = score_soft_matches_with_llm(tasks, &task_links).await {
-            let threshold = options.min_confidence;
-            for (task_id, links) in task_links.iter_mut() {
-                let mut kept: Vec<CommitLink> = Vec::new();
-                for link in links.drain(..) {
-                    if link.match_type != MatchType::Soft {
-                        kept.push(link);
-                        continue;
-                    }
-                    let key = format!("{}|{}", task_id, link.sha);
-                    match score_map.get(&key) {
-                        None => kept.push(link), // 没评分：保守保留
-                        Some((conf, reason)) => {
-                            if *conf < threshold {
-                                continue; // 丢弃
-                            }
-                            let mut l = link;
-                            l.confidence = Some(*conf);
-                            l.reason = Some(reason.clone());
-                            kept.push(l);
-                        }
-                    }
-                }
-                *links = kept;
-            }
-        }
-    }
-
-    // 孤儿 commit：未被任何 task_links 认领的
-    let mut all_used: HashSet<String> = used_commit_keys.clone();
-    for links in task_links.values() {
-        for l in links {
-            all_used.insert(format!("{}:{}", l.repo_path, l.sha));
-        }
-    }
+    // ---- 孤儿桶：按业务线分组 ----
     let mut orphan_map: HashMap<String, Vec<CommitLink>> = HashMap::new();
-    for group in &groups {
-        for item in &group.commits {
-            let key = format!("{}:{}", item.repo_path, item.commit.sha);
-            if all_used.contains(&key) {
+    for items in items_by_repo.values() {
+        for item in items {
+            if used_keys.contains(&make_key(item)) {
                 continue;
             }
             orphan_map
-                .entry(group.business_line.clone())
+                .entry(item.business_line.clone())
                 .or_default()
-                .push(to_link(item, &group.business_line, MatchType::Soft, None));
+                .push(make_link(item, MatchType::Soft, None, None));
         }
     }
 
@@ -389,6 +388,7 @@ pub async fn link_tasks_with_commits(
             Some(t) => *t,
             None => continue,
         };
+        // exact 排前面，同类按时间倒序
         commits.sort_by(|a, b| match (a.match_type, b.match_type) {
             (MatchType::Exact, MatchType::Soft) => std::cmp::Ordering::Less,
             (MatchType::Soft, MatchType::Exact) => std::cmp::Ordering::Greater,
@@ -403,7 +403,10 @@ pub async fn link_tasks_with_commits(
 
     let orphan_commits: Vec<OrphanGroup> = orphan_map
         .into_iter()
-        .map(|(business_line, commits)| OrphanGroup { business_line, commits })
+        .map(|(business_line, commits)| OrphanGroup {
+            business_line,
+            commits,
+        })
         .collect();
 
     Ok(CommitLinkResult {
@@ -415,114 +418,6 @@ pub async fn link_tasks_with_commits(
     })
 }
 
-// ============================================================================
-// LLM 评分（对齐 TS scoreSoftMatchesWithLlm）
-// ============================================================================
-
-async fn score_soft_matches_with_llm(
-    tasks: &[TaskInput],
-    task_links: &HashMap<String, Vec<CommitLink>>,
-) -> Result<HashMap<String, (f64, String)>, String> {
-    let task_name_by_id: HashMap<String, String> = tasks.iter().map(|t| (t.id.clone(), t.name.clone())).collect();
-    let mut candidates: Vec<serde_json::Value> = Vec::new();
-    for (task_id, links) in task_links {
-        let task_name = task_name_by_id.get(task_id).cloned().unwrap_or_default();
-        for link in links {
-            if link.match_type != MatchType::Soft {
-                continue;
-            }
-            candidates.push(json!({
-                "taskId": task_id,
-                "taskName": task_name,
-                "sha": link.sha,
-                "title": link.title,
-                "businessLine": link.business_line,
-                "keywords": link.matched_keywords,
-            }));
-        }
-    }
-    if candidates.is_empty() {
-        return Ok(HashMap::new());
-    }
-
-    let max_tokens = (200 + candidates.len() as u32 * 60).min(4000);
-    let messages = vec![
-        ChatMessage {
-            role: Role::System,
-            content: "你是一个代码提交与任务关联的评分助手。\n\
-给定一组 (任务, commit) 候选对，判断这个 commit 是否真的在推进这个任务。\n\
-严格按 JSON 输出，每项包含 taskId、sha、confidence (0~1, 两位小数)、reason (一句话中文)。\n\
-评分参考：\n\
-- 0.8~1.0：commit 标题直接指向任务的功能点\n\
-- 0.5~0.79：commit 在同业务线下，且涉及任务相关的模块\n\
-- 0.2~0.49：仅业务线匹配，但 commit 在做不相干的事\n\
-- 0~0.19：明显无关\n\
-只输出 JSON 数组本身，不要 ```json 包裹，不要解释。"
-                .to_string(),
-            tool_calls: None,
-            tool_call_id: None,
-            name: None,
-        },
-        ChatMessage {
-            role: Role::User,
-            content: format!(
-                "候选对：\n```json\n{}\n```\n请返回形如 [{{\"taskId\":\"123\",\"sha\":\"abc\",\"confidence\":0.8,\"reason\":\"...\"}}, ...] 的 JSON 数组。",
-                serde_json::to_string_pretty(&candidates).unwrap_or_default()
-            ),
-            tool_calls: None,
-            tool_call_id: None,
-            name: None,
-        },
-    ];
-    let mut req = ChatRequest::new(messages);
-    req.temperature = Some(0.1);
-    req.max_tokens = Some(max_tokens);
-
-    let resp = llm::chat(req).await?;
-    let parsed = parse_llm_json_array(&resp.text)?;
-    let mut out: HashMap<String, (f64, String)> = HashMap::new();
-    for row in parsed {
-        let task_id = row.get("taskId").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let sha = row.get("sha").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let confidence = row.get("confidence").and_then(|v| v.as_f64()).unwrap_or(f64::NAN);
-        let reason = row.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        if task_id.is_empty() || sha.is_empty() || !confidence.is_finite() {
-            continue;
-        }
-        out.insert(
-            format!("{}|{}", task_id, sha),
-            (confidence.max(0.0).min(1.0), reason),
-        );
-    }
-    Ok(out)
-}
-
-fn parse_llm_json_array(text: &str) -> Result<Vec<serde_json::Value>, String> {
-    let mut s = text.trim().to_string();
-    // 剥围栏
-    if let Some(start) = s.find("```") {
-        if let Some(after) = s.get(start..) {
-            if let Some(rest_start) = after.find('\n') {
-                let rest = &after[rest_start + 1..];
-                if let Some(end) = rest.rfind("```") {
-                    s = rest[..end].trim().to_string();
-                }
-            }
-        }
-    }
-    let start = s.find('[').ok_or_else(|| format!("LLM 输出不含 JSON 数组: {}", &text[..text.len().min(200)]))?;
-    let end = s.rfind(']').ok_or_else(|| "LLM 输出缺 ]".to_string())?;
-    if end <= start {
-        return Err("LLM 输出 ] 在 [ 之前".to_string());
-    }
-    let slice = &s[start..=end];
-    let parsed: serde_json::Value = serde_json::from_str(slice).map_err(|e| format!("LLM JSON 解析失败: {}", e))?;
-    parsed
-        .as_array()
-        .cloned()
-        .ok_or_else(|| "LLM JSON 不是数组".to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -530,26 +425,18 @@ mod tests {
     #[test]
     fn business_line_extraction() {
         let roots = vec!["D:/coding".to_string()];
-        assert_eq!(extract_business_line("D:/coding/物流/logistics-web", &roots), "物流");
-        assert_eq!(extract_business_line("D:/coding/deer-flow", &roots), "deer-flow");
-        assert_eq!(extract_business_line("D:\\coding\\示例销售线\\example-sale-app", &roots), "示例销售线");
-    }
-
-    #[test]
-    fn keywords_with_trim_prefix() {
-        let aliases = HashMap::new();
-        let kw = extract_repo_keywords("示例销售线", &aliases);
-        assert!(kw.contains(&"示例销售线".to_string()));
-        assert!(kw.contains(&"销售".to_string()));
-    }
-
-    #[test]
-    fn keywords_with_aliases() {
-        let mut aliases = HashMap::new();
-        aliases.insert("示例业务线".to_string(), vec!["门禁".to_string(), "计量".to_string()]);
-        let kw = extract_repo_keywords("示例业务线", &aliases);
-        assert!(kw.contains(&"门禁".to_string()));
-        assert!(kw.contains(&"计量".to_string()));
+        assert_eq!(
+            extract_business_line("D:/coding/物流/logistics-web", &roots),
+            "物流"
+        );
+        assert_eq!(
+            extract_business_line("D:/coding/deer-flow", &roots),
+            "deer-flow"
+        );
+        assert_eq!(
+            extract_business_line("D:\\coding\\示例销售线\\example-sale-app", &roots),
+            "示例销售线"
+        );
     }
 
     #[test]

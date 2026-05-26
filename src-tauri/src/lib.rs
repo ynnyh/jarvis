@@ -1,13 +1,17 @@
 mod chat_agent;
 mod commands;
+mod commit_classifier;
 mod commit_link;
 mod conversations;
 mod credentials;
 mod daily_review;
 mod git_scan;
 mod llm;
+mod repo_recommender;
 mod settings;
 mod settings_extras;
+mod task_bindings;
+mod task_snapshot;
 mod tools;
 mod zentao;
 
@@ -151,6 +155,11 @@ pub fn run() {
             conversations::conversations_load,
             conversations::conversations_save,
             conversations::conversations_delete,
+            task_bindings::task_bindings_load,
+            task_bindings::task_bindings_get,
+            task_bindings::task_bindings_set,
+            task_bindings::task_bindings_delete,
+            repo_recommender::recommend_repos_for_task,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

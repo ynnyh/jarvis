@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useAppStore } from './stores/app'
 import { useConfigStore } from './stores/config'
 import { useTaskAlerts } from './composables/useTaskAlerts'
@@ -8,13 +9,14 @@ import { useTaskCommits } from './composables/useTaskCommits'
 import { useDailyReview } from './composables/useDailyReview'
 import { useEveningReminder } from './composables/useEveningReminder'
 import { useWorkdayNudges } from './composables/useWorkdayNudges'
-import { useCursorPassthrough, type PassthroughDebug } from './composables/useCursorPassthrough'
+import { useCursorPassthrough } from './composables/useCursorPassthrough'
 import { useUpdater } from './composables/useUpdater'
 import TaskWindow from './components/TaskWindow.vue'
 import SettingsWindow from './components/SettingsWindow.vue'
 import RiskWindow from './components/RiskWindow.vue'
 import ReviewWindow from './components/ReviewWindow.vue'
 import UpdateWindow from './components/UpdateWindow.vue'
+import BindTaskWindow from './components/BindTaskWindow.vue'
 import WelcomeWizard from './components/WelcomeWizard.vue'
 
 const store = useAppStore()
@@ -36,16 +38,8 @@ useWorkdayNudges({
     showAlert(text, emoji, 'happy', 12000)
   },
 })
-// passthrough 诊断面板：mac 上排查"整窗不可点"必需。窗口左上角浮一个小框，
-// 显示 Rust 给的原始 cursor / win_pos / scale 以及前端推得的 (x,y) 和当前
-// elementFromPoint 命中的元素。鼠标移到小人上时数字应该指向 svg/.avatar；如果
-// 永远是 body 或者数字明显不对就能定位计算 bug。
-const passthroughDebug = ref<PassthroughDebug | null>(null)
-const isMac = navigator.userAgent.includes('Mac')
-useCursorPassthrough((info) => {
-  if (!isMac) return  // 只在 mac 上显示，Windows 上没问题不打扰
-  passthroughDebug.value = info
-})
+// passthrough：让小人窗口的空白区域穿透到桌面，详见 composable 内部说明
+useCursorPassthrough()
 
 const updater = useUpdater({
   onAvailable: (version) => {
@@ -146,6 +140,7 @@ function closeAllPanels() {
   store.showRiskWindow = false
   store.showReviewWindow = false
   store.showUpdateWindow = false
+  store.showBindTaskWindow = false
   configStore.showSettingsWindow = false
 }
 
@@ -286,11 +281,32 @@ watch(() => store.alertLevel, (level) => {
 
 onMounted(() => {
   configStore.load()
+  store.refreshTaskBindings()
   setTimeout(() => showAlert(`${configStore.config.assistantName} V2 已启动`, '🤖', 'idle', 3000), 500)
   // 等数据加载后显示提醒
   watch(() => store.alertsLoaded, (loaded) => {
     if (loaded) showTaskAlertBubble()
   }, { once: true })
+})
+
+// 监听后端发现的新任务，推入绑定队列。
+// fetch_task_alerts 每次轮询都会做 snapshot diff，新出现的任务通过事件发上来；
+// 首次启动 snapshot 不存在时返回空 diff，老用户升级时不会被存量任务轰炸。
+let unlistenNewTasks: UnlistenFn | null = null
+onMounted(async () => {
+  unlistenNewTasks = await listen<Array<{ id: string; title: string; priority: string; deadline: string }>>(
+    'new-tasks-detected',
+    (event) => {
+      const tasks = event.payload || []
+      for (const t of tasks) {
+        store.enqueueBindTask(t)
+      }
+      // 队列非空 + 当前没显示绑定窗 → 拉起来（#84 实装窗口后生效）
+      if (store.pendingBindTasks.length > 0 && !store.showBindTaskWindow) {
+        store.showBindTaskWindow = true
+      }
+    }
+  )
 })
 
 // 首启引导：配置不完整（无禅道地址 OR 没添加代码文件夹）时展示
@@ -311,21 +327,12 @@ function onWizardDone() {
 
 onUnmounted(() => {
   if (alertTimer) clearTimeout(alertTimer)
+  unlistenNewTasks?.()
 })
 </script>
 
 <template>
   <div class="jarvis-container" @contextmenu.prevent="toggleMenu">
-    <!-- mac passthrough 诊断面板（临时） -->
-    <div v-if="passthroughDebug" class="debug-overlay pointer-target">
-      <div>cursor css: {{ passthroughDebug.x.toFixed(0) }}, {{ passthroughDebug.y.toFixed(0) }}</div>
-      <div>raw cur: {{ passthroughDebug.rawCursorX.toFixed(0) }}, {{ passthroughDebug.rawCursorY.toFixed(0) }}</div>
-      <div>raw win: {{ passthroughDebug.rawWinX }}, {{ passthroughDebug.rawWinY }} · s={{ passthroughDebug.scale }}</div>
-      <div>inner: {{ passthroughDebug.innerW }}x{{ passthroughDebug.innerH }}</div>
-      <div>el: {{ passthroughDebug.elTag }}</div>
-      <div>onUI: {{ passthroughDebug.onUI }} · ignoring: {{ passthroughDebug.ignoring }}</div>
-      <div v-if="passthroughDebug.err">err: {{ passthroughDebug.err }}</div>
-    </div>
     <div v-if="showMenu" class="menu pointer-target">
       <button class="menu-item" @click="menuShowAlerts">
         <span>🔔</span><span>任务提醒</span>
@@ -400,6 +407,8 @@ onUnmounted(() => {
     <SettingsWindow />
     <!-- 更新窗口 -->
     <UpdateWindow :updater="updater" />
+    <!-- 任务↔项目绑定窗（新任务事件 / 任务卡未绑定图标都会拉起） -->
+    <BindTaskWindow />
     <!-- 首启引导：配置不完整时全屏覆盖，写完后消失 -->
     <WelcomeWizard v-if="needsWizard" @done="onWizardDone" />
   </div>
@@ -414,24 +423,6 @@ onUnmounted(() => {
   user-select: none;
   overflow: visible;
   background: transparent;
-}
-
-/* mac 调试面板：固定窗口左上角，半透明背景，等宽字体好看数字 */
-.debug-overlay {
-  position: fixed;
-  top: 8px;
-  left: 8px;
-  z-index: 999;
-  padding: 6px 8px;
-  font-size: 10px;
-  line-height: 1.4;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  color: rgba(255, 255, 255, 0.85);
-  background: rgba(0, 0, 0, 0.7);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 6px;
-  pointer-events: auto;
-  white-space: nowrap;
 }
 
 .avatar-group {

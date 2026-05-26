@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
 
 export interface Task {
   id: string
@@ -226,6 +227,56 @@ export const useAppStore = defineStore('app', () => {
     }
   }, { deep: true })
 
+  // ===== 任务绑定流程 =====
+  // 待处理的新任务队列（由后端 "new-tasks-detected" 事件填入）。
+  // 绑定窗每次只处理队首一个任务，处理完 shift 一个出来；为空就关窗。
+  // 用 ref + 显式 push/shift 而非数组直接 mutate，确保 Vue 响应式触发。
+
+  interface PendingBindTask {
+    id: string
+    title: string
+    priority: string
+    deadline: string
+  }
+  const pendingBindTasks = ref<PendingBindTask[]>([])
+  const showBindTaskWindow = ref(false)
+
+  function enqueueBindTask(t: PendingBindTask) {
+    // 去重：同 id 已在队列中就跳过
+    if (pendingBindTasks.value.some(x => x.id === t.id)) return
+    pendingBindTasks.value.push(t)
+  }
+  function dequeueBindTask(): PendingBindTask | null {
+    return pendingBindTasks.value.shift() ?? null
+  }
+
+  // 已落盘的绑定表：taskId → { repoRoots, boundAt, lastConfirmedBy }
+  // 渲染层用它在任务卡上画"未绑定"灰图标 vs "已绑定" 绿勾。
+  // 绑定窗保存成功后调 refreshTaskBindings 拉一次最新数据。
+  interface TaskBindingEntry {
+    repoRoots: string[]
+    boundAt: string
+    lastConfirmedBy: string
+  }
+  const taskBindings = ref<Record<string, TaskBindingEntry>>({})
+  const taskBindingsLoaded = ref(false)
+
+  function isTaskBound(taskId: string): boolean {
+    const e = taskBindings.value[taskId]
+    return !!(e && e.repoRoots && e.repoRoots.length > 0)
+  }
+
+  async function refreshTaskBindings() {
+    try {
+      taskBindings.value = await invoke<Record<string, TaskBindingEntry>>('task_bindings_load')
+      taskBindingsLoaded.value = true
+    } catch (e) {
+      // 没绑定表是正常情况（首次启动），保持空 map
+      console.warn('[store] task_bindings_load 失败:', e)
+      taskBindingsLoaded.value = true
+    }
+  }
+
   // ===== 今日复盘 =====
 
   const showReviewWindow = ref(false)
@@ -315,6 +366,14 @@ export const useAppStore = defineStore('app', () => {
     reviewLoaded,
     reviewLoading,
     reviewLastError,
+    pendingBindTasks,
+    showBindTaskWindow,
+    enqueueBindTask,
+    dequeueBindTask,
+    taskBindings,
+    taskBindingsLoaded,
+    isTaskBound,
+    refreshTaskBindings,
   }
 })
 
