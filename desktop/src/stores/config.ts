@@ -12,6 +12,9 @@ export type CommitsRange =
   | 'today' | 'yesterday' | 'thisWeek' | 'lastWeek'
   | 'last7days' | 'last30days' | 'thisMonth' | 'all'
 
+/** 左键单击小人时弹出的内容。默认任务列表；可改成今日复盘等 */
+export type LeftClickAction = 'tasks' | 'review'
+
 export interface JarvisConfig {
   /** 助手显示名（用户可改）。默认 "Jarvis"；只影响 UI 文案、问候、写工时审计文本 */
   assistantName: string
@@ -51,6 +54,8 @@ export interface JarvisConfig {
   repoRoots: string[]         // 扫描 git 提交的本地代码根目录列表
   /** 任务窗口里 commits 关联取多大时间范围 —— 默认本周，'all' 走全量 */
   commitsRange: CommitsRange
+  /** 左键单击小人弹什么。默认任务列表 */
+  leftClickAction: LeftClickAction
 }
 
 const defaultConfig = (): JarvisConfig => ({
@@ -86,6 +91,7 @@ const defaultConfig = (): JarvisConfig => ({
   },
   repoRoots: [],
   commitsRange: 'thisWeek',
+  leftClickAction: 'tasks',
 })
 
 function todayStr(): string {
@@ -125,6 +131,7 @@ export const useConfigStore = defineStore('config', () => {
           wireApi: remote.llm?.wireApi === 'responses' ? 'responses' : 'chat',
         },
         commitsRange: remote.commitsRange ?? defaults.commitsRange,
+        leftClickAction: remote.leftClickAction === 'review' ? 'review' : defaults.leftClickAction,
       }
       // 临时覆盖只在当日有效
       if (merged.override.todayModeSetOn !== todayStr()) {

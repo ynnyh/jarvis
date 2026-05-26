@@ -1,7 +1,10 @@
+mod chat_agent;
 mod commands;
+mod commit_link;
 mod conversations;
 mod credentials;
-mod daemon_client;
+mod daily_review;
+mod git_scan;
 mod llm;
 mod settings;
 mod settings_extras;
@@ -9,7 +12,6 @@ mod tools;
 mod zentao;
 
 use tauri::Manager;
-use tauri::RunEvent;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
@@ -133,7 +135,6 @@ pub fn run() {
             credentials::credentials_get,
             credentials::credentials_delete,
             credentials::zentao_test_connection,
-            credentials::daemon_restart,
             settings_extras::pick_directory,
             settings_extras::excluded_business_lines_load,
             settings_extras::excluded_business_lines_save,
@@ -144,10 +145,5 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_app_handle, event| {
-            // 应用退出前优雅关闭守护进程，避免 Node 进程残留
-            if let RunEvent::Exit = event {
-                tauri::async_runtime::block_on(daemon_client::try_shutdown());
-            }
-        });
+        .run(|_app_handle, _event| {});
 }

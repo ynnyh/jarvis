@@ -240,11 +240,23 @@ async fn chat_via_chat_completions(
         .and_then(|c| c.get("message"))
         .ok_or_else(|| format!("LLM 响应缺 choices[0].message: {}", &text[..text.len().min(200)]))?;
 
-    let content = message
+    // content 是常规模型回答的所在；reasoning_content 是 reasoning 系列模型（DeepSeek
+    // R1/V4-flash、OpenAI o-series 兼容厂商）的字段，常规 content 在这种情况下会是空串。
+    // 优先用 content，content 为空时回退到 reasoning_content（部分厂商把答案全塞这里）。
+    let content_field = message
         .get("content")
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+    let content = if content_field.trim().is_empty() {
+        message
+            .get("reasoning_content")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    } else {
+        content_field
+    };
 
     let tool_calls = parse_tool_calls_from_message(message);
 

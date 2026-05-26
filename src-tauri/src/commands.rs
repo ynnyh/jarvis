@@ -2,8 +2,6 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::process::Command;
 
-use crate::daemon_client;
-
 /// 获取项目根目录（package.json 所在目录）
 fn project_root() -> PathBuf {
     let cwd = std::env::current_dir().unwrap_or_default();
@@ -87,26 +85,7 @@ pub struct ToolResult {
 #[tauri::command]
 pub async fn tool_execute(name: String, input: Option<serde_json::Value>) -> Result<ToolResult, String> {
     let input = input.unwrap_or(serde_json::json!({}));
-
-    // 已迁到 Rust 的 tool 走 native dispatch；未迁的继续 fallback 给 daemon。
-    // M5 渐进式迁移：每加一个 case 就让一个 tool 不再依赖 daemon，M6 daemon 删干净。
-    let native: Option<Result<serde_json::Value, String>> = match name.as_str() {
-        "get_tasks" => Some(crate::tools::get_tasks(input.clone()).await),
-        "log-task-effort" => Some(crate::tools::log_task_effort(input.clone()).await),
-        "ask-llm" => Some(crate::tools::ask_llm(input.clone()).await),
-        "cc_switch_import" => Some(crate::tools::cc_switch_import(input.clone()).await),
-        _ => None,
-    };
-
-    if let Some(r) = native {
-        return Ok(match r {
-            Ok(data) => ToolResult { success: true, data: Some(data), error: None },
-            Err(e) => ToolResult { success: false, data: None, error: Some(e) },
-        });
-    }
-
-    // 未迁 tool（chat_send / get_task_commits / get_daily_review）走 daemon
-    match daemon_client::post(&format!("/tool/{}", name), input).await {
+    match crate::tools::dispatch(&name, input).await {
         Ok(data) => Ok(ToolResult { success: true, data: Some(data), error: None }),
         Err(e) => Ok(ToolResult { success: false, data: None, error: Some(e) }),
     }
@@ -164,7 +143,9 @@ fn default_config() -> serde_json::Value {
             "apiKey": ""
         },
         // 本地代码根目录列表，用于扫描 git 提交。同事电脑可能放在 D:/work、C:/projects 等
-        "repoRoots": []
+        "repoRoots": [],
+        // 左键单击小人弹什么。tasks=任务列表（默认），review=今日复盘
+        "leftClickAction": "tasks"
     })
 }
 
@@ -207,8 +188,7 @@ pub async fn config_save(config: serde_json::Value) -> Result<(), String> {
     std::fs::write(&path, content)
         .map_err(|e| format!("写入配置失败: {}", e))?;
 
-    // 通知守护进程刷新缓存。失败不影响保存本身（daemon 可能还没启动）。
-    let _ = daemon_client::post("/settings/reload", serde_json::json!({})).await;
+    // 通知守护进程刷新缓存——daemon 已完全下线，pinging 已无意义，留个空 op
     Ok(())
 }
 
@@ -461,27 +441,20 @@ pub struct ProactiveReminder {
 pub async fn get_proactive_reminders() -> Result<Vec<ProactiveReminder>, String> {
     let mut reminders = vec![];
 
-    // 通过守护进程跑 action；失败也降级到空列表（前端会回退到本地模拟）
-    let result = daemon_client::post("/action/get_today_tasks", serde_json::json!({})).await;
-    if let Ok(v) = result {
-        // 老版本基于 stdout 字符串扫"延期/逾期/截止/今天"。新版本拿到 ActionResult
-        // 里 stepResults 的 JSON，里面就是任务列表，做语义判断更准。
+    // 直接拿任务列表自己判，不走 daemon action
+    if let Ok(tasks) = crate::tools::get_tasks(serde_json::json!({})).await {
         let mut has_overdue = false;
         let mut has_today = false;
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-        // 钻进 stepResults[*].result 找任意数组
-        if let Some(steps) = v.get("stepResults").and_then(|x| x.as_array()) {
-            for step in steps {
-                let arr = step.get("result").and_then(|r| r.as_array());
-                if let Some(arr) = arr {
-                    for task in arr {
-                        let deadline = task.get("deadline").and_then(|d| d.as_str()).unwrap_or("");
-                        if deadline.len() < 10 { continue; }
-                        let dl = &deadline[..10];
-                        if dl < today.as_str() { has_overdue = true; }
-                        else if dl == today.as_str() { has_today = true; }
-                    }
-                }
+        if let Some(arr) = tasks.as_array() {
+            for task in arr {
+                let deadline = task.get("deadline").and_then(|d| d.as_str()).unwrap_or("");
+                if deadline.len() < 10 { continue; }
+                let status = task.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                if status == "done" || status == "closed" || status == "cancel" { continue; }
+                let dl = &deadline[..10];
+                if dl < today.as_str() { has_overdue = true; }
+                else if dl == today.as_str() { has_today = true; }
             }
         }
         if has_overdue {

@@ -1,45 +1,27 @@
 {
-  "name": "project-agent",
+  "name": "jarvis-desktop",
   "version": "1.0.0",
-  "description": "AI Project Agent - 任务助手",
-  "main": "dist/cli/index.js",
+  "description": "Jarvis 桌面任务助手（Tauri + Vue）",
   "type": "module",
-  "bin": {
-    "agent": "dist/cli/index.js",
-    "agent-core": "dist/cli/agent-core.js"
-  },
   "scripts": {
-    "build": "tsc",
-    "dev": "tsx src/cli/index.ts",
-    "start": "node dist/cli/index.js",
-    "daemon": "node dist/daemon/server.js",
-    "daemon:dev": "tsx src/daemon/server.ts",
-    "typecheck": "tsc --noEmit",
     "desktop:dev": "node scripts/dev.mjs",
-    "desktop:bundle-daemon": "tsc && node scripts/bundle-daemon.mjs",
-    "desktop:fetch-node": "node scripts/fetch-node.mjs",
-    "desktop:prebuild": "npm run desktop:bundle-daemon && npm run desktop:fetch-node",
-    "desktop:build": "npm run desktop:prebuild && tauri build",
-    "desktop:build-binary": "npm run desktop:prebuild && tauri build --no-bundle",
+    "desktop:build": "tauri build",
+    "desktop:build-binary": "tauri build --no-bundle",
     "desktop:portable": "npm run desktop:build-binary && node scripts/portable-zip.mjs"
   },
   "keywords": [
     "ai",
     "zentao",
     "task",
-    "agent",
-    "cli"
+    "agent"
   ],
   "author": "",
   "license": "ISC",
   "devDependencies": {
     "@tauri-apps/cli": "^2.5.0",
     "@types/node": "^25.7.0",
-    "commander": "^14.0.3",
-    "dotenv": "^17.4.2",
-    "esbuild": "^0.28.0",
-    "tsx": "^4.21.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "undici": "^7.25.0"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.3.0",
@@ -49,16 +31,10 @@
     "@tauri-apps/plugin-updater": "^2.5.0",
     "@vitejs/plugin-vue": "^6.0.6",
     "autoprefixer": "^10.5.0",
-    "axios": "^1.16.1",
-    "axios-cookiejar-support": "^7.0.0",
-    "cheerio": "^1.2.0",
     "pinia": "^3.0.4",
     "postcss": "^8.5.14",
     "tailwindcss": "^4.3.0",
-    "tough-cookie": "^6.0.1",
-    "undici": "^7.25.0",
     "vite": "^8.0.12",
-    "vue": "^3.5.34",
-    "zod": "^4.4.3"
+    "vue": "^3.5.34"
   }
 }

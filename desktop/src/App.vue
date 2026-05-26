@@ -219,15 +219,33 @@ function onMouseUp(e: MouseEvent) {
   const dx = Math.abs(e.screenX - mouseDownX)
   const dy = Math.abs(e.screenY - mouseDownY)
   if (!isDragging && duration < 300 && dx < 5 && dy < 5) {
-    // 左键点击小人：切换 TaskWindow。打开前先关掉其他所有面板/菜单
-    if (store.showTaskWindow) {
-      store.showTaskWindow = false
-    } else {
-      closeAllPanels()
-      store.showTaskWindow = true
-    }
+    // 左键点击小人：按 config.leftClickAction 分发。打开前先关掉其他所有面板/菜单。
+    // 当前打开的就是目标面板时点一下应该收起 —— 保持原有 toggle 行为。
+    handleAvatarLeftClick()
   }
   isDragging = false
+}
+
+function handleAvatarLeftClick() {
+  const action = configStore.config.leftClickAction
+  if (action === 'review') {
+    // 复盘窗口由 useDailyReview 控制可见态（store.showReviewWindow）。
+    // 已经显示则收起；否则关其它面板后打开
+    if (store.showReviewWindow) {
+      store.showReviewWindow = false
+    } else {
+      closeAllPanels()
+      openReview('today')
+    }
+    return
+  }
+  // 默认（含未识别值）走任务列表
+  if (store.showTaskWindow) {
+    store.showTaskWindow = false
+  } else {
+    closeAllPanels()
+    store.showTaskWindow = true
+  }
 }
 
 // --- 任务提醒联动 ---

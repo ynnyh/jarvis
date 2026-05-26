@@ -61,7 +61,6 @@ pub async fn excluded_business_lines_save(lines: Vec<String>) -> Result<(), Stri
     let content =
         serde_json::to_string_pretty(&cleaned).map_err(|e| format!("序列化失败: {}", e))?;
     fs::write(excluded_file(), content).map_err(|e| format!("写入失败: {}", e))?;
-    // 让 daemon 刷新缓存——和 config_save 一致的行为
-    let _ = crate::daemon_client::post("/settings/reload", serde_json::json!({})).await;
+    // daemon 已下线，无需通知；下次调 tool 时 Rust 端直接重新读 excluded-business-lines.json
     Ok(())
 }

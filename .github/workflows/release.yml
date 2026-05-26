@@ -33,29 +33,15 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      # Swatinem/rust-cache 智能处理 Cargo.lock 变化：jarvis crate 自己版本号变了不会
-      # invalidate 所有依赖，比手写 actions/cache 友好很多
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
           cache-on-failure: true
 
-      # bundled/node.exe 和 macOS node 二进制版本固定（由 fetch-node.mjs 决定），
-      # 不应每次都从 nodejs.org 重下 ~80MB，按脚本 hash 缓存
-      - name: Cache bundled runtime
-        uses: actions/cache@v4
-        with:
-          path: src-tauri/bundled
-          key: ${{ runner.os }}-bundled-${{ hashFiles('scripts/fetch-node.mjs') }}
-
       - name: Install npm deps
         run: npm ci --no-audit --no-fund
         timeout-minutes: 5
-
-      - name: Prebuild (bundle daemon + fetch node)
-        run: npm run desktop:prebuild
-        timeout-minutes: 8
 
       - name: Build Tauri (NSIS / DMG + updater artifacts)
         env:

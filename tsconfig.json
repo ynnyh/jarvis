@@ -1,21 +1,22 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "lib": ["ES2022"],
-    "outDir": "./dist",
-    "rootDir": "./src",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM"],
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
-    "types": ["node"]
+    "noEmit": true,
+    "jsx": "preserve",
+    "allowImportingTsExtensions": false,
+    "types": ["node", "vite/client"],
+    "paths": {
+      "@/*": ["./desktop/src/*"]
+    }
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
+  "include": ["desktop/src/**/*.ts", "desktop/src/**/*.vue"],
+  "exclude": ["node_modules", "dist", "src-tauri/target"]
 }

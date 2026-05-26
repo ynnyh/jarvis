@@ -134,14 +134,9 @@ async function finish() {
     store.config.zentao.baseUrl = normalizeZentaoBaseUrl(baseUrl.value)
     store.config.zentao.account = account.value.trim()
     store.config.repoRoots = [...repoRoots.value]
-    // 3. 显式 await 一次 store.save() 落盘，绝不依赖 watch 的 250ms 防抖 ——
-    //    后面 daemon_restart 会 spawn 新进程读 config.json，必须保证此时盘上是新值。
+    // 3. 显式 await 一次 store.save() 落盘，绝不依赖 watch 的 250ms 防抖
     await store.save()
-    // 4. 重启 daemon 拿新 env（ZENTAO_PASSWORD 通过 spawn env 注入，启动后不会变）。
-    //    若失败仅警告：用户可以重启 app 让 daemon 自然换一次。
-    try { await invoke('daemon_restart') } catch (e) {
-      console.warn('daemon 重启失败（不影响 wizard 完成）:', e)
-    }
+    // daemon 已下线，密码下次调用禅道时由 Rust 端从 keychain 实时读，无需重启。
     emit('done')
   } catch (e: any) {
     testState.value = 'fail'

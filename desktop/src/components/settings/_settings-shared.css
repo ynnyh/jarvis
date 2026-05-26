@@ -1,0 +1,183 @@
+/*
+ * 设置面板共享样式。
+ *
+ * 拆分前 SettingsWindow.vue 一个文件 800 多行，含 11 个 section 各种共用的
+ * .text-input / .action-btn / .field / .toggle-row 等。拆成子组件后这些 class
+ * 还会被复用，所以集中放一份避免每个子组件 scoped 复制粘贴。
+ *
+ * 不用 scoped——这些 class 名只在 settings 子树里用。父 SettingsWindow.vue
+ * 引入这个文件即可，子组件不用再 import。
+ */
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.settings-section-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(0, 212, 255, 0.85);
+  letter-spacing: 0.5px;
+}
+.settings-section-hint {
+  margin: 2px 0 0;
+  font-size: 9.5px;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+/* 字段 */
+.settings-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+.settings-field-label {
+  width: 48px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+  flex-shrink: 0;
+}
+.settings-input {
+  flex: 1;
+  padding: 4px 8px;
+  font-size: 11.5px;
+  font-family: inherit;
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+}
+.settings-input:focus {
+  outline: none;
+  border-color: rgba(0, 212, 255, 0.5);
+  background: rgba(0, 212, 255, 0.05);
+}
+
+/* 按钮 */
+.settings-btn {
+  padding: 5px 12px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.settings-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+.settings-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.settings-btn-primary {
+  color: rgba(0, 212, 255, 0.95);
+  background: rgba(0, 212, 255, 0.12);
+  border-color: rgba(0, 212, 255, 0.35);
+}
+.settings-btn-primary:hover {
+  background: rgba(0, 212, 255, 0.18);
+}
+.settings-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+/* 状态消息 */
+.settings-msg {
+  margin: 4px 0 0;
+  padding: 4px 8px;
+  font-size: 11px;
+  border-radius: 4px;
+  line-height: 1.5;
+  white-space: pre-line;
+  word-break: break-all;
+}
+.settings-msg-ok { color: rgba(134, 239, 172, 0.95); background: rgba(34, 197, 94, 0.12); }
+.settings-msg-fail { color: rgba(252, 165, 165, 0.95); background: rgba(239, 68, 68, 0.12); }
+.settings-msg-testing { color: rgba(147, 197, 253, 0.95); background: rgba(59, 130, 246, 0.12); }
+
+/* 开关行 */
+.settings-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+  padding: 2px 0;
+}
+.settings-toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: rgba(0, 212, 255, 0.9);
+}
+
+/* 内联数字输入框（夹在文本里的「每 X 分钟」） */
+.settings-inline-num {
+  width: 42px;
+  margin: 0 2px;
+  padding: 2px 4px;
+  font-size: 11px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+}
+
+/* 路径列表（repoRoots / excludedLines 复用） */
+.settings-path-list {
+  list-style: none;
+  margin: 4px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.settings-path-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.85);
+}
+.settings-path-text {
+  flex: 1;
+  font-family: ui-monospace, monospace;
+  word-break: break-all;
+}
+.settings-path-remove {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.5);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.settings-path-remove:hover {
+  color: rgba(239, 68, 68, 0.9);
+  background: rgba(239, 68, 68, 0.1);
+}
+.settings-path-empty {
+  padding: 6px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.35);
+  text-align: center;
+}
