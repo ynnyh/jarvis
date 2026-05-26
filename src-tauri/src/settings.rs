@@ -84,3 +84,76 @@ pub fn get_llm_credentials() -> LlmCredentials {
         },
     }
 }
+
+// ===== 禅道凭证 =====
+
+#[derive(Debug, Clone)]
+pub struct ZentaoCredentials {
+    pub base_url: String,
+    pub account: String,
+    pub password: String,
+    /// 应急通道：用户可在 ~/.jarvis/zentaosid.txt 放浏览器复制的 cookie 跳过登录
+    pub session_cookie: Option<String>,
+}
+
+/// 读禅道凭证。
+/// - baseUrl/account 从 ~/.jarvis/config.json 读，env 兜底
+/// - password 从 OS 密钥链按 account 取（Service="Jarvis"）
+/// - sessionCookie 优先级：config.zentao.sessionCookie > ~/.jarvis/zentaosid.txt > env
+pub fn get_zentao_credentials() -> ZentaoCredentials {
+    let cfg = load_raw_config();
+    let zentao = cfg.as_ref().and_then(|v| v.get("zentao"));
+
+    let s = |key: &str| -> Option<String> {
+        zentao
+            .and_then(|v| v.get(key))
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+
+    let env_first = |keys: &[&str]| -> Option<String> {
+        keys.iter()
+            .filter_map(|k| std::env::var(k).ok())
+            .find(|v| !v.trim().is_empty())
+    };
+
+    let base_url = s("baseUrl")
+        .or_else(|| env_first(&["ZENTAO_BASE_URL", "ZENTAO_URL"]))
+        .unwrap_or_default();
+    let account = s("account")
+        .or_else(|| env_first(&["ZENTAO_ACCOUNT", "ZENTAO_USER"]))
+        .unwrap_or_default();
+
+    // 从 keychain 取密码
+    let password = if !account.is_empty() {
+        keyring::Entry::new("Jarvis", &account)
+            .ok()
+            .and_then(|e| e.get_password().ok())
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let password = if password.is_empty() {
+        env_first(&["ZENTAO_PASSWORD", "ZENTAO_PASS"]).unwrap_or_default()
+    } else {
+        password
+    };
+
+    // session cookie 兜底通道
+    let cookie_from_file = std::fs::read_to_string(jarvis_dir().join("zentaosid.txt"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    let session_cookie = s("sessionCookie")
+        .or(cookie_from_file)
+        .or_else(|| env_first(&["ZENTAO_SESSION_COOKIE"]));
+
+    ZentaoCredentials {
+        base_url,
+        account,
+        password,
+        session_cookie,
+    }
+}
