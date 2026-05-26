@@ -589,3 +589,101 @@ pub async fn chat_close(app: tauri::AppHandle) -> Result<(), String> {
     }
     Ok(())
 }
+
+// ===== 写工时独立窗口 =====
+// 设计：avatar 上的复盘窗触发 write_hours_open(payload) → Rust 把 payload 存
+// 进 state、show writeHours 窗、hide avatar。WriteHoursApp 在 onMounted 调
+// write_hours_take_payload 取数据；写入成功后 emit "write-hours-done" 事件让
+// 复盘窗把任务标灰，然后调 write_hours_close 恢复 avatar。
+//
+// payload 用 Mutex<Option<Value>> 存：每次 open 覆盖，take 后清掉。Value 而非
+// 具体结构体，避免前后端类型双份维护。
+
+#[derive(Default)]
+pub struct WriteHoursState {
+    pub payload: std::sync::Mutex<Option<serde_json::Value>>,
+}
+
+#[tauri::command]
+pub async fn write_hours_open(
+    app: tauri::AppHandle,
+    payload: serde_json::Value,
+) -> Result<(), String> {
+    use tauri::Manager;
+    // 历史教训：原本想用 emit_to + 200ms 延迟兜底来推 payload，结果
+    // listen('write-hours-payload-ready') 和 onFocusChanged 在 Tauri 2.x
+    // Windows 上对预注册 + hide/show 复用的窗口都不可靠。第一次 open 时
+    // webview 早已 mount 但 onMounted 早跑完，第二次 open 又只是 hide→show，
+    // Vue 实例完全不会重新初始化，所以 textarea 一直显示上次的内容。
+    //
+    // 现在的方案：state 写完后 show 出来，然后立刻 eval("location.reload()")
+    // 强制 webview 整页重载 → Vue 实例销毁重建 → onMounted 必然重跑 →
+    // loadPayload 从 state 取到刚写入的新数据。同时也顺带清光 textarea。
+    {
+        let state = app.state::<WriteHoursState>();
+        let mut slot = state.payload.lock().map_err(|e| format!("锁 payload 失败: {}", e))?;
+        *slot = Some(payload);
+    }
+    if let Some(w) = app.get_webview_window("writeHours") {
+        w.unminimize().ok();
+        w.show().map_err(|e| format!("show writeHours 失败: {}", e))?;
+        w.set_focus().ok();
+        // 强制重载：保证 onMounted 必跑，从 state 拉到本次的新 payload
+        let _ = w.eval("window.location.reload()");
+    } else {
+        return Err("writeHours 窗口未注册".into());
+    }
+    if let Some(avatar) = app.get_webview_window("avatar") {
+        avatar.hide().map_err(|e| format!("hide avatar 失败: {}", e))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn write_hours_close(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    if let Some(w) = app.get_webview_window("writeHours") {
+        w.hide().map_err(|e| format!("hide writeHours 失败: {}", e))?;
+    }
+    // 顺手清掉残留 payload，避免下次取到旧数据
+    {
+        let state = app.state::<WriteHoursState>();
+        let lock_result = state.payload.lock();
+        if let Ok(mut slot) = lock_result {
+            *slot = None;
+        }
+    }
+    if let Some(avatar) = app.get_webview_window("avatar") {
+        // transparent + alwaysOnTop 的 avatar 窗在 Windows 上偶发"hide 后 show 不回来"。
+        // 多打几道保险：unminimize（万一被最小化了）→ show → set_focus，全部失败也不阻塞主流程。
+        avatar.unminimize().ok();
+        avatar.show().map_err(|e| format!("show avatar 失败: {}", e))?;
+        avatar.set_focus().ok();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn avatar_show_fallback(app: tauri::AppHandle) -> Result<(), String> {
+    // WriteHoursApp 在 write_hours_close 失败时的兜底入口：单独把 avatar 拽回来，
+    // 至少别让用户陷入"小人消失只能重启 app"。
+    use tauri::Manager;
+    if let Some(avatar) = app.get_webview_window("avatar") {
+        avatar.unminimize().ok();
+        avatar.show().map_err(|e| format!("show avatar 失败: {}", e))?;
+        avatar.set_focus().ok();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn write_hours_take_payload(
+    app: tauri::AppHandle,
+) -> Result<Option<serde_json::Value>, String> {
+    use tauri::Manager;
+    let state = app.state::<WriteHoursState>();
+    let slot = state.payload.lock().map_err(|e| format!("锁 payload 失败: {}", e))?;
+    // 用 clone 而非 take：onMounted 首次拉 + payload-ready 事件二次拉都能拿到，
+    // 不会因为两者抢着 take 导致一方拿到 None。slot 由 write_hours_close 清空。
+    Ok(slot.clone())
+}

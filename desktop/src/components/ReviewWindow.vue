@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useAppStore } from '../stores/app'
 import { useDailyReview } from '../composables/useDailyReview'
-import { useExpandedAvatarWindow } from '../composables/useExpandedAvatarWindow'
 import { cleanCommitTitle } from '../composables/cleanCommitTitle'
 
 const store = useAppStore()
@@ -103,12 +103,17 @@ watch(() => store.showReviewWindow, (open) => {
   }
 })
 
-// 切换 range 时重新拉
-watch(range, () => {
-  if (store.showReviewWindow) {
-    fetchReview(range.value)
+// 切 range：直接显式调 fetchReview，不依赖 watch（之前发现 watch 偶发
+// 不触发，且即使触发也会被 reviewLoading 早返回吞掉），显式调更稳。
+async function switchRange(r: 'today' | 'thisWeek') {
+  if (range.value === r) {
+    // 同一档再点也强制刷一遍，相当于"再查一次"
+    await fetchReview(r)
+    return
   }
-})
+  range.value = r
+  await fetchReview(r)
+}
 
 function formatTime(iso: string): string {
   const m = iso.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/)
@@ -122,38 +127,27 @@ function formatTime(iso: string): string {
 // suggestedHours 方案 B：弹窗给出 AI 估算工时 + 自动拼接的工作内容，
 // 允许二次编辑后提交。同项目多 commit 合并去重一段。
 //
-// 单次会话内每个任务写过一次就标灰防重复点（防误触）。失败保留 modal
-// 让用户看错误并重试。modal 用 Teleport 出去，配 useExpandedAvatarWindow
-// 撑大 avatar 窗口避免编辑器太挤。
+// taskId 也设为可编辑：
+// - 已关联到任务的 commit：默认填入该 taskId，用户可改（少见但偶尔需要）
+// - 孤儿 commit（repo 没绑定任务）：taskId 空，让用户手动填一个真实任务号
+//   也能写工时 —— 应对"这次提交对应的任务还没建/还没绑定但工时得记"的场景
+//
+// 写工时编辑器是独立的 Tauri 窗口（writeHours，见 WriteHoursApp.vue），
+// 这里只负责构造 payload 触发 write_hours_open，并监听 write-hours-done
+// 事件把任务标灰防重复点。本会话写入过的 taskId 用 writtenTasks 兜底，
+// app 重启清空 —— 由禅道工时记录本身做最终判重。
 
-interface WriteTaskRow {
-  taskId: string
-  taskName: string
-  suggestedHours?: number
-  commits: Array<{ title: string }>
-}
-
-const writeModal = ref<{
-  task: WriteTaskRow
-  hours: string
-  content: string
-  submitting: boolean
-  error: string
-  result: 'idle' | 'ok' | 'fail'
-} | null>(null)
-
-/** 本会话写入过的任务集合（taskId）。刷新窗口不丢，重启 app 会清空 —— 由
- *  禅道自己的工时记录兜底，避免误重写。 */
+/** 本会话写入过的任务集合（taskId）。刷新窗口不丢，重启 app 会清空。 */
 const writtenTasks = ref<Set<string>>(new Set())
 
-// 撑大窗口：modal 打开时 avatar 扩到 640×720
-useExpandedAvatarWindow(computed(() => writeModal.value !== null))
-
-// review 窗被外部关掉时（如点了 menu / closeAllPanels），把可能挂着的写工时
-// modal 一起清掉。modal 是 Teleport 到 body 的，不会跟着内层 v-if 隐藏。
-watch(() => store.showReviewWindow, (open) => {
-  if (!open && writeModal.value) writeModal.value = null
+let unlistenWriteDone: UnlistenFn | null = null
+onMounted(async () => {
+  unlistenWriteDone = await listen<{ taskId: string }>('write-hours-done', (e) => {
+    const tid = e.payload?.taskId
+    if (tid) writtenTasks.value = new Set([...writtenTasks.value, tid])
+  })
 })
+onUnmounted(() => { unlistenWriteDone?.() })
 
 function buildWorkContent(commits: Array<{ title: string }>): string {
   const seen = new Set<string>()
@@ -167,62 +161,61 @@ function buildWorkContent(commits: Array<{ title: string }>): string {
   return lines.join('\n')
 }
 
-function openWriteModal(task: WriteTaskRow) {
-  if (writtenTasks.value.has(task.taskId)) return
-  writeModal.value = {
-    task,
-    hours: task.suggestedHours ? String(task.suggestedHours) : '',
-    content: buildWorkContent(task.commits),
-    submitting: false,
-    error: '',
-    result: 'idle',
-  }
-}
-
-function closeWriteModal() {
-  if (writeModal.value?.submitting) return
-  writeModal.value = null
-}
-
-async function submitWrite() {
-  const m = writeModal.value
-  if (!m || m.submitting) return
-  const hoursNum = parseFloat(m.hours)
-  if (!Number.isFinite(hoursNum) || hoursNum <= 0) {
-    m.error = '工时必须是正数（小数也行，比如 0.5）'
-    return
-  }
-  if (!m.content.trim()) {
-    m.error = '工作内容不能为空'
-    return
-  }
-  m.submitting = true
-  m.error = ''
+/** 从"按任务"区点开：taskId 预填，但保持可编辑 */
+async function openWriteModalForTask(t: {
+  taskId: string
+  taskName: string
+  suggestedHours?: number
+  commits: Array<{ title: string }>
+}) {
+  if (writtenTasks.value.has(t.taskId)) return
+  const content = buildWorkContent(t.commits)
+  console.log('[review] openWriteModalForTask payload:', {
+    taskId: t.taskId,
+    commitsCount: t.commits?.length ?? 0,
+    contentPreview: content.slice(0, 80),
+  })
   try {
-    const result = await invoke<{ success: boolean; data?: any; error?: string }>('tool_execute', {
-      name: 'log-task-effort',
-      input: {
-        taskId: m.task.taskId,
-        hours: hoursNum,
-        work: m.content,
+    await invoke('write_hours_open', {
+      payload: {
+        taskId: t.taskId,
+        taskName: t.taskName,
+        suggestedHours: t.suggestedHours,
+        content,
+        kind: 'task',
       },
     })
-    if (result.success && result.data?.ok) {
-      m.result = 'ok'
-      writtenTasks.value = new Set([...writtenTasks.value, m.task.taskId])
-      // 成功后 1.2s 自动关 modal，按钮上的 ✓ 标记由 writtenTasks 保留
-      setTimeout(() => {
-        if (writeModal.value === m) writeModal.value = null
-      }, 1200)
-    } else {
-      m.result = 'fail'
-      m.error = result.error || '禅道返回未知错误'
-    }
-  } catch (e: any) {
-    m.result = 'fail'
-    m.error = e?.message ?? String(e)
-  } finally {
-    m.submitting = false
+  } catch (e) {
+    console.error('write_hours_open 失败:', e)
+  }
+}
+
+/** 从"未关联任务的提交"分组点开：taskId 空，让用户填 */
+async function openWriteModalForOrphan(g: {
+  businessLine: string
+  suggestedHours?: number
+  commits: Array<{ title: string }>
+}) {
+  const content = buildWorkContent(g.commits)
+  console.log('[review] openWriteModalForOrphan payload:', {
+    businessLine: g.businessLine,
+    commitsCount: g.commits?.length ?? 0,
+    firstTitle: g.commits?.[0]?.title ?? '(no commits)',
+    contentLen: content.length,
+    contentPreview: content.slice(0, 80),
+  })
+  try {
+    await invoke('write_hours_open', {
+      payload: {
+        taskId: '',
+        taskName: g.businessLine,
+        suggestedHours: g.suggestedHours,
+        content,
+        kind: 'orphan',
+      },
+    })
+  } catch (e) {
+    console.error('write_hours_open 失败:', e)
   }
 }
 
@@ -241,15 +234,21 @@ function isTaskWritten(taskId: string): boolean {
         </div>
         <div class="panel-actions">
           <div class="range-switch">
-            <button class="range-btn" :class="{ active: range === 'today' }" @click="range = 'today'">今天</button>
-            <button class="range-btn" :class="{ active: range === 'thisWeek' }" @click="range = 'thisWeek'">本周</button>
+            <button class="range-btn" :class="{ active: range === 'today' }" :disabled="store.reviewLoading" @click="switchRange('today')">今天</button>
+            <button class="range-btn" :class="{ active: range === 'thisWeek' }" :disabled="store.reviewLoading" @click="switchRange('thisWeek')">本周</button>
           </div>
           <button class="icon-btn" :class="{ spinning: refreshing }" title="刷新" @click="handleRefresh">↻</button>
           <button class="icon-btn" title="关闭" @click="store.showReviewWindow = false">×</button>
         </div>
       </header>
 
-      <!-- 加载中 -->
+      <!-- 切 range / 手动刷新时的细条 loading：reviewData 已经在，不能用大空状态覆盖 -->
+      <div v-if="store.reviewLoading && store.reviewData" class="refresh-strip">
+        <span class="refresh-spinner">⟳</span>
+        <span>正在拉取「{{ range === 'today' ? '今天' : '本周' }}」的复盘数据…</span>
+      </div>
+
+      <!-- 加载中（无数据时的大空状态） -->
       <div v-if="store.reviewLoading && !store.reviewData" class="empty">
         <span class="empty-icon loading">⟳</span>
         <p class="empty-hint">正在扫描本地仓库和禅道任务…</p>
@@ -326,7 +325,7 @@ function isTaskWritten(taskId: string): boolean {
                   class="write-mini"
                   :class="{ written: isTaskWritten(t.taskId) }"
                   :disabled="isTaskWritten(t.taskId)"
-                  @click="openWriteModal(t)"
+                  @click="openWriteModalForTask(t)"
                   :title="isTaskWritten(t.taskId) ? '本会话已写入（去禅道可继续修改）' : `写入工时到禅道 #${t.taskId}`"
                 >
                   {{ isTaskWritten(t.taskId) ? '✓ 已写入' : '✍️ 写工时' }}
@@ -396,13 +395,20 @@ function isTaskWritten(taskId: string): boolean {
             <span>🧩 未关联禅道任务的提交</span>
             <span class="section-count">{{ store.reviewData.summary.orphanCommitCount }} 个 commit</span>
           </h3>
-          <p class="section-hint">这些 commit 没匹配到任务号。可以补任务号、或在日报里口头交代 / 在禅道用杂项任务填工时。点 📋 复制内容。</p>
+          <p class="section-hint">这些 commit 没匹配到任务号。点 ✍️ 手动填一个任务 ID 写工时；点 📋 仅复制内容。</p>
           <ul class="task-fill-list">
             <li v-for="g in store.reviewData.orphanCommits.filter(o => o.commits.length > 0)"
               :key="g.businessLine" class="task-fill-item orphan-item">
               <div class="task-fill-row">
                 <span class="task-fill-name">{{ g.businessLine }}</span>
                 <span v-if="g.suggestedHours" class="hours-pill">~{{ g.suggestedHours }}h</span>
+                <button
+                  class="write-mini"
+                  @click="openWriteModalForOrphan(g)"
+                  title="手动填任务 ID 后写入工时"
+                >
+                  ✍️ 写到任务…
+                </button>
                 <button
                   class="copy-mini"
                   :class="`mini-${orphanCopyState[g.businessLine] || 'idle'}`"
@@ -448,76 +454,6 @@ function isTaskWritten(taskId: string): boolean {
       </footer>
     </div>
   </Transition>
-
-  <!-- 写工时编辑器（Teleport 到 body 避免 panel 容器层级限制） -->
-  <Teleport to="body">
-    <Transition name="modal">
-      <div v-if="writeModal" class="modal-overlay pointer-target" @click.self="closeWriteModal">
-        <div class="modal-card">
-          <header class="modal-header">
-            <h3 class="modal-title">✍️ 写入工时到禅道</h3>
-            <button class="modal-close" :disabled="writeModal.submitting" @click="closeWriteModal">×</button>
-          </header>
-
-          <div class="modal-body">
-            <p class="modal-meta">
-              <strong>任务：</strong>
-              <span class="modal-task-id">#{{ writeModal.task.taskId }}</span>
-              <span class="modal-task-name">{{ writeModal.task.taskName }}</span>
-            </p>
-
-            <div class="form-row">
-              <label class="form-label">工时（小时）</label>
-              <input
-                v-model="writeModal.hours"
-                class="form-input"
-                type="text"
-                inputmode="decimal"
-                :disabled="writeModal.submitting || writeModal.result === 'ok'"
-                placeholder="如 0.5、1、1.5"
-              />
-              <p class="form-hint">AI 按 commit 量估算 {{ writeModal.task.suggestedHours || '—' }}h，按实际填写即可</p>
-            </div>
-
-            <div class="form-row">
-              <label class="form-label">工作内容（同任务多 commit 已合并去重）</label>
-              <textarea
-                v-model="writeModal.content"
-                class="form-textarea"
-                :disabled="writeModal.submitting || writeModal.result === 'ok'"
-                rows="8"
-                placeholder="给禅道看的工作记录文本"
-              />
-            </div>
-
-            <p v-if="writeModal.error" class="form-error">{{ writeModal.error }}</p>
-            <p v-if="writeModal.result === 'ok'" class="form-success">
-              ✓ 已写入禅道。需要改去禅道工作日志里编辑或删除即可。
-            </p>
-          </div>
-
-          <footer class="modal-actions">
-            <button
-              class="modal-btn modal-btn-cancel"
-              :disabled="writeModal.submitting"
-              @click="closeWriteModal"
-            >
-              取消
-            </button>
-            <button
-              class="modal-btn modal-btn-confirm"
-              :disabled="writeModal.submitting || writeModal.result === 'ok'"
-              @click="submitWrite"
-            >
-              <span v-if="writeModal.submitting">提交中…</span>
-              <span v-else-if="writeModal.result === 'ok'">已写入</span>
-              <span v-else>确认写入</span>
-            </button>
-          </footer>
-        </div>
-      </div>
-    </Transition>
-  </Teleport>
 </template>
 
 <style scoped>
@@ -558,7 +494,23 @@ function isTaskWritten(taskId: string): boolean {
   border-radius: 3px; cursor: pointer;
 }
 .range-btn.active { background: rgba(59, 130, 246, 0.3); color: rgba(255, 255, 255, 0.95); }
-.range-btn:hover:not(.active) { color: rgba(255, 255, 255, 0.85); }
+.range-btn:hover:not(.active):not(:disabled) { color: rgba(255, 255, 255, 0.85); }
+.range-btn:disabled { opacity: 0.5; cursor: wait; }
+
+/* 切 range / 手动刷新时的细条 loading */
+.refresh-strip {
+  display: flex; align-items: center; gap: 6px; justify-content: center;
+  padding: 5px 10px;
+  font-size: 11px;
+  color: rgba(147, 197, 253, 0.95);
+  background: rgba(59, 130, 246, 0.12);
+  border-bottom: 1px solid rgba(59, 130, 246, 0.25);
+}
+.refresh-spinner {
+  display: inline-block;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
 
 .icon-btn {
   width: 22px; height: 22px;
@@ -754,163 +706,6 @@ function isTaskWritten(taskId: string): boolean {
   color: rgba(134, 239, 172, 0.95);
   cursor: not-allowed;
 }
-
-/* ===== 写工时编辑器 modal ===== */
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(3px);
-  z-index: 220;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-}
-.modal-card {
-  width: 100%;
-  max-width: 560px;
-  max-height: calc(100vh - 60px);
-  display: flex;
-  flex-direction: column;
-  background: linear-gradient(135deg, rgba(22, 32, 58, 0.99), rgba(15, 23, 42, 0.99));
-  border: 1px solid rgba(167, 139, 250, 0.35);
-  border-radius: 12px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
-  overflow: hidden;
-  color: rgba(255, 255, 255, 0.92);
-}
-.modal-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 16px;
-  background: rgba(167, 139, 250, 0.1);
-  border-bottom: 1px solid rgba(167, 139, 250, 0.18);
-}
-.modal-title {
-  margin: 0;
-  font-size: 14.5px;
-  font-weight: 600;
-  color: rgba(196, 181, 253, 0.98);
-}
-.modal-close {
-  width: 26px; height: 26px;
-  display: inline-flex; align-items: center; justify-content: center;
-  font-size: 18px; line-height: 1;
-  color: rgba(255, 255, 255, 0.55);
-  background: transparent; border: none; border-radius: 6px;
-  cursor: pointer;
-}
-.modal-close:hover:not(:disabled) { background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.95); }
-.modal-close:disabled { cursor: not-allowed; opacity: 0.35; }
-
-.modal-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px;
-  display: flex; flex-direction: column; gap: 14px;
-}
-.modal-meta { margin: 0; font-size: 13px; line-height: 1.55; color: rgba(255, 255, 255, 0.85); }
-.modal-meta strong { color: rgba(147, 197, 253, 0.9); margin-right: 6px; font-weight: 600; }
-.modal-task-id {
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  color: rgba(0, 212, 255, 0.95);
-  margin-right: 6px;
-}
-.modal-task-name { color: rgba(255, 255, 255, 0.92); }
-
-.form-row { display: flex; flex-direction: column; gap: 4px; }
-.form-label {
-  font-size: 12.5px;
-  font-weight: 500;
-  color: rgba(196, 181, 253, 0.95);
-}
-.form-input {
-  padding: 8px 10px;
-  font-size: 13.5px;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  color: rgba(255, 255, 255, 0.95);
-  background: rgba(0, 0, 0, 0.25);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 6px;
-  outline: none;
-}
-.form-input:focus { border-color: rgba(167, 139, 250, 0.5); }
-.form-input:disabled { opacity: 0.5; cursor: not-allowed; }
-.form-textarea {
-  padding: 10px;
-  font-size: 13px;
-  line-height: 1.55;
-  color: rgba(255, 255, 255, 0.92);
-  background: rgba(0, 0, 0, 0.25);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 6px;
-  outline: none;
-  resize: vertical;
-  min-height: 120px;
-  font-family: inherit;
-}
-.form-textarea:focus { border-color: rgba(167, 139, 250, 0.5); }
-.form-textarea:disabled { opacity: 0.5; cursor: not-allowed; }
-.form-hint {
-  margin: 2px 0 0;
-  font-size: 11.5px;
-  color: rgba(255, 255, 255, 0.5);
-}
-.form-error {
-  margin: 0;
-  padding: 8px 10px;
-  font-size: 12.5px;
-  color: rgba(252, 165, 165, 0.95);
-  background: rgba(239, 68, 68, 0.12);
-  border-left: 2px solid rgba(239, 68, 68, 0.6);
-  border-radius: 4px;
-}
-.form-success {
-  margin: 0;
-  padding: 8px 10px;
-  font-size: 12.5px;
-  color: rgba(134, 239, 172, 0.95);
-  background: rgba(34, 197, 94, 0.12);
-  border-left: 2px solid rgba(34, 197, 94, 0.6);
-  border-radius: 4px;
-}
-
-.modal-actions {
-  display: flex; gap: 8px; justify-content: flex-end;
-  padding: 12px 16px;
-  background: rgba(0, 0, 0, 0.25);
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
-}
-.modal-btn {
-  padding: 8px 18px;
-  font-size: 13px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.15s;
-  font-family: inherit;
-}
-.modal-btn:disabled { cursor: not-allowed; opacity: 0.45; }
-.modal-btn-cancel {
-  background: transparent;
-  color: rgba(255, 255, 255, 0.7);
-  border-color: rgba(255, 255, 255, 0.15);
-}
-.modal-btn-cancel:hover:not(:disabled) { background: rgba(255, 255, 255, 0.06); color: rgba(255, 255, 255, 0.95); }
-.modal-btn-confirm {
-  background: linear-gradient(135deg, rgba(167, 139, 250, 0.9), rgba(139, 92, 246, 0.9));
-  color: white;
-  font-weight: 500;
-}
-.modal-btn-confirm:hover:not(:disabled) {
-  box-shadow: 0 4px 14px rgba(167, 139, 250, 0.4);
-  transform: translateY(-1px);
-}
-
-.modal-enter-active, .modal-leave-active { transition: opacity 0.2s; }
-.modal-enter-active .modal-card, .modal-leave-active .modal-card { transition: transform 0.2s, opacity 0.2s; }
-.modal-enter-from, .modal-leave-to { opacity: 0; }
-.modal-enter-from .modal-card, .modal-leave-to .modal-card { transform: translateY(10px) scale(0.97); opacity: 0; }
 
 /* 业务线分组 */
 .commits-block {

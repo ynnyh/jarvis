@@ -25,6 +25,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .manage(commands::WriteHoursState::default())
         .setup(|app| {
             // ===== 系统托盘 =====
             let show_i = MenuItem::with_id(app, "tray_show", "显示小人", true, None::<&str>)?;
@@ -129,6 +130,34 @@ pub fn run() {
                 // 无法拖动、无法点击、左右键都不行。在这里钉死避免该不变量被破坏。
                 let _ = window.set_ignore_cursor_events(false);
             }
+
+            // ===== writeHours 关窗事件 Rust 侧拦截 =====
+            // 历史教训：在 WriteHoursApp.vue 里 onCloseRequested 用 async 回调 +
+            // e.preventDefault() 拦截 OS × 按钮，实测有偶发竞态：preventDefault 在
+            // 异步分支里被 Tauri 当作"未拦截"，窗口实际被销毁，avatar 也跟着失踪。
+            // 改在 Rust 层挂 on_window_event，CloseRequested 时同步 prevent_close +
+            // hide 自己 + show avatar，绕开 JS 的异步 race。
+            if let Some(wh) = app.get_webview_window("writeHours") {
+                let app_handle = app.handle().clone();
+                let wh_clone = wh.clone();
+                wh.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = wh_clone.hide();
+                        // 清掉残留 payload，下次开新任务才不会读到旧的
+                        if let Some(state) = app_handle.try_state::<commands::WriteHoursState>() {
+                            if let Ok(mut slot) = state.payload.lock() {
+                                *slot = None;
+                            }
+                        }
+                        if let Some(avatar) = app_handle.get_webview_window("avatar") {
+                            avatar.unminimize().ok();
+                            let _ = avatar.show();
+                            avatar.set_focus().ok();
+                        }
+                    }
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -144,6 +173,10 @@ pub fn run() {
             commands::config_save,
             commands::chat_open,
             commands::chat_close,
+            commands::write_hours_open,
+            commands::write_hours_close,
+            commands::write_hours_take_payload,
+            commands::avatar_show_fallback,
             credentials::credentials_set,
             credentials::credentials_get,
             credentials::credentials_delete,

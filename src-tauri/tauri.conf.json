@@ -52,6 +52,28 @@
         "shadow": true,
         "focus": true,
         "visible": false
+      },
+      {
+        "label": "writeHours",
+        "title": "写入工时到禅道",
+        "url": "writeHours.html",
+        "width": 520,
+        "height": 640,
+        "minWidth": 420,
+        "minHeight": 520,
+        "center": true,
+        "resizable": true,
+        "maximizable": false,
+        "minimizable": true,
+        "closable": true,
+        "fullscreen": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": false,
+        "transparent": false,
+        "decorations": true,
+        "shadow": true,
+        "focus": true,
+        "visible": false
       }
     ],
     "security": {
