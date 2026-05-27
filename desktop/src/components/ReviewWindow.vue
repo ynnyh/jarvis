@@ -3,16 +3,24 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useAppStore } from '../stores/app'
-import { useDailyReview } from '../composables/useDailyReview'
+import { useConfigStore } from '../stores/config'
+import { useDailyReview, type ReviewRange } from '../composables/useDailyReview'
 import { cleanCommitTitle } from '../composables/cleanCommitTitle'
 
 const store = useAppStore()
+const configStore = useConfigStore()
 const { fetchReview, copyPlainText } = useDailyReview()
 
 const refreshing = ref(false)
 const copyState = ref<'idle' | 'ok' | 'fail'>('idle')
 const showRaw = ref(false)
-const range = ref<'today' | 'thisWeek'>('today')
+const range = ref<ReviewRange>('today')
+
+const RANGE_LABELS: Record<ReviewRange, string> = {
+  today: '今天',
+  yesterday: '昨天',
+  thisWeek: '本周',
+}
 
 /** 每个任务的复制状态：taskId → 'ok' | 'fail' */
 const taskCopyState = ref<Record<string, 'ok' | 'fail'>>({})
@@ -105,7 +113,7 @@ watch(() => store.showReviewWindow, (open) => {
 
 // 切 range：直接显式调 fetchReview，不依赖 watch（之前发现 watch 偶发
 // 不触发，且即使触发也会被 reviewLoading 早返回吞掉），显式调更稳。
-async function switchRange(r: 'today' | 'thisWeek') {
+async function switchRange(r: ReviewRange) {
   if (range.value === r) {
     // 同一档再点也强制刷一遍，相当于"再查一次"
     await fetchReview(r)
@@ -235,6 +243,7 @@ function isTaskWritten(taskId: string): boolean {
         <div class="panel-actions">
           <div class="range-switch">
             <button class="range-btn" :class="{ active: range === 'today' }" :disabled="store.reviewLoading" @click="switchRange('today')">今天</button>
+            <button class="range-btn" :class="{ active: range === 'yesterday' }" :disabled="store.reviewLoading" @click="switchRange('yesterday')">昨天</button>
             <button class="range-btn" :class="{ active: range === 'thisWeek' }" :disabled="store.reviewLoading" @click="switchRange('thisWeek')">本周</button>
           </div>
           <button class="icon-btn" :class="{ spinning: refreshing }" title="刷新" @click="handleRefresh">↻</button>
@@ -245,7 +254,7 @@ function isTaskWritten(taskId: string): boolean {
       <!-- 切 range / 手动刷新时的细条 loading：reviewData 已经在，不能用大空状态覆盖 -->
       <div v-if="store.reviewLoading && store.reviewData" class="refresh-strip">
         <span class="refresh-spinner">⟳</span>
-        <span>正在拉取「{{ range === 'today' ? '今天' : '本周' }}」的复盘数据…</span>
+        <span>正在拉取「{{ RANGE_LABELS[range] }}」的复盘数据…</span>
       </div>
 
       <!-- 加载中（无数据时的大空状态） -->
@@ -263,6 +272,10 @@ function isTaskWritten(taskId: string): boolean {
       </div>
 
       <div v-else-if="store.reviewData" class="panel-body">
+        <!-- 招呼语：用 userTitle 称呼用户，区分今天/本周 -->
+        <p class="greeting">
+          {{ configStore.config.userTitle }}，这是「{{ RANGE_LABELS[range] }}」的复盘
+        </p>
         <!-- 概况 -->
         <section class="section">
           <div class="summary-grid">
@@ -527,6 +540,13 @@ function isTaskWritten(taskId: string): boolean {
 .panel-body {
   flex: 1; overflow-y: auto; padding: 10px;
   display: flex; flex-direction: column; gap: 14px;
+}
+
+.greeting {
+  margin: 0;
+  font-size: 12.5px;
+  color: rgba(255, 255, 255, 0.65);
+  line-height: 1.5;
 }
 
 .section { display: flex; flex-direction: column; gap: 6px; }

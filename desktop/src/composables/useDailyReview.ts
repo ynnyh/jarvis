@@ -25,11 +25,13 @@ function unpack(result: ToolResult): DailyReviewData | null {
   return null
 }
 
+export type ReviewRange = 'today' | 'yesterday' | 'thisWeek'
+
 export function useDailyReview() {
   const store = useAppStore()
   const configStore = useConfigStore()
 
-  async function fetchReview(range: 'today' | 'thisWeek' = 'today') {
+  async function fetchReview(range: ReviewRange = 'today') {
     if (store.reviewLoading) return
     store.reviewLoading = true
     try {
@@ -58,7 +60,7 @@ export function useDailyReview() {
     }
   }
 
-  async function openReview(range: 'today' | 'thisWeek' = 'today') {
+  async function openReview(range: ReviewRange = 'today') {
     store.showReviewWindow = true
     if (!store.reviewData || store.reviewData.range.label !== '') {
       await fetchReview(range)

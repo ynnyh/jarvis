@@ -1,4 +1,4 @@
-// 上班时段的随机小提示：喝水 / 起身 / 午饭 / 下班。
+// 上班时段的随机小提示：喝水 / 起身 / 提肛 / 午饭 / 下班。
 //
 // 设计：
 //   - 60s tick，phase==='working' 且 !isQuietHours 才工作
@@ -59,12 +59,13 @@ export function useWorkdayNudges(options: NudgeOptions) {
       .sort((a, b) => a.start - b.start)
     if (periods.length === 0) return
 
+    const u = configStore.config.userTitle
     // 午饭前 10 分钟 —— 只在 ≥2 个 period 时有意义（午休夹在中间）
     if (periods.length >= 2) {
       const lunchAt = periods[0].end
       if (minutes >= lunchAt - 10 && minutes < lunchAt && !hasFired('lunch')) {
         markFired('lunch')
-        options.onTrigger('快到午饭点了，准备休息一下', '🍱')
+        options.onTrigger(`${u}，快到午饭点了，准备休息一下`, '🍱')
         return
       }
     }
@@ -73,7 +74,7 @@ export function useWorkdayNudges(options: NudgeOptions) {
     const lastEnd = periods[periods.length - 1].end
     if (minutes >= lastEnd - 10 && minutes < lastEnd && !hasFired('leave')) {
       markFired('leave')
-      options.onTrigger('快下班了，今天辛苦了 💼', '🌆')
+      options.onTrigger(`${u}，快下班了，今天辛苦了 💼`, '🌆')
       return
     }
 
@@ -87,11 +88,14 @@ export function useWorkdayNudges(options: NudgeOptions) {
     const slotKey = `slot-${intervalMin}-${slot}`
     if (hasFired(slotKey)) return
     markFired(slotKey)
-    // 喝水 / 起身 交替
-    if (slot % 2 === 1) {
-      options.onTrigger('喝点水歇会儿吧', '💧')
+    // 喝水 / 起身 / 提肛 三选一循环
+    const r = slot % 3
+    if (r === 1) {
+      options.onTrigger(`${u}，喝点水歇会儿吧`, '💧')
+    } else if (r === 2) {
+      options.onTrigger(`${u}，起身活动一下，转转脖子`, '🧘')
     } else {
-      options.onTrigger('起身活动一下，转转脖子', '🧘')
+      options.onTrigger(`${u}，做几次提肛，30 秒搞定`, '💪')
     }
   }
 

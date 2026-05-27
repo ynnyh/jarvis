@@ -17,6 +17,7 @@ import { useConfigStore } from '../stores/config'
 
 import AssistantNameSection from './settings/AssistantNameSection.vue'
 import LeftClickActionSection from './settings/LeftClickActionSection.vue'
+import PetSection from './settings/PetSection.vue'
 import ZentaoSection from './settings/ZentaoSection.vue'
 import LlmSection from './settings/LlmSection.vue'
 import RepoRootsSection from './settings/RepoRootsSection.vue'
@@ -103,6 +104,7 @@ const phaseLabel = computed(() => {
         </template>
         <template v-else>
           <AssistantNameSection />
+          <PetSection />
           <LeftClickActionSection />
         </template>
       </div>

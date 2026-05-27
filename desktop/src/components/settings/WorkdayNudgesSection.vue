@@ -9,10 +9,10 @@ const store = useConfigStore()
     <h3 class="settings-section-title">工作时段小提示</h3>
     <label class="settings-toggle">
       <input type="checkbox" v-model="store.config.notifications.workdayNudges" />
-      <span>上班时段定时弹提示（喝水 / 起身 / 午饭 / 下班）</span>
+      <span>上班时段定时弹提示（喝水 / 起身 / 提肛 / 午饭 / 下班）</span>
     </label>
     <label class="settings-toggle">
-      <span>喝水 / 起身 每
+      <span>喝水 / 起身 / 提肛 每
         <input
           class="settings-inline-num"
           type="number"

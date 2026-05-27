@@ -949,6 +949,8 @@ struct ChatSendInput {
     messages: Vec<ChatSendMessage>,
     #[serde(default, rename = "assistantName")]
     assistant_name: Option<String>,
+    #[serde(default, rename = "userTitle")]
+    user_title: Option<String>,
     #[serde(default, rename = "maxIterations")]
     max_iterations: Option<u32>,
     #[serde(default)]
@@ -987,6 +989,7 @@ pub async fn chat_send(input: Value) -> Result<Value, String> {
     } else {
         Some(crate::chat_agent::default_system_prompt(
             parsed.assistant_name.as_deref().unwrap_or("Jarvis"),
+            parsed.user_title.as_deref().unwrap_or("主人"),
         ))
     };
 

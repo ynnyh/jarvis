@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow, LogicalPosition } from '@tauri-apps/api/window'
@@ -10,6 +10,7 @@ import { useTaskCommits } from './composables/useTaskCommits'
 import { useDailyReview } from './composables/useDailyReview'
 import { useEveningReminder } from './composables/useEveningReminder'
 import { useWorkdayNudges } from './composables/useWorkdayNudges'
+import { useTimeGreetings } from './composables/useTimeGreetings'
 import { useCursorPassthrough } from './composables/useCursorPassthrough'
 import { useUpdater } from './composables/useUpdater'
 import TaskWindow from './components/TaskWindow.vue'
@@ -19,6 +20,7 @@ import ReviewWindow from './components/ReviewWindow.vue'
 import UpdateWindow from './components/UpdateWindow.vue'
 import BindTaskWindow from './components/BindTaskWindow.vue'
 import WelcomeWizard from './components/WelcomeWizard.vue'
+import PetAvatar from './components/PetAvatar.vue'
 
 const store = useAppStore()
 const configStore = useConfigStore()
@@ -29,7 +31,7 @@ useEveningReminder({
   onTrigger: () => {
     // 不传 duration=0 — 那会让气泡永久挂着、状态卡在 thinking 直到用户手动 ×。
     // 复盘窗口已经自动打开了，气泡只是个提示动作，15s 足够注意到。
-    showAlert('今天的复盘看一下？', '📋', 'thinking', 15000)
+    showAlert(`${configStore.config.userTitle}，今天的复盘看一下？`, '📋', 'thinking', 15000)
     store.showReviewWindow = true
   },
 })
@@ -37,6 +39,12 @@ useWorkdayNudges({
   onTrigger: (text, emoji) => {
     // 上班时段的小提示走 happy 表情、12s 自动消失，不打断工作
     showAlert(text, emoji, 'happy', 12000)
+  },
+})
+useTimeGreetings({
+  onTrigger: (text, emoji, s) => {
+    // 早晨/咖啡/夜晚问候：15s，状态切到对应色调
+    showAlert(text, emoji, s, 15000)
   },
 })
 // passthrough：让小人窗口的空白区域穿透到桌面，详见 composable 内部说明
@@ -56,7 +64,7 @@ function openUpdateWindow() {
   store.showUpdateWindow = true
 }
 
-type JarvisState = 'idle' | 'thinking' | 'working' | 'warning' | 'happy'
+type JarvisState = 'idle' | 'thinking' | 'working' | 'warning' | 'happy' | 'morning' | 'coffee' | 'late'
 
 const state = ref<JarvisState>('idle')
 const showMenu = ref(false)
@@ -81,7 +89,7 @@ interface StateConfig {
 
 const stateMap: Record<JarvisState, StateConfig> = {
   idle: {
-    text: 'V2待命',
+    text: '待命中',
     emotion: '😌',
     color: '#00d4ff',
     glowColor: 'rgba(0, 212, 255, 0.3)',
@@ -120,11 +128,92 @@ const stateMap: Record<JarvisState, StateConfig> = {
     animation: 'happy',
     description: '任务完成很棒',
   },
+  morning: {
+    text: '早安',
+    emotion: '🌅',
+    color: '#fbbf24',
+    glowColor: 'rgba(251, 191, 36, 0.4)',
+    animation: 'breathe',
+    description: '新的一天开始了',
+  },
+  coffee: {
+    text: '咖啡时间',
+    emotion: '☕',
+    color: '#a16207',
+    glowColor: 'rgba(161, 98, 7, 0.35)',
+    animation: 'breathe',
+    description: '喝一杯放松下',
+  },
+  late: {
+    text: '该休息了',
+    emotion: '🌙',
+    color: '#a78bfa',
+    glowColor: 'rgba(167, 139, 250, 0.35)',
+    animation: 'breathe',
+    description: '别熬太晚了',
+  },
 }
 const current = computed(() => stateMap[state.value])
 const hasAlert = computed(() => alertText.value !== '')
 
+// 状态切换时短暂高亮，给用户一个明显的视觉反馈（CSS 用 .flashing class 触发脉冲）
+const stateFlashing = ref(false)
+let flashTimer: number | null = null
+watch(state, () => {
+  stateFlashing.value = true
+  if (flashTimer) clearTimeout(flashTimer)
+  flashTimer = window.setTimeout(() => { stateFlashing.value = false }, 800)
+})
+
 let alertTimer: number | null = null
+
+/**
+ * 气泡渲染后纠正窗口位置：测气泡 + 状态条的实际屏幕坐标，超出屏幕就把
+ * 整窗口缓动滑回屏幕内。修三种截断：
+ *  - dock pokeOut 后 undockedWinPos 本身就贴边，气泡仍在屏外
+ *  - 非 dock 但小人在屏幕角落，data-anchor 翻完气泡还是出界
+ *  - 气泡内容长换行高度变高，原本能放下的 stack 顶到屏幕外
+ * 注意 dockEdge 状态下不矫正：dock 主动把窗口推出去，矫正会跟它打架。
+ */
+async function ensureBubbleVisible() {
+  if (dockEdge.value && !isPoked.value) return
+  const bubble = document.querySelector<HTMLElement>('.alert-bubble')
+  const label = document.querySelector<HTMLElement>('.status-label')
+  if (!bubble && !label) return
+  const targets = [bubble, label].filter(Boolean) as HTMLElement[]
+  const win = getCurrentWindow()
+  let winX = 0, winY = 0
+  try {
+    const pos = await win.outerPosition()
+    const scale = await win.scaleFactor()
+    winX = pos.x / scale
+    winY = pos.y / scale
+  } catch { return }
+  const sw = window.screen.width
+  const sh = window.screen.height
+  const margin = 8
+  let minLeft = Infinity, minTop = Infinity, maxRight = -Infinity, maxBottom = -Infinity
+  for (const el of targets) {
+    const r = el.getBoundingClientRect()
+    if (r.width === 0) continue
+    minLeft = Math.min(minLeft, winX + r.left)
+    minTop = Math.min(minTop, winY + r.top)
+    maxRight = Math.max(maxRight, winX + r.right)
+    maxBottom = Math.max(maxBottom, winY + r.bottom)
+  }
+  if (!isFinite(minLeft)) return
+  let dx = 0, dy = 0
+  if (minLeft < margin) dx = margin - minLeft
+  else if (maxRight > sw - margin) dx = sw - margin - maxRight
+  if (minTop < margin) dy = margin - minTop
+  else if (maxBottom > sh - margin) dy = sh - margin - maxBottom
+  if (dx === 0 && dy === 0) return
+  // 重要：矫正完得同步更新 undockedWinPos，否则下次 retract/exitDock 又跑回原位
+  const newX = Math.round(winX + dx)
+  const newY = Math.round(winY + dy)
+  if (undockedWinPos) undockedWinPos = { ...undockedWinPos, x: newX, y: newY }
+  await animateWindowToLogical(newX, newY, 220)
+}
 
 function showAlert(text: string, emoji: string, s: JarvisState, duration = 5000) {
   state.value = s
@@ -139,6 +228,12 @@ function showAlert(text: string, emoji: string, s: JarvisState, duration = 5000)
       state.value = 'idle'
     }, duration)
   }
+  // 异步纠正：dock 中先 pokeOut（弹出来）→ 等 DOM 渲染 → 再算气泡是否出界
+  ;(async () => {
+    if (dockEdge.value) await pokeOut()
+    await nextTick()
+    await ensureBubbleVisible()
+  })()
 }
 
 /** 关闭所有面板和菜单。打开任意 panel/menu 前调用，确保左右键互斥 */
@@ -155,7 +250,12 @@ function closeAllPanels() {
 function toggleMenu(e: Event) {
   e.stopPropagation()
   // 准备打开 menu 时，先关掉所有面板
-  if (!showMenu.value) closeAllPanels()
+  if (!showMenu.value) {
+    closeAllPanels()
+    // dock 状态下 menu 默认渲染在窗口右下，屏幕外用户看不到 → pokeOut 让窗口
+    // 滑回屏幕内，菜单跟着出来
+    if (dockEdge.value) pokeOut()
+  }
   showMenu.value = !showMenu.value
 }
 
@@ -277,6 +377,221 @@ async function recomputeAnchor() {
   avatarAnchor.value = newAnchor
 }
 
+// ===== Avatar dock (QQ 宠物贴边收纳) =====
+// 行为：
+//  - 拖到距屏幕某条边 < DOCK_AUTO_THRESHOLD 自动 dock（也可菜单手动）
+//  - dock 后窗口缓动到只露 DOCK_SHOW_PX 在屏幕内，主体藏屏幕外
+//  - hover dock 区域 或 showAlert 触发 → pokeOut 临时露出完整 avatar
+//  - 鼠标离开 / 气泡消失后 DOCK_RECOIL_MS 后缓动回 dock 位置
+//  - 用户在 dock 状态下手动拖小人 → 自动退出 dock（拖拽优先）
+const DOCK_AUTO_THRESHOLD = 30
+const DOCK_SHOW_PX = 18
+const DOCK_RECOIL_MS = 5000
+const DOCK_ANIM_MS = 200
+
+type DockEdge = 'top' | 'right' | 'bottom' | 'left'
+
+const dockEdge = ref<DockEdge | null>(null)
+const isPoked = ref(false)
+let dockUndockTimer: number | null = null
+let dockAnimFrame: number | null = null
+let dockedWinPos: { x: number; y: number; anchor: AvatarAnchor } | null = null
+let undockedWinPos: { x: number; y: number; anchor: AvatarAnchor } | null = null
+
+function cancelDockAnim() {
+  if (dockAnimFrame !== null) {
+    cancelAnimationFrame(dockAnimFrame)
+    dockAnimFrame = null
+  }
+}
+
+/** RAF 缓动窗口到目标 logical 位置。重入会先 cancel 上一帧。 */
+async function animateWindowToLogical(targetX: number, targetY: number, durationMs: number): Promise<void> {
+  cancelDockAnim()
+  const win = getCurrentWindow()
+  let fromX = 0, fromY = 0
+  try {
+    const pos = await win.outerPosition()
+    const scale = await win.scaleFactor()
+    fromX = pos.x / scale
+    fromY = pos.y / scale
+  } catch {
+    return
+  }
+  await new Promise<void>((resolve) => {
+    const startT = performance.now()
+    function step(now: number) {
+      const elapsed = now - startT
+      const t = Math.min(1, elapsed / durationMs)
+      const e = t * (2 - t)  // easeOutQuad
+      const x = fromX + (targetX - fromX) * e
+      const y = fromY + (targetY - fromY) * e
+      win.setPosition(new LogicalPosition(Math.round(x), Math.round(y))).catch(() => {})
+      if (t < 1) {
+        dockAnimFrame = requestAnimationFrame(step)
+      } else {
+        dockAnimFrame = null
+        resolve()
+      }
+    }
+    dockAnimFrame = requestAnimationFrame(step)
+  })
+}
+
+function computeDockTarget(edge: DockEdge, avatarScreenX: number, avatarScreenY: number, screenW: number, screenH: number)
+  : { winX: number; winY: number; newAnchor: AvatarAnchor } {
+  // 选 dock 时的 anchor：avatar 必须在窗口靠屏幕一侧的角，否则窗口推出去
+  // 小人就跟着到屏幕外了 —— 这是 dock 算法的核心约束。
+  let newAnchor: AvatarAnchor
+  let targetCenterX = avatarScreenX
+  let targetCenterY = avatarScreenY
+  if (edge === 'right') {
+    newAnchor = avatarScreenY >= screenH / 2 ? 'rb' : 'rt'
+    targetCenterX = screenW - DOCK_SHOW_PX + AVATAR_HALF
+  } else if (edge === 'left') {
+    newAnchor = avatarScreenY >= screenH / 2 ? 'lb' : 'lt'
+    targetCenterX = DOCK_SHOW_PX - AVATAR_HALF
+  } else if (edge === 'top') {
+    newAnchor = avatarScreenX >= screenW / 2 ? 'rt' : 'lt'
+    targetCenterY = DOCK_SHOW_PX - AVATAR_HALF
+  } else {
+    newAnchor = avatarScreenX >= screenW / 2 ? 'rb' : 'lb'
+    targetCenterY = screenH - DOCK_SHOW_PX + AVATAR_HALF
+  }
+  const offset = ANCHOR_AVATAR_CENTER[newAnchor]
+  return { winX: targetCenterX - offset.x, winY: targetCenterY - offset.y, newAnchor }
+}
+
+async function currentAvatarScreenCenter(): Promise<{ x: number; y: number } | null> {
+  const win = getCurrentWindow()
+  try {
+    const pos = await win.outerPosition()
+    const scale = await win.scaleFactor()
+    const off = ANCHOR_AVATAR_CENTER[avatarAnchor.value]
+    return { x: pos.x / scale + off.x, y: pos.y / scale + off.y }
+  } catch { return null }
+}
+
+/** 拖拽结束触发：avatar 离屏幕某边 < 阈值就 dock 到那边 */
+async function maybeAutoDock() {
+  if (dockEdge.value) return
+  const c = await currentAvatarScreenCenter()
+  if (!c) return
+  const sw = window.screen.width
+  const sh = window.screen.height
+  const dTop = c.y - AVATAR_HALF
+  const dBottom = sh - (c.y + AVATAR_HALF)
+  const dLeft = c.x - AVATAR_HALF
+  const dRight = sw - (c.x + AVATAR_HALF)
+  const min = Math.min(dTop, dBottom, dLeft, dRight)
+  if (min > DOCK_AUTO_THRESHOLD) return
+  let edge: DockEdge
+  if (min === dRight) edge = 'right'
+  else if (min === dLeft) edge = 'left'
+  else if (min === dBottom) edge = 'bottom'
+  else edge = 'top'
+  await dockTo(edge)
+}
+
+async function dockTo(edge: DockEdge) {
+  const c = await currentAvatarScreenCenter()
+  if (!c) return
+  // 记下 dock 前的窗口位置，用于退出 dock 时回弹
+  const win = getCurrentWindow()
+  try {
+    const pos = await win.outerPosition()
+    const scale = await win.scaleFactor()
+    undockedWinPos = { x: pos.x / scale, y: pos.y / scale, anchor: avatarAnchor.value }
+  } catch { return }
+  const t = computeDockTarget(edge, c.x, c.y, window.screen.width, window.screen.height)
+  // 切 anchor → CSS 立刻应用（avatar DOM 跳到新角）→ 缓动到 dock 位置
+  // 中间几十毫秒小人位置略漂，但 200ms 缓动很快盖过去，体感是"嗖一下贴上去"
+  avatarAnchor.value = t.newAnchor
+  dockEdge.value = edge
+  dockedWinPos = { x: t.winX, y: t.winY, anchor: t.newAnchor }
+  await animateWindowToLogical(t.winX, t.winY, DOCK_ANIM_MS)
+}
+
+/**
+ * 临时弹出露完整 avatar。
+ * - recoil:true（默认） → 弹出后挂 5s 计时自动 retract，适合 showAlert/menu 等"一次性露脸"
+ * - recoil:false → 不启动计时，由调用者（hover）自己控制何时回收，避免 hover 中突然缩回
+ */
+async function pokeOut(opts: { recoil?: boolean } = {}) {
+  if (!dockEdge.value) return
+  const wantRecoil = opts.recoil !== false
+  if (dockUndockTimer) { clearTimeout(dockUndockTimer); dockUndockTimer = null }
+  if (!isPoked.value) {
+    isPoked.value = true
+    if (undockedWinPos) {
+      await animateWindowToLogical(undockedWinPos.x, undockedWinPos.y, DOCK_ANIM_MS)
+    }
+  }
+  if (wantRecoil) {
+    dockUndockTimer = window.setTimeout(retract, DOCK_RECOIL_MS)
+  }
+}
+
+function onAvatarHover() {
+  if (!dockEdge.value) return
+  // hover 不带 recoil — 用户主动看小人，没必要倒计时缩回去
+  pokeOut({ recoil: false })
+}
+
+function onAvatarLeave() {
+  if (!dockEdge.value || !isPoked.value) return
+  // 离开 hover 区 5s 后缩回，给用户一点缓冲（防止误触发滑过就缩回）
+  if (dockUndockTimer) clearTimeout(dockUndockTimer)
+  dockUndockTimer = window.setTimeout(retract, DOCK_RECOIL_MS)
+}
+
+async function retract() {
+  dockUndockTimer = null
+  if (!dockEdge.value || !isPoked.value) return
+  isPoked.value = false
+  if (dockedWinPos) {
+    avatarAnchor.value = dockedWinPos.anchor
+    await animateWindowToLogical(dockedWinPos.x, dockedWinPos.y, DOCK_ANIM_MS)
+  }
+}
+
+/** 用户手动取消 dock（菜单项 / 拖拽 break out） */
+async function exitDock() {
+  if (!dockEdge.value) return
+  dockEdge.value = null
+  isPoked.value = false
+  if (dockUndockTimer) { clearTimeout(dockUndockTimer); dockUndockTimer = null }
+  if (undockedWinPos) {
+    avatarAnchor.value = undockedWinPos.anchor
+    await animateWindowToLogical(undockedWinPos.x, undockedWinPos.y, DOCK_ANIM_MS)
+  }
+  dockedWinPos = null
+  undockedWinPos = null
+}
+
+async function menuToggleDock() {
+  showMenu.value = false
+  if (dockEdge.value) {
+    await exitDock()
+  } else {
+    // 手动 dock：根据小人当前位置最近的边
+    const c = await currentAvatarScreenCenter()
+    if (!c) return
+    const sw = window.screen.width
+    const sh = window.screen.height
+    const dRight = sw - c.x
+    const dLeft = c.x
+    const dBottom = sh - c.y
+    const dTop = c.y
+    const min = Math.min(dRight, dLeft, dBottom, dTop)
+    let edge: DockEdge = 'right'
+    if (min === dLeft) edge = 'left'
+    else if (min === dBottom) edge = 'bottom'
+    else if (min === dTop) edge = 'top'
+    await dockTo(edge)
+  }
+}
+
 async function onMouseDown(e: MouseEvent) {
   if (e.button !== 0) return
   isDragging = false
@@ -309,6 +624,16 @@ function onWindowMouseMove(e: MouseEvent) {
     const dy = Math.abs(e.screenY - mouseDownY)
     if (dx <= 5 && dy <= 5) return
     isDragging = true
+    // 真的开始拖拽了，dock 状态立刻让位——不缓动、不留 recoil timer，让窗口
+    // 完全跟着手指走。否则 pokeOut 的动画会和拖拽 setPosition 抢窗口位置。
+    if (dockEdge.value) {
+      dockEdge.value = null
+      isPoked.value = false
+      if (dockUndockTimer) { clearTimeout(dockUndockTimer); dockUndockTimer = null }
+      cancelDockAnim()
+      dockedWinPos = null
+      undockedWinPos = null
+    }
   }
   const dxLogical = e.screenX - mouseDownX
   const dyLogical = e.screenY - mouseDownY
@@ -340,12 +665,18 @@ function onWindowMouseUp(e: MouseEvent) {
   const wasDragging = isDragging
   isDragging = false
   if (wasDragging) {
-    // 真正发生过拖拽再算 anchor，避免点击也触发窗口位置抖动
-    recomputeAnchor()
+    // 真正发生过拖拽再算 anchor，避免点击也触发窗口位置抖动；anchor 算完再
+    // 试自动 dock —— 顺序很重要，maybeAutoDock 依赖 avatarAnchor 算 avatar 中心位置
+    recomputeAnchor().then(() => maybeAutoDock())
   }
 }
 
 function handleAvatarLeftClick() {
+  // dock 状态点击 → 退出 dock 再开面板。否则窗口大部分在屏幕外，面板也跟着藏，
+  // 用户点完看不到反馈。exitDock 把窗口缓动回 undock 位置，面板随窗口一起入场。
+  if (dockEdge.value) {
+    exitDock()
+  }
   const action = configStore.config.leftClickAction
   if (action === 'review') {
     // 复盘窗口由 useDailyReview 控制可见态（store.showReviewWindow）。
@@ -369,25 +700,27 @@ function handleAvatarLeftClick() {
 
 // --- 任务提醒联动 ---
 function showTaskAlertBubble() {
-  const { overdueCount, todayCount, soonCount, stackedDays, overdueTasks } = store
-  if (overdueCount.value > 0) {
-    const maxDays = Math.max(...overdueTasks.value.map(t => -t.daysUntilDue))
+  // 直接读 store.X：Pinia setup store 中 computed 被自动 unwrap，destructure
+  // 出来的是值而非 ref，再 .value 会得到 undefined，所有判断永远走 else 分支。
+  const u = configStore.config.userTitle
+  if (store.overdueCount > 0) {
+    const maxDays = Math.max(...store.overdueTasks.map(t => -t.daysUntilDue))
     showAlert(
-      `你有 ${overdueCount.value} 个任务已逾期，最久 ${maxDays} 天`,
+      `${u}，你有 ${store.overdueCount} 个任务已逾期，最久 ${maxDays} 天`,
       '🔥', 'warning', 0,
     )
     state.value = 'warning'
-  } else if (todayCount.value > 0) {
-    showAlert(`今天有 ${todayCount.value} 个任务到期`, '⏰', 'warning', 10000)
+  } else if (store.todayCount > 0) {
+    showAlert(`${u}，今天有 ${store.todayCount} 个任务到期`, '⏰', 'warning', 10000)
     state.value = 'warning'
-  } else if (stackedDays.value.length > 0) {
-    const s = stackedDays.value[0]
-    showAlert(`${s.date} 有 ${s.count} 个任务堆在一天，建议提前处理`, '⚠️', 'warning', 10000)
+  } else if (store.stackedDays.length > 0) {
+    const s = store.stackedDays[0]
+    showAlert(`${u}，${s.date} 有 ${s.count} 个任务堆在一天，建议提前处理`, '⚠️', 'warning', 10000)
     state.value = 'warning'
-  } else if (soonCount.value > 0) {
-    showAlert(`3 天内有 ${soonCount.value} 个任务到期`, '⏳', 'thinking', 8000)
+  } else if (store.soonCount > 0) {
+    showAlert(`${u}，3 天内有 ${store.soonCount} 个任务到期`, '⏳', 'thinking', 8000)
   } else if (store.alertsLoaded) {
-    showAlert('7 天内无紧急任务 ✓', '✅', 'happy', 5000)
+    showAlert(`${u}，7 天内无紧急任务 ✓`, '✅', 'happy', 5000)
   }
 }
 
@@ -402,7 +735,7 @@ watch(() => store.alertLevel, (level) => {
 onMounted(() => {
   configStore.load()
   store.refreshTaskBindings()
-  setTimeout(() => showAlert(`${configStore.config.assistantName} V2 已启动`, '🤖', 'idle', 3000), 500)
+  setTimeout(() => showAlert(`${configStore.config.userTitle}，${configStore.config.assistantName} 来啦`, '🤖', 'idle', 3000), 500)
   // 等数据加载后显示提醒
   watch(() => store.alertsLoaded, (loaded) => {
     if (loaded) showTaskAlertBubble()
@@ -464,6 +797,10 @@ onUnmounted(() => {
       <button class="menu-item" @click="menuShowReview"><span>📋</span><span>今日复盘</span></button>
       <button class="menu-item" @click="menuOpenChat"><span>💬</span><span>聊天（大窗）</span></button>
       <button class="menu-item" @click="menuShowSettings"><span>⚙️</span><span>设置</span></button>
+      <button class="menu-item" @click="menuToggleDock">
+        <span>{{ dockEdge ? '📤' : '📥' }}</span>
+        <span>{{ dockEdge ? '从边缘弹出' : '贴到屏幕边' }}</span>
+      </button>
       <button class="menu-item" @click="menuCheckUpdate">
         <span>✨</span><span>检查更新</span>
         <span v-if="updater.available.value" class="menu-badge badge-soon">新</span>
@@ -479,39 +816,37 @@ onUnmounted(() => {
       间隙、外边距）。如果在这一层加 pointer-target，整个 200×200 范围都不
       穿透，鼠标在空白处也被吃掉。把标记下沉到真正有像素的子元素上。
       拖拽/点击事件也只挂在 avatar 上 —— 状态条和气泡不应该触发拖窗。
+
+      hover 处理挂在 group 上而非 .avatar：dock 状态下用户从 avatar 移到 status-label
+      或 alert-bubble 都属于"仍在 hover 范围内"，挂 group 上 sibling 切换不会触发
+      mouseleave（mouseenter/leave 不冒泡但会在新进入的祖先链上触发）。
     -->
-    <div class="avatar-group">
-      <!-- 弹出气泡（位于状态条上方，绑定到右边对齐） -->
+    <div class="avatar-group" @mouseenter="onAvatarHover" @mouseleave="onAvatarLeave">
+      <!-- 弹出气泡（位于状态条上方，绑定到右边对齐）。dock 收纳态下隐藏——
+           气泡如果带到屏幕外用户也看不到；showAlert 会触发 pokeOut 弹出来再显示 -->
       <transition name="bubble">
-        <div v-if="hasAlert" class="alert-bubble pointer-target">
+        <div v-if="hasAlert && (!dockEdge || isPoked)" class="alert-bubble pointer-target">
           <span class="alert-bubble__emoji">{{ alertEmoji }}</span>
           <span class="alert-bubble__text">{{ alertText }}</span>
           <button class="alert-bubble__close" @click.stop="alertText = ''; alertEmoji = ''; state = 'idle'" aria-label="关闭">×</button>
         </div>
       </transition>
 
-      <div class="status-label pointer-target" :class="{ active: state === 'working' }">
-        <span class="status-label__emoji">{{ current.emotion }}</span>
-        <span class="status-label__text">{{ current.text }}</span>
-      </div>
+      <div v-show="false" class="status-label" />
 
-      <div class="avatar pointer-target" :class="{ active: state === 'working' }"
+      <!-- 状态条已删：状态用宠物外圈颜色 + 气泡传达，「待命中」常驻条只是视觉噪音，
+           dock 时还会被屏幕边切掉。如果以后想加回来，把这一行删了把原 div 还原即可。 -->
+
+      <div class="avatar pointer-target" :class="{ docked: dockEdge && !isPoked }"
         @mousedown="onMouseDown"
       >
-        <div class="avatar-glow" :style="{ boxShadow: `0 0 20px ${current.color}40, 0 0 40px ${current.color}20`, background: current.glowColor }" />
-        <div class="avatar-body" :class="`state-${state}`">
-          <svg viewBox="0 0 80 80" class="avatar-svg">
-            <line x1="40" y1="12" x2="40" y2="4" :stroke="current.color" stroke-width="3"/>
-            <circle cx="40" cy="3" r="3" :fill="current.color" class="blink"/>
-            <rect x="18" y="14" width="44" height="32" rx="10" fill="none" :stroke="current.color" stroke-width="3"/>
-            <rect x="28" y="22" width="10" height="8" rx="3" :fill="current.color" class="blink"/>
-            <rect x="42" y="22" width="10" height="8" rx="3" :fill="current.color" class="blink"/>
-            <rect x="32" y="38" width="16" height="3" rx="1.5" :fill="current.color" opacity="0.7"/>
-            <rect x="24" y="50" width="32" height="18" rx="5" fill="none" :stroke="current.color" stroke-width="2" opacity="0.5"/>
-            <circle cx="40" cy="58" r="3.5" :fill="current.color" :class="{ blink: state === 'working' }"/>
-          </svg>
-        </div>
-        <div class="status-dot" :style="{ background: current.color }" />
+        <PetAvatar
+          :pet-id="configStore.config.petId"
+          :color="current.color"
+          :glow-color="current.glowColor"
+          :active="state === 'working'"
+          :flashing="stateFlashing"
+        />
       </div>
     </div>
 
@@ -628,7 +963,7 @@ onUnmounted(() => {
   align-items: flex-start;
   gap: 8px;
   min-width: 160px;
-  max-width: 260px;
+  max-width: 320px;
   padding: 8px 28px 8px 12px;     /* 右侧留出关闭按钮空间 */
   background: linear-gradient(135deg, rgba(20, 30, 56, 0.96), rgba(15, 23, 42, 0.96));
   border: 1px solid rgba(100, 200, 255, 0.18);
@@ -700,21 +1035,14 @@ onUnmounted(() => {
   transform: translateY(4px);
 }
 
-.avatar { position: relative; width: 72px; height: 72px; cursor: pointer; }
-.avatar-glow { position: absolute; inset: 0; border-radius: 50%; }
-.avatar-body {
-  position: absolute; inset: 3px; border-radius: 50%;
-  background: linear-gradient(135deg, rgba(30, 41, 59, 0.98), rgba(15, 23, 42, 0.98));
-  border: 1.5px solid rgba(255, 255, 255, 0.1);
-  display: flex; align-items: center; justify-content: center;
+.avatar {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  cursor: pointer;
 }
-.avatar.active .avatar-body { border-color: rgba(16, 185, 129, 0.3); }
-.avatar-svg { width: 48px; height: 48px; }
-.status-dot {
-  position: absolute; bottom: 3px; right: 3px;
-  width: 10px; height: 10px; border-radius: 50%;
-  border: 2px solid rgba(15, 23, 42, 1);
-}
+/* 内容（包括发光、Lottie 动画、状态点、hover 放大、flashing 脉冲）全在 PetAvatar.vue 里。
+   .avatar 只做 72×72 事件钩子，事件挂在它上面（mousedown）。 */
 
 .menu-btn {
   position: absolute; bottom: 86px; right: 16px;
@@ -758,44 +1086,4 @@ onUnmounted(() => {
 .badge-danger { background: rgba(239, 68, 68, 0.8); color: white; }
 .badge-warn { background: rgba(245, 158, 11, 0.8); color: white; }
 .badge-soon { background: rgba(59, 130, 246, 0.8); color: white; }
-
-@keyframes breathe {
-  0%, 100% { transform: scale(1); opacity: 0.6; }
-  50% { transform: scale(1.05); opacity: 1; }
-}
-@keyframes think {
-  0%, 100% { transform: translateY(0); }
-  25% { transform: translateY(-2px); }
-  75% { transform: translateY(2px); }
-}
-@keyframes work {
-  0% { transform: rotate(0deg); }
-  25% { transform: rotate(3deg); }
-  75% { transform: rotate(-3deg); }
-  100% { transform: rotate(0deg); }
-}
-@keyframes alert {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.1); }
-}
-@keyframes happy {
-  0%, 100% { transform: translateY(0) scale(1); }
-  50% { transform: translateY(-4px) scale(1.08); }
-}
-@keyframes glow-pulse {
-  0%, 100% { opacity: 0.3; }
-  50% { opacity: 0.8; }
-}
-
-.blink { animation: pulse 2s ease-in-out infinite; }
-
-.avatar-body.state-idle { animation: breathe 3s ease-in-out infinite; }
-.avatar-body.state-thinking { animation: think 1.5s ease-in-out infinite; }
-.avatar-body.state-working { animation: work 0.8s ease-in-out infinite; }
-.avatar-body.state-warning { animation: alert 0.6s ease-in-out infinite; }
-.avatar-body.state-happy { animation: happy 1.2s ease-in-out infinite; }
-
-.avatar-glow {
-  animation: glow-pulse 2s ease-in-out infinite;
-}
 </style>

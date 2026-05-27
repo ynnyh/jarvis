@@ -181,6 +181,7 @@ async function sendMessage() {
       input: {
         messages: llmMessages,
         assistantName: configStore.config.assistantName,
+        userTitle: configStore.config.userTitle,
       },
     })
 

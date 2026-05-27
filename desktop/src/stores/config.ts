@@ -18,6 +18,8 @@ export type LeftClickAction = 'tasks' | 'review'
 export interface JarvisConfig {
   /** 助手显示名（用户可改）。默认 "Jarvis"；只影响 UI 文案、问候、写工时审计文本 */
   assistantName: string
+  /** 助手对用户的称呼（用户可改）。默认 "主人"；用在问候、启动提示等亲昵语境 */
+  userTitle: string
   workSchedule: {
     workDays: number[]      // 0=Sun, 1=Mon ... 6=Sat
     periods: WorkPeriod[]
@@ -56,10 +58,13 @@ export interface JarvisConfig {
   commitsRange: CommitsRange
   /** 左键单击小人弹什么。默认任务列表 */
   leftClickAction: LeftClickAction
+  /** 选用的宠物形象 id（见 petManifest.ts）；默认 'robo'。形象不在列表时回退到默认 */
+  petId: string
 }
 
 const defaultConfig = (): JarvisConfig => ({
   assistantName: 'Jarvis',
+  userTitle: '主人',
   workSchedule: {
     workDays: [1, 2, 3, 4, 5],
     periods: [
@@ -75,7 +80,7 @@ const defaultConfig = (): JarvisConfig => ({
     eveningSummary: true,
     eveningSummaryMinutesBefore: 30,
     workdayNudges: true,
-    nudgeIntervalMinutes: 90,
+    nudgeIntervalMinutes: 60,
   },
   override: {
     todayMode: 'normal',
@@ -92,6 +97,7 @@ const defaultConfig = (): JarvisConfig => ({
   repoRoots: [],
   commitsRange: 'thisWeek',
   leftClickAction: 'tasks',
+  petId: 'robo',
 })
 
 function todayStr(): string {
@@ -115,6 +121,7 @@ export const useConfigStore = defineStore('config', () => {
         ...defaults,
         ...remote,
         assistantName: (remote.assistantName ?? '').trim() || defaults.assistantName,
+        userTitle: (remote.userTitle ?? '').trim() || defaults.userTitle,
         // notifications 是嵌套对象，浅合并会丢掉新字段 —— 显式合并
         notifications: { ...defaults.notifications, ...(remote.notifications ?? {}) },
         // zentao 同理，且要兜默认值：旧 settings.json 可能 baseUrl 为空串 ——
@@ -132,6 +139,7 @@ export const useConfigStore = defineStore('config', () => {
         },
         commitsRange: remote.commitsRange ?? defaults.commitsRange,
         leftClickAction: remote.leftClickAction === 'review' ? 'review' : defaults.leftClickAction,
+        petId: (remote.petId ?? '').trim() || defaults.petId,
       }
       // 临时覆盖只在当日有效
       if (merged.override.todayModeSetOn !== todayStr()) {

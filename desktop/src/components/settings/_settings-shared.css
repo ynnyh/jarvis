@@ -35,10 +35,11 @@
   padding: 3px 0;
 }
 .settings-field-label {
-  width: 48px;
+  width: 80px;
   font-size: 11px;
   color: rgba(255, 255, 255, 0.55);
   flex-shrink: 0;
+  white-space: nowrap;
 }
 .settings-input {
   flex: 1;
