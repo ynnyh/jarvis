@@ -34,6 +34,51 @@ pub struct ZentaoTestResult {
     pub message: String,
 }
 
+// ===== 任务工时分类 =====
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TaskCategory {
+    Ops,     // 运维：需求对接、数据核对、问题反馈
+    Daily,   // 日常事务：会议、培训、站会等
+    Feature, // 新增功能：其余
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ZenTaoTaskBrief {
+    pub id: String,
+    pub name: String,
+    pub status: String,
+    pub pri: u8,
+    pub deadline: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassifiedTasks {
+    pub ops: Vec<ZenTaoTaskBrief>,
+    pub daily: Vec<ZenTaoTaskBrief>,
+    pub feature: Vec<ZenTaoTaskBrief>,
+}
+
+fn classify_task(name: &str) -> TaskCategory {
+    let n = name.to_lowercase();
+    // 运维关键词
+    for kw in &["需求对接", "数据核对", "问题反馈", "工单", "运维", "线上问题", "故障", "排查"] {
+        if n.contains(kw) {
+            return TaskCategory::Ops;
+        }
+    }
+    // 日常事务关键词
+    for kw in &["会议", "培训", "周报", "日报", "站会", "述职", "评审", "review"] {
+        if n.contains(kw) {
+            return TaskCategory::Daily;
+        }
+    }
+    TaskCategory::Feature
+}
+
 pub struct ZentaoClient {
     base_url: String,
     account: String,
@@ -340,6 +385,45 @@ impl ZentaoClient {
                 s != "closed" && s != "cancel"
             })
             .collect())
+    }
+
+    /// 拉任务并按工时分类：运维 / 日常事务 / 新增功能。
+    /// 分类依据：任务名关键词匹配。运维 = 需求对接|数据核对|问题反馈；
+    /// 日常事务 = 会议|培训|周报|日报|站会；其余归入新增功能。
+    pub async fn get_classified_tasks(&self) -> Result<ClassifiedTasks, String> {
+        let tasks = self.get_my_tasks().await?;
+        let mut ops = Vec::new();
+        let mut daily = Vec::new();
+        let mut feature = Vec::new();
+
+        for t in &tasks {
+            let id = t.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let name = t.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let status = t.get("status").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let pri = t.get("pri").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
+            let deadline = t.get("deadline").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+            let item = ZenTaoTaskBrief {
+                id: id.clone(),
+                name: name.clone(),
+                status,
+                pri,
+                deadline,
+            };
+
+            let category = classify_task(&name);
+            match category {
+                TaskCategory::Ops => ops.push(item),
+                TaskCategory::Daily => daily.push(item),
+                TaskCategory::Feature => feature.push(item),
+            }
+        }
+
+        Ok(ClassifiedTasks {
+            ops,
+            daily,
+            feature,
+        })
     }
 
     /// 单任务详情（OpenAPI v1）。404 返回 Ok(None)。

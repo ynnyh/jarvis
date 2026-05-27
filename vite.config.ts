@@ -14,7 +14,9 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, 'desktop/index.html'),
         chat: resolve(__dirname, 'desktop/chat.html'),
+        settings: resolve(__dirname, 'desktop/settings.html'),
         writeHours: resolve(__dirname, 'desktop/writeHours.html'),
+        manualHours: resolve(__dirname, 'desktop/manualHours.html'),
       },
     },
   },

@@ -41,6 +41,7 @@ pub async fn dispatch(name: &str, input: Value) -> Result<Value, String> {
         "get_task_detail" => get_task_detail(input).await,
         "get_task_commits" => get_task_commits(input).await,
         "get_daily_review" => get_daily_review(input).await,
+        "get_classified_tasks" => get_classified_tasks(input).await,
         "analyze_risk" => analyze_risk(input).await,
         "log-task-effort" => log_task_effort(input).await,
         "ask-llm" => ask_llm(input).await,
@@ -61,6 +62,16 @@ pub async fn get_tasks(_input: Value) -> Result<Value, String> {
     let client = ZentaoClient::from_settings()?;
     let tasks = client.get_my_tasks().await?;
     Ok(Value::Array(tasks))
+}
+
+// ============================================================================
+// get_classified_tasks：拉任务并按工时分类（运维 / 日常事务 / 新增功能）
+// ============================================================================
+
+pub async fn get_classified_tasks(_input: Value) -> Result<Value, String> {
+    let client = ZentaoClient::from_settings()?;
+    let classified = client.get_classified_tasks().await?;
+    serde_json::to_value(&classified).map_err(|e| format!("序列化分类任务失败: {}", e))
 }
 
 // ============================================================================

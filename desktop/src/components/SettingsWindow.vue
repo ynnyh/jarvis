@@ -1,45 +1,25 @@
 <script setup lang="ts">
-// 设置面板外壳：tab 导航 + 11 个 section 子组件挂载。
-//
-// 拆分背景：之前一个 .vue 800 多行什么都有，难维护。每个 section 独立成
-// components/settings/*.vue，自带必要的状态和样式；这里只负责布局 + tab 切换。
-// 共享样式集中在 components/settings/_settings-shared.css。
-//
-// Tab 设计：3 类
-//   - 接入：禅道 / LLM / 代码目录 / 忽略业务线（数据源、外部依赖，初次配完很少改）
-//   - 作息：工作日 / 时段 / 静默 / 仪式 / 小提示 / 临时覆盖（行为规则）
-//   - 外观：助手名字
-// activeTab 用 ref 保存在组件内，关掉面板下次开仍回默认（接入）。要持久化的话
-// 移到 store；当前用户没要求，先不上。
-
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
+import { invoke } from '@tauri-apps/api/core'
 import { useConfigStore } from '../stores/config'
-
-import AssistantNameSection from './settings/AssistantNameSection.vue'
-import LeftClickActionSection from './settings/LeftClickActionSection.vue'
-import PetSection from './settings/PetSection.vue'
-import ZentaoSection from './settings/ZentaoSection.vue'
-import LlmSection from './settings/LlmSection.vue'
-import RepoRootsSection from './settings/RepoRootsSection.vue'
-import ExcludedLinesSection from './settings/ExcludedLinesSection.vue'
-import WorkDaysSection from './settings/WorkDaysSection.vue'
-import WorkPeriodsSection from './settings/WorkPeriodsSection.vue'
-import QuietRulesSection from './settings/QuietRulesSection.vue'
-import RitualsSection from './settings/RitualsSection.vue'
-import WorkdayNudgesSection from './settings/WorkdayNudgesSection.vue'
-import TodayOverrideSection from './settings/TodayOverrideSection.vue'
+import { SETTINGS_MENU, type SettingsMenuItem, type SettingsPageKey } from '../settings-menu'
 
 import './settings/_settings-shared.css'
 
 const store = useConfigStore()
 
-type TabKey = 'integrations' | 'rhythm' | 'general'
-const TABS: Array<{ key: TabKey; label: string; icon: string }> = [
-  { key: 'integrations', label: '接入', icon: '🔌' },
-  { key: 'rhythm', label: '作息', icon: '⏱️' },
-  { key: 'general', label: '外观', icon: '🎨' },
-]
-const activeTab = ref<TabKey>('integrations')
+const groupedMenu = computed(() => {
+  const groups: Array<{ name: string; items: SettingsMenuItem[] }> = []
+  for (const item of SETTINGS_MENU) {
+    let group = groups.find(g => g.name === item.group)
+    if (!group) {
+      group = { name: item.group, items: [] }
+      groups.push(group)
+    }
+    group.items.push(item)
+  }
+  return groups
+})
 
 const phaseLabel = computed(() => {
   switch (store.phase) {
@@ -53,6 +33,35 @@ const phaseLabel = computed(() => {
     default: return ''
   }
 })
+
+function pageStatus(key: SettingsPageKey) {
+  if (key === 'zentao') return store.config.zentao.account ? '已配置' : '未配置'
+  if (key === 'ai') return store.config.llm.apiKey ? store.config.llm.model : '未配置'
+  if (key === 'channels') {
+    const names = []
+    if (store.config.channels.telegram.enabled) names.push('Telegram')
+    if (store.config.channels.qqbot.enabled) names.push('QQ')
+    return names.join(' / ') || '未启用'
+  }
+  if (key === 'code') return `${store.config.repoRoots.length} 个目录`
+  if (key === 'schedule') return `${store.config.workSchedule.workDays.length} 个工作日`
+  if (key === 'nudges') return store.isQuietHours ? '静默中' : '启用中'
+  return store.config.assistantName
+}
+
+function closeSettingsPanel() {
+  store.showSettingsWindow = false
+}
+
+function openSettingsDetail(page: SettingsPageKey) {
+  store.showSettingsWindow = false
+  invoke('settings_open', { page }).catch(e => console.error('settings_open failed:', e))
+}
+
+function openChatWindow() {
+  closeSettingsPanel()
+  invoke('chat_open').catch(e => console.error('chat_open failed:', e))
+}
 </script>
 
 <template>
@@ -60,53 +69,58 @@ const phaseLabel = computed(() => {
     <div v-if="store.showSettingsWindow" class="settings-panel pointer-target">
       <header class="panel-header">
         <div class="panel-title">
-          <span class="title-icon">⚙️</span>
           <span class="title-text">设置</span>
+          <span class="title-sub">菜单</span>
         </div>
-        <button class="icon-btn" title="关闭" @click="store.showSettingsWindow = false">×</button>
+        <button class="icon-btn" title="关闭" @click="closeSettingsPanel">×</button>
       </header>
 
-      <!-- 当前状态条 -->
       <div class="phase-bar" :class="`phase-${store.phase}`">
         <span class="phase-dot" />
         <span>当前：{{ phaseLabel }}</span>
         <span v-if="store.isQuietHours" class="phase-meta">静默中</span>
       </div>
 
-      <!-- Tab 导航 -->
-      <div class="tab-bar">
-        <button
-          v-for="t in TABS"
-          :key="t.key"
-          class="tab-btn"
-          :class="{ active: activeTab === t.key }"
-          @click="activeTab = t.key"
-        >
-          <span class="tab-icon">{{ t.icon }}</span>
-          <span class="tab-label">{{ t.label }}</span>
-        </button>
-      </div>
+      <div class="menu-body">
+        <section class="menu-group">
+          <h3>常用</h3>
+          <div
+            role="button"
+            tabindex="0"
+            class="menu-item menu-item-primary"
+            @click="openChatWindow"
+            @keydown.enter="openChatWindow"
+            @keydown.space.prevent="openChatWindow"
+          >
+            <span class="menu-main">
+              <strong>聊天大窗</strong>
+              <small>打开完整对话窗口</small>
+            </span>
+            <span class="menu-status">打开</span>
+            <span class="menu-arrow">›</span>
+          </div>
+        </section>
 
-      <div class="panel-body">
-        <template v-if="activeTab === 'integrations'">
-          <ZentaoSection />
-          <LlmSection />
-          <RepoRootsSection />
-          <ExcludedLinesSection />
-        </template>
-        <template v-else-if="activeTab === 'rhythm'">
-          <WorkDaysSection />
-          <WorkPeriodsSection />
-          <QuietRulesSection />
-          <RitualsSection />
-          <WorkdayNudgesSection />
-          <TodayOverrideSection />
-        </template>
-        <template v-else>
-          <AssistantNameSection />
-          <PetSection />
-          <LeftClickActionSection />
-        </template>
+        <section v-for="group in groupedMenu" :key="group.name" class="menu-group">
+          <h3>{{ group.name }}</h3>
+          <div
+            v-for="item in group.items"
+            :key="item.key"
+            role="button"
+            tabindex="0"
+            class="menu-item"
+            @click="openSettingsDetail(item.key)"
+            @keydown.enter="openSettingsDetail(item.key)"
+            @keydown.space.prevent="openSettingsDetail(item.key)"
+          >
+            <span class="menu-main">
+              <strong>{{ item.title }}</strong>
+              <small>{{ item.desc }}</small>
+            </span>
+            <span class="menu-status">{{ pageStatus(item.key) }}</span>
+            <span class="menu-arrow">›</span>
+          </div>
+        </section>
       </div>
     </div>
   </Transition>
@@ -118,10 +132,10 @@ const phaseLabel = computed(() => {
   inset: var(--panel-top, 8px) var(--panel-right, 8px) var(--panel-bottom, 90px) var(--panel-left, 8px);
   display: flex;
   flex-direction: column;
-  background: linear-gradient(135deg, rgba(20, 30, 56, 0.97), rgba(15, 23, 42, 0.97));
-  border: 1px solid rgba(100, 200, 255, 0.16);
-  border-radius: 14px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  background: rgba(17, 24, 39, 0.98);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.48);
   overflow: hidden;
   z-index: 60;
   color: rgba(255, 255, 255, 0.92);
@@ -131,91 +145,160 @@ const phaseLabel = computed(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 10px;
-  background: rgba(0, 0, 0, 0.2);
+  padding: 9px 11px;
+  background: rgba(0, 0, 0, 0.18);
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 .panel-title {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 13px; font-weight: 600;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
 }
-.title-icon { font-size: 14px; }
-.icon-btn {
-  width: 22px; height: 22px;
-  display: inline-flex; align-items: center; justify-content: center;
-  font-size: 16px; line-height: 1;
-  color: rgba(255, 255, 255, 0.55);
-  background: transparent; border: none; border-radius: 6px;
-  cursor: pointer;
+.title-text {
+  font-size: 13px;
+  font-weight: 650;
 }
-.icon-btn:hover { color: rgba(255, 255, 255, 0.95); background: rgba(255, 255, 255, 0.08); }
-
-.phase-bar {
-  display: flex; align-items: center; gap: 6px;
-  padding: 4px 10px;
+.title-sub {
   font-size: 10px;
-  background: rgba(0, 0, 0, 0.15);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.65);
+  color: rgba(255, 255, 255, 0.42);
 }
-.phase-dot { width: 6px; height: 6px; border-radius: 50%; background: rgba(16, 185, 129, 0.9); }
-.phase-working .phase-dot { background: rgba(16, 185, 129, 0.95); }
-.phase-lunch .phase-dot { background: rgba(167, 139, 250, 0.95); }
-.phase-after-work .phase-dot,
-.phase-before-work .phase-dot { background: rgba(148, 163, 184, 0.7); }
-.phase-weekend .phase-dot,
-.phase-dayoff .phase-dot { background: rgba(245, 158, 11, 0.9); }
-.phase-meta { margin-left: auto; color: rgba(245, 158, 11, 0.85); }
-
-/* Tab 导航 */
-.tab-bar {
-  display: flex;
-  gap: 2px;
-  padding: 6px 6px 0;
-  background: rgba(0, 0, 0, 0.1);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-}
-.tab-btn {
-  flex: 1;
-  display: flex;
+.icon-btn {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  padding: 7px 8px;
-  font-size: 11.5px;
+  font-size: 18px;
+  line-height: 1;
   color: rgba(255, 255, 255, 0.55);
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-bottom: none;
-  border-radius: 6px 6px 0 0;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
   cursor: pointer;
-  transition: all 0.15s;
 }
-.tab-btn:hover {
-  color: rgba(255, 255, 255, 0.85);
-  background: rgba(255, 255, 255, 0.06);
+.icon-btn:hover {
+  color: rgba(255, 255, 255, 0.95);
+  background: rgba(255, 255, 255, 0.08);
 }
-.tab-btn.active {
-  color: rgba(0, 212, 255, 0.95);
-  background: rgba(0, 212, 255, 0.1);
-  border-color: rgba(0, 212, 255, 0.3);
-  border-bottom: 1px solid transparent;
-}
-.tab-icon { font-size: 13px; }
-.tab-label { font-weight: 500; }
 
-.panel-body {
+.phase-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  font-size: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.64);
+}
+.phase-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(16, 185, 129, 0.95);
+}
+.phase-lunch .phase-dot { background: rgba(14, 165, 233, 0.95); }
+.phase-after-work .phase-dot,
+.phase-before-work .phase-dot { background: rgba(148, 163, 184, 0.75); }
+.phase-weekend .phase-dot,
+.phase-dayoff .phase-dot { background: rgba(245, 158, 11, 0.95); }
+.phase-meta {
+  margin-left: auto;
+  color: rgba(245, 158, 11, 0.9);
+}
+
+.menu-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 10px;
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
+.menu-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.menu-group h3 {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 700;
+  color: rgba(14, 165, 233, 0.88);
+}
+.menu-item {
+  display: grid;
+  box-sizing: border-box;
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr) minmax(44px, auto) 12px;
+  align-items: center;
+  gap: 7px;
+  min-height: 50px;
+  padding: 8px 10px;
+  color: rgba(255, 255, 255, 0.88);
+  background-color: rgba(30, 41, 59, 0.86);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  user-select: none;
+  outline: none;
+}
+.menu-item:hover,
+.menu-item:focus-visible {
+  background-color: rgba(14, 165, 233, 0.14);
+  border-color: rgba(14, 165, 233, 0.28);
+}
+.menu-item-primary {
+  background-color: rgba(14, 165, 233, 0.16);
+  border-color: rgba(14, 165, 233, 0.34);
+}
+.menu-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.menu-main strong {
+  display: block;
+  font-size: 13px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.menu-main small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.42);
+}
+.menu-status {
+  justify-self: end;
+  max-width: 82px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  line-height: 1;
+  padding: 4px 0;
+  color: rgba(134, 239, 172, 0.95);
+}
+.menu-arrow {
+  justify-self: end;
+  font-size: 20px;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.28);
+}
 
 .panel-enter-active,
 .panel-leave-active {
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  transition: opacity 0.18s ease, transform 0.18s ease;
 }
 .panel-enter-from,
 .panel-leave-to {

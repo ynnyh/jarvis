@@ -3,6 +3,19 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow, LogicalPosition } from '@tauri-apps/api/window'
+
+/** 获取当前窗口所在屏幕的逻辑像素全局边界（支持多屏幕） */
+async function getMonitorBounds(): Promise<{ x: number; y: number; w: number; h: number }> {
+  const win = getCurrentWindow()
+  const mon = await win.currentMonitor()
+  if (!mon) return { x: 0, y: 0, w: window.screen.width, h: window.screen.height }
+  return {
+    x: mon.position.x / mon.scaleFactor,
+    y: mon.position.y / mon.scaleFactor,
+    w: mon.size.width / mon.scaleFactor,
+    h: mon.size.height / mon.scaleFactor,
+  }
+}
 import { useAppStore } from './stores/app'
 import { useConfigStore } from './stores/config'
 import { useTaskAlerts } from './composables/useTaskAlerts'
@@ -189,8 +202,7 @@ async function ensureBubbleVisible() {
     winX = pos.x / scale
     winY = pos.y / scale
   } catch { return }
-  const sw = window.screen.width
-  const sh = window.screen.height
+  const mon = await getMonitorBounds()
   const margin = 8
   let minLeft = Infinity, minTop = Infinity, maxRight = -Infinity, maxBottom = -Infinity
   for (const el of targets) {
@@ -203,10 +215,10 @@ async function ensureBubbleVisible() {
   }
   if (!isFinite(minLeft)) return
   let dx = 0, dy = 0
-  if (minLeft < margin) dx = margin - minLeft
-  else if (maxRight > sw - margin) dx = sw - margin - maxRight
-  if (minTop < margin) dy = margin - minTop
-  else if (maxBottom > sh - margin) dy = sh - margin - maxBottom
+  if (minLeft < mon.x + margin) dx = mon.x + margin - minLeft
+  else if (maxRight > mon.x + mon.w - margin) dx = mon.x + mon.w - margin - maxRight
+  if (minTop < mon.y + margin) dy = mon.y + margin - minTop
+  else if (maxBottom > mon.y + mon.h - margin) dy = mon.y + mon.h - margin - maxBottom
   if (dx === 0 && dy === 0) return
   // 重要：矫正完得同步更新 undockedWinPos，否则下次 retract/exitDock 又跑回原位
   const newX = Math.round(winX + dx)
@@ -291,6 +303,12 @@ function menuOpenChat() {
   invoke('chat_open').catch(e => console.error('chat_open 失败:', e))
 }
 
+function menuOpenManualHours() {
+  closeAllPanels()
+  showMenu.value = false
+  invoke('manual_hours_open').catch(e => console.error('manual_hours_open 失败:', e))
+}
+
 function menuCheckUpdate() {
   showMenu.value = false
   openUpdateWindow()
@@ -356,13 +374,12 @@ async function recomputeAnchor() {
   const oldOffset = ANCHOR_AVATAR_CENTER[avatarAnchor.value]
   const avatarScreenX = winLogicalX + oldOffset.x
   const avatarScreenY = winLogicalY + oldOffset.y
-  // 用 screen.width/height 判断小人在屏幕的象限。多显示器只看主屏尺寸是个
-  // 简化 —— 用户拖到副屏可能误判一次，但代价只是面板可能朝错方向，下次拖动
-  // 会再修正，不至于卡死。
-  const sw = window.screen.width
-  const sh = window.screen.height
-  const horiz = avatarScreenX >= sw / 2 ? 'r' : 'l'
-  const vert = avatarScreenY >= sh / 2 ? 'b' : 't'
+  // 用当前屏幕的全局边界判断象限，支持多屏幕
+  const mon = await getMonitorBounds()
+  const relX = avatarScreenX - mon.x
+  const relY = avatarScreenY - mon.y
+  const horiz = relX >= mon.w / 2 ? 'r' : 'l'
+  const vert = relY >= mon.h / 2 ? 'b' : 't'
   const newAnchor = (horiz + vert) as AvatarAnchor
   if (newAnchor === avatarAnchor.value) return
 
@@ -438,25 +455,31 @@ async function animateWindowToLogical(targetX: number, targetY: number, duration
   })
 }
 
-function computeDockTarget(edge: DockEdge, avatarScreenX: number, avatarScreenY: number, screenW: number, screenH: number)
-  : { winX: number; winY: number; newAnchor: AvatarAnchor } {
+function computeDockTarget(
+  edge: DockEdge,
+  avatarScreenX: number, avatarScreenY: number,
+  mon: { x: number; y: number; w: number; h: number },
+): { winX: number; winY: number; newAnchor: AvatarAnchor } {
   // 选 dock 时的 anchor：avatar 必须在窗口靠屏幕一侧的角，否则窗口推出去
   // 小人就跟着到屏幕外了 —— 这是 dock 算法的核心约束。
+  // 用当前屏幕的全局边界计算，支持多屏幕。
   let newAnchor: AvatarAnchor
   let targetCenterX = avatarScreenX
   let targetCenterY = avatarScreenY
+  const relX = avatarScreenX - mon.x
+  const relY = avatarScreenY - mon.y
   if (edge === 'right') {
-    newAnchor = avatarScreenY >= screenH / 2 ? 'rb' : 'rt'
-    targetCenterX = screenW - DOCK_SHOW_PX + AVATAR_HALF
+    newAnchor = relY >= mon.h / 2 ? 'rb' : 'rt'
+    targetCenterX = mon.x + mon.w - DOCK_SHOW_PX + AVATAR_HALF
   } else if (edge === 'left') {
-    newAnchor = avatarScreenY >= screenH / 2 ? 'lb' : 'lt'
-    targetCenterX = DOCK_SHOW_PX - AVATAR_HALF
+    newAnchor = relY >= mon.h / 2 ? 'lb' : 'lt'
+    targetCenterX = mon.x + DOCK_SHOW_PX - AVATAR_HALF
   } else if (edge === 'top') {
-    newAnchor = avatarScreenX >= screenW / 2 ? 'rt' : 'lt'
-    targetCenterY = DOCK_SHOW_PX - AVATAR_HALF
+    newAnchor = relX >= mon.w / 2 ? 'rt' : 'lt'
+    targetCenterY = mon.y + DOCK_SHOW_PX - AVATAR_HALF
   } else {
-    newAnchor = avatarScreenX >= screenW / 2 ? 'rb' : 'lb'
-    targetCenterY = screenH - DOCK_SHOW_PX + AVATAR_HALF
+    newAnchor = relX >= mon.w / 2 ? 'rb' : 'lb'
+    targetCenterY = mon.y + mon.h - DOCK_SHOW_PX + AVATAR_HALF
   }
   const offset = ANCHOR_AVATAR_CENTER[newAnchor]
   return { winX: targetCenterX - offset.x, winY: targetCenterY - offset.y, newAnchor }
@@ -477,12 +500,11 @@ async function maybeAutoDock() {
   if (dockEdge.value) return
   const c = await currentAvatarScreenCenter()
   if (!c) return
-  const sw = window.screen.width
-  const sh = window.screen.height
-  const dTop = c.y - AVATAR_HALF
-  const dBottom = sh - (c.y + AVATAR_HALF)
-  const dLeft = c.x - AVATAR_HALF
-  const dRight = sw - (c.x + AVATAR_HALF)
+  const mon = await getMonitorBounds()
+  const dTop = c.y - mon.y - AVATAR_HALF
+  const dBottom = mon.y + mon.h - (c.y + AVATAR_HALF)
+  const dLeft = c.x - mon.x - AVATAR_HALF
+  const dRight = mon.x + mon.w - (c.x + AVATAR_HALF)
   const min = Math.min(dTop, dBottom, dLeft, dRight)
   if (min > DOCK_AUTO_THRESHOLD) return
   let edge: DockEdge
@@ -503,7 +525,8 @@ async function dockTo(edge: DockEdge) {
     const scale = await win.scaleFactor()
     undockedWinPos = { x: pos.x / scale, y: pos.y / scale, anchor: avatarAnchor.value }
   } catch { return }
-  const t = computeDockTarget(edge, c.x, c.y, window.screen.width, window.screen.height)
+  const mon = await getMonitorBounds()
+  const t = computeDockTarget(edge, c.x, c.y, mon)
   // 切 anchor → CSS 立刻应用（avatar DOM 跳到新角）→ 缓动到 dock 位置
   // 中间几十毫秒小人位置略漂，但 200ms 缓动很快盖过去，体感是"嗖一下贴上去"
   avatarAnchor.value = t.newAnchor
@@ -577,12 +600,11 @@ async function menuToggleDock() {
     // 手动 dock：根据小人当前位置最近的边
     const c = await currentAvatarScreenCenter()
     if (!c) return
-    const sw = window.screen.width
-    const sh = window.screen.height
-    const dRight = sw - c.x
-    const dLeft = c.x
-    const dBottom = sh - c.y
-    const dTop = c.y
+    const mon = await getMonitorBounds()
+    const dRight = mon.x + mon.w - c.x
+    const dLeft = c.x - mon.x
+    const dBottom = mon.y + mon.h - c.y
+    const dTop = c.y - mon.y
     const min = Math.min(dRight, dLeft, dBottom, dTop)
     let edge: DockEdge = 'right'
     if (min === dLeft) edge = 'left'
@@ -746,6 +768,7 @@ onMounted(() => {
 // fetch_task_alerts 每次轮询都会做 snapshot diff，新出现的任务通过事件发上来；
 // 首次启动 snapshot 不存在时返回空 diff，老用户升级时不会被存量任务轰炸。
 let unlistenNewTasks: UnlistenFn | null = null
+let unlistenSettingsClosed: UnlistenFn | null = null
 onMounted(async () => {
   unlistenNewTasks = await listen<Array<{ id: string; title: string; priority: string; deadline: string }>>(
     'new-tasks-detected',
@@ -760,6 +783,10 @@ onMounted(async () => {
       }
     }
   )
+  unlistenSettingsClosed = await listen('settings-detail-closed', () => {
+    closeAllPanels()
+    configStore.showSettingsWindow = true
+  })
 })
 
 // 首启引导：配置不完整（无禅道地址 OR 没添加代码文件夹）时展示
@@ -781,6 +808,7 @@ function onWizardDone() {
 onUnmounted(() => {
   if (alertTimer) clearTimeout(alertTimer)
   unlistenNewTasks?.()
+  unlistenSettingsClosed?.()
 })
 </script>
 
@@ -795,6 +823,7 @@ onUnmounted(() => {
       </button>
       <button class="menu-item" @click="menuShowRisk"><span>⚠️</span><span>风险分析</span></button>
       <button class="menu-item" @click="menuShowReview"><span>📋</span><span>今日复盘</span></button>
+      <button class="menu-item" @click="menuOpenManualHours"><span>✍️</span><span>写工时</span></button>
       <button class="menu-item" @click="menuOpenChat"><span>💬</span><span>聊天（大窗）</span></button>
       <button class="menu-item" @click="menuShowSettings"><span>⚙️</span><span>设置</span></button>
       <button class="menu-item" @click="menuToggleDock">
@@ -856,7 +885,7 @@ onUnmounted(() => {
     <RiskWindow />
     <!-- 今日复盘窗口 -->
     <ReviewWindow />
-    <!-- 设置面板 -->
+    <!-- 设置小屏菜单 -->
     <SettingsWindow />
     <!-- 更新窗口 -->
     <UpdateWindow :updater="updater" />
@@ -1045,7 +1074,7 @@ onUnmounted(() => {
    .avatar 只做 72×72 事件钩子，事件挂在它上面（mousedown）。 */
 
 .menu-btn {
-  position: absolute; bottom: 86px; right: 16px;
+  position: fixed; bottom: 86px; right: 16px;
   width: 22px; height: 22px;
   display: flex; align-items: center; justify-content: center;
   font-size: 14px; color: rgba(255, 255, 255, 0.3);
@@ -1053,15 +1082,23 @@ onUnmounted(() => {
   cursor: pointer; line-height: 1;
 }
 .menu-btn:hover { color: rgba(255, 255, 255, 0.7); background: rgba(255, 255, 255, 0.1); }
+/* menu-btn 跟随 anchor 翻转：用 CSS 变量跟 avatar-group 同步 */
+.jarvis-container[data-anchor="rt"] .menu-btn { top: 86px; bottom: auto; }
+.jarvis-container[data-anchor="lb"] .menu-btn { left: 16px; right: auto; }
+.jarvis-container[data-anchor="lt"] .menu-btn { top: 86px; left: 16px; bottom: auto; right: auto; }
 
 .menu {
-  position: absolute; bottom: 16px; right: 90px;
+  position: fixed; bottom: 16px; right: 90px;
   background: rgba(15, 23, 42, 0.97); backdrop-filter: blur(16px);
   border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.06);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
   padding: 4px 0; z-index: 100; min-width: 130px;
   overflow: hidden;
 }
+/* 菜单跟随 anchor 翻转：始终在 menu-btn 左侧 */
+.jarvis-container[data-anchor="rt"] .menu { top: 16px; bottom: auto; }
+.jarvis-container[data-anchor="lb"] .menu { left: 90px; right: auto; }
+.jarvis-container[data-anchor="lt"] .menu { top: 16px; left: 90px; bottom: auto; right: auto; }
 .menu-item {
   width: 100%; padding: 8px 14px;
   display: flex; align-items: center; gap: 8px;

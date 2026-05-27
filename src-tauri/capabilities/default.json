@@ -5,7 +5,9 @@
   "windows": [
     "avatar",
     "chat",
-    "writeHours"
+    "settings",
+    "writeHours",
+    "manualHours"
   ],
   "permissions": [
     "core:default",

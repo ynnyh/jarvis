@@ -53,6 +53,24 @@ export interface JarvisConfig {
     /** 'chat'=/v1/chat/completions（默认）；'responses'=/v1/responses（Codex CLI 协议） */
     wireApi?: 'chat' | 'responses'
   }
+  channels: {
+    telegram: {
+      enabled: boolean
+      botToken: string
+      apiBaseUrl: string
+      proxy: string
+      allowChatIds: string[]
+    }
+    qqbot: {
+      enabled: boolean
+      appId: string
+      appSecret: string
+      sandbox: boolean
+      allowUserIds: string[]
+      allowGroupIds: string[]
+    }
+  }
+
   repoRoots: string[]         // 扫描 git 提交的本地代码根目录列表
   /** 任务窗口里 commits 关联取多大时间范围 —— 默认本周，'all' 走全量 */
   commitsRange: CommitsRange
@@ -93,6 +111,10 @@ const defaultConfig = (): JarvisConfig => ({
     model: 'deepseek-chat',
     apiKey: '',
     wireApi: 'chat',
+  },
+  channels: {
+    telegram: { enabled: false, botToken: '', apiBaseUrl: 'https://api.telegram.org', proxy: '', allowChatIds: [] },
+    qqbot: { enabled: false, appId: '', appSecret: '', sandbox: false, allowUserIds: [], allowGroupIds: [] },
   },
   repoRoots: [],
   commitsRange: 'thisWeek',
@@ -136,6 +158,19 @@ export const useConfigStore = defineStore('config', () => {
           model: remote.llm?.model?.trim() ? remote.llm.model : defaults.llm.model,
           apiKey: remote.llm?.apiKey ?? defaults.llm.apiKey,
           wireApi: remote.llm?.wireApi === 'responses' ? 'responses' : 'chat',
+        },
+        channels: {
+          telegram: {
+            ...defaults.channels.telegram,
+            ...(remote.channels?.telegram ?? {}),
+            allowChatIds: remote.channels?.telegram?.allowChatIds ?? defaults.channels.telegram.allowChatIds,
+          },
+          qqbot: {
+            ...defaults.channels.qqbot,
+            ...(remote.channels?.qqbot ?? {}),
+            allowUserIds: remote.channels?.qqbot?.allowUserIds ?? defaults.channels.qqbot.allowUserIds,
+            allowGroupIds: remote.channels?.qqbot?.allowGroupIds ?? defaults.channels.qqbot.allowGroupIds,
+          },
         },
         commitsRange: remote.commitsRange ?? defaults.commitsRange,
         leftClickAction: remote.leftClickAction === 'review' ? 'review' : defaults.leftClickAction,

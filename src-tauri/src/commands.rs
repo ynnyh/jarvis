@@ -161,6 +161,23 @@ fn default_config() -> serde_json::Value {
             "apiKey": ""
         },
         // 本地代码根目录列表，用于扫描 git 提交。同事电脑可能放在 D:/work、C:/projects 等
+        "channels": {
+            "telegram": {
+                "enabled": false,
+                "botToken": "",
+                "apiBaseUrl": "https://api.telegram.org",
+                "proxy": "",
+                "allowChatIds": []
+            },
+            "qqbot": {
+                "enabled": false,
+                "appId": "",
+                "appSecret": "",
+                "sandbox": false,
+                "allowUserIds": [],
+                "allowGroupIds": []
+            }
+        },
         "repoRoots": [],
         // 左键单击小人弹什么。tasks=任务列表（默认），review=今日复盘
         "leftClickAction": "tasks"
@@ -590,6 +607,48 @@ pub async fn chat_close(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+// ===== Settings 详情窗口切换 =====
+// 小人旁边的设置小屏只放菜单；点击菜单项后用独立大窗口承载具体配置。
+
+#[tauri::command]
+pub async fn settings_open(app: tauri::AppHandle, page: Option<String>) -> Result<(), String> {
+    use tauri::Manager;
+    if let Some(settings) = app.get_webview_window("settings") {
+        let page = page.unwrap_or_else(|| "channels".to_string());
+        let script = format!(
+            "window.history.replaceState(null, '', 'settings.html?page={}'); window.location.reload();",
+            page.replace('\\', "").replace('\'', "")
+        );
+        let _ = settings.eval(&script);
+        settings
+            .show()
+            .map_err(|e| format!("show settings 失败: {}", e))?;
+        settings
+            .set_focus()
+            .map_err(|e| format!("focus settings 失败: {}", e))?;
+    } else {
+        return Err("settings 窗口未注册".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn settings_close(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::{Emitter, Manager};
+    if let Some(settings) = app.get_webview_window("settings") {
+        settings
+            .hide()
+            .map_err(|e| format!("hide settings 失败: {}", e))?;
+    }
+    if let Some(avatar) = app.get_webview_window("avatar") {
+        avatar.show().ok();
+        avatar.set_focus().ok();
+    }
+    app.emit_to("avatar", "settings-detail-closed", ())
+        .map_err(|e| format!("emit settings-detail-closed 失败: {}", e))?;
+    Ok(())
+}
+
 // ===== 写工时独立窗口 =====
 // 设计：avatar 上的复盘窗触发 write_hours_open(payload) → Rust 把 payload 存
 // 进 state、show writeHours 窗、hide avatar。WriteHoursApp 在 onMounted 调
@@ -668,6 +727,39 @@ pub async fn avatar_show_fallback(app: tauri::AppHandle) -> Result<(), String> {
     // WriteHoursApp 在 write_hours_close 失败时的兜底入口：单独把 avatar 拽回来，
     // 至少别让用户陷入"小人消失只能重启 app"。
     use tauri::Manager;
+    if let Some(avatar) = app.get_webview_window("avatar") {
+        avatar.unminimize().ok();
+        avatar.show().map_err(|e| format!("show avatar 失败: {}", e))?;
+        avatar.set_focus().ok();
+    }
+    Ok(())
+}
+
+// ===== 手动写工时窗口 =====
+
+#[tauri::command]
+pub async fn manual_hours_open(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    if let Some(w) = app.get_webview_window("manualHours") {
+        w.unminimize().ok();
+        w.show().map_err(|e| format!("show manualHours 失败: {}", e))?;
+        w.set_focus().ok();
+        let _ = w.eval("window.location.reload()");
+    } else {
+        return Err("manualHours 窗口未注册".into());
+    }
+    if let Some(avatar) = app.get_webview_window("avatar") {
+        avatar.hide().map_err(|e| format!("hide avatar 失败: {}", e))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn manual_hours_close(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    if let Some(w) = app.get_webview_window("manualHours") {
+        w.hide().map_err(|e| format!("hide manualHours 失败: {}", e))?;
+    }
     if let Some(avatar) = app.get_webview_window("avatar") {
         avatar.unminimize().ok();
         avatar.show().map_err(|e| format!("show avatar 失败: {}", e))?;

@@ -1,4 +1,5 @@
 mod chat_agent;
+mod channels;
 mod commands;
 mod commit_classifier;
 mod commit_link;
@@ -26,6 +27,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(commands::WriteHoursState::default())
+        .manage(channels::ChannelServiceState::default())
         .setup(|app| {
             // ===== 系统托盘 =====
             let show_i = MenuItem::with_id(app, "tray_show", "显示小人", true, None::<&str>)?;
@@ -173,10 +175,19 @@ pub fn run() {
             commands::config_save,
             commands::chat_open,
             commands::chat_close,
+            commands::settings_open,
+            commands::settings_close,
             commands::write_hours_open,
             commands::write_hours_close,
             commands::write_hours_take_payload,
             commands::avatar_show_fallback,
+            commands::manual_hours_open,
+            commands::manual_hours_close,
+            channels::channels_start,
+            channels::channels_stop,
+            channels::channel_status,
+            channels::telegram_probe,
+            channels::qqbot_probe,
             credentials::credentials_set,
             credentials::credentials_get,
             credentials::credentials_delete,
