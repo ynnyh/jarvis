@@ -1,4 +1,4 @@
-import { ref, computed } from 'vue'
+import { ref, computed, markRaw } from 'vue'
 import { check, type Update } from '@tauri-apps/plugin-updater'
 import { relaunch } from '@tauri-apps/plugin-process'
 import { getVersion } from '@tauri-apps/api/app'
@@ -89,7 +89,12 @@ export function useUpdater(options: UseUpdaterOptions = {}) {
     try {
       const update = await check()
       if (update) {
-        available.value = update
+        // markRaw：Tauri 的 Update 类内部用 #xxx 私有字段，ref/reactive 会拿
+        // Proxy 包对象，而 JS 规范要求 # 字段访问的 this 必须是该类原始实例，
+        // Proxy 不算 → 后续调 downloadAndInstall 时报 "Cannot read private
+        // member from an object whose class did not declare it"。markRaw
+        // 让 ref 的 .value 直接持有原始 Update 实例，绕开代理。
+        available.value = markRaw(update)
         phase.value = 'available'
         onAvailable?.(update.version, update.body ?? '')
         return true

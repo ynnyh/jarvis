@@ -4,7 +4,8 @@
   "description": "enables the default permissions",
   "windows": [
     "avatar",
-    "chat"
+    "chat",
+    "writeHours"
   ],
   "permissions": [
     "core:default",

@@ -175,7 +175,7 @@ async function openTask(id: string) {
 <style scoped>
 .risk-panel {
   position: fixed;
-  inset: 8px 8px 90px 8px;
+  inset: var(--panel-top, 8px) var(--panel-right, 8px) var(--panel-bottom, 90px) var(--panel-left, 8px);
   display: flex;
   flex-direction: column;
   background: linear-gradient(135deg, rgba(20, 30, 56, 0.97), rgba(15, 23, 42, 0.97));

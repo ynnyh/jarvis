@@ -2,6 +2,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { getCurrentWindow, LogicalPosition } from '@tauri-apps/api/window'
 import { useAppStore } from './stores/app'
 import { useConfigStore } from './stores/config'
 import { useTaskAlerts } from './composables/useTaskAlerts'
@@ -61,6 +62,13 @@ const state = ref<JarvisState>('idle')
 const showMenu = ref(false)
 const alertText = ref('')
 const alertEmoji = ref('')
+
+// 小人在窗口的锚定角，根据拖拽后小人在屏幕上的位置自动选。
+// rb=右下(默认) / rt=右上 / lb=左下 / lt=左上。
+// 由 data-anchor 驱动 CSS：面板 inset 翻转、avatar-group 角位翻转，
+// 始终让面板向"小人朝向屏幕中心的那一侧"展开，避免面板飞出屏幕。
+type AvatarAnchor = 'rb' | 'rt' | 'lb' | 'lt'
+const avatarAnchor = ref<AvatarAnchor>('rb')
 
 interface StateConfig {
   text: string
@@ -189,31 +197,138 @@ function menuCheckUpdate() {
 }
 
 // --- 拖拽 + 点击 ---
+// 历史教训：原本走 invoke('drag_window') → Rust 端 start_dragging 让 OS 接管拖拽。
+// 但 OS 拖拽会保持"鼠标在窗口内的相对位置不变"，而小人在 400×560 透明窗口的
+// 右下角（约 (320, 480) 偏移）。OS 限制鼠标不能离开屏幕 → 鼠标最高到屏幕 y=0
+// 时小人最高也只能到 y=480 → 小人永远卡在屏幕下半部分。
+//
+// 改成手动 JS 拖拽：mousedown 记录窗口起点 + 鼠标起点，window 级 mousemove
+// 用 setPosition 直接把窗口移到 (起点 + 鼠标位移)。这样窗口可以完全飞出屏幕
+// 之外，小人能跟到屏幕任何位置。requestAnimationFrame 节流，60fps 内最多一次
+// setPosition，避免 IPC 堆积。
+//
+// 拖拽结束后调 recomputeAnchor() 自动选择 4 个角之一，让面板向"小人朝向屏幕
+// 中心的那一侧"展开，避免面板被屏幕边界裁掉。
+const WINDOW_LOGICAL_W = 400
+const WINDOW_LOGICAL_H = 560
+const AVATAR_HALF = 36
+const AVATAR_MARGIN = 10
+const ANCHOR_AVATAR_CENTER: Record<AvatarAnchor, { x: number; y: number }> = {
+  rb: { x: WINDOW_LOGICAL_W - AVATAR_MARGIN - AVATAR_HALF, y: WINDOW_LOGICAL_H - AVATAR_MARGIN - AVATAR_HALF },
+  rt: { x: WINDOW_LOGICAL_W - AVATAR_MARGIN - AVATAR_HALF, y: AVATAR_MARGIN + AVATAR_HALF },
+  lb: { x: AVATAR_MARGIN + AVATAR_HALF, y: WINDOW_LOGICAL_H - AVATAR_MARGIN - AVATAR_HALF },
+  lt: { x: AVATAR_MARGIN + AVATAR_HALF, y: AVATAR_MARGIN + AVATAR_HALF },
+}
+
 let mouseDownTime = 0
 let mouseDownX = 0
 let mouseDownY = 0
 let isDragging = false
 
-function onMouseDown(e: MouseEvent) {
+let dragStartWinLogicalX = 0
+let dragStartWinLogicalY = 0
+let pendingDragX: number | null = null
+let pendingDragY: number | null = null
+let dragRafId: number | null = null
+
+function flushDragPosition() {
+  dragRafId = null
+  if (pendingDragX === null || pendingDragY === null) return
+  const x = pendingDragX
+  const y = pendingDragY
+  pendingDragX = null
+  pendingDragY = null
+  getCurrentWindow().setPosition(new LogicalPosition(x, y)).catch(() => {})
+}
+
+async function recomputeAnchor() {
+  const win = getCurrentWindow()
+  let winLogicalX: number
+  let winLogicalY: number
+  try {
+    const pos = await win.outerPosition()
+    const scale = await win.scaleFactor()
+    winLogicalX = pos.x / scale
+    winLogicalY = pos.y / scale
+  } catch {
+    return
+  }
+  const oldOffset = ANCHOR_AVATAR_CENTER[avatarAnchor.value]
+  const avatarScreenX = winLogicalX + oldOffset.x
+  const avatarScreenY = winLogicalY + oldOffset.y
+  // 用 screen.width/height 判断小人在屏幕的象限。多显示器只看主屏尺寸是个
+  // 简化 —— 用户拖到副屏可能误判一次，但代价只是面板可能朝错方向，下次拖动
+  // 会再修正，不至于卡死。
+  const sw = window.screen.width
+  const sh = window.screen.height
+  const horiz = avatarScreenX >= sw / 2 ? 'r' : 'l'
+  const vert = avatarScreenY >= sh / 2 ? 'b' : 't'
+  const newAnchor = (horiz + vert) as AvatarAnchor
+  if (newAnchor === avatarAnchor.value) return
+
+  // 切 anchor 时调窗口位置，让 avatar 视觉上保持在屏幕原位（CSS 改 anchor 角
+  // 后，avatar 在窗口里的偏移变了，必须反向移窗口补偿才不会"小人突然跳"）。
+  const newOffset = ANCHOR_AVATAR_CENTER[newAnchor]
+  const newWinX = avatarScreenX - newOffset.x
+  const newWinY = avatarScreenY - newOffset.y
+  try {
+    await win.setPosition(new LogicalPosition(Math.round(newWinX), Math.round(newWinY)))
+  } catch {}
+  avatarAnchor.value = newAnchor
+}
+
+async function onMouseDown(e: MouseEvent) {
   if (e.button !== 0) return
   isDragging = false
   mouseDownTime = Date.now()
   mouseDownX = e.screenX
   mouseDownY = e.screenY
+  try {
+    const win = getCurrentWindow()
+    const pos = await win.outerPosition()
+    const scale = await win.scaleFactor()
+    // outerPosition 是 physical，转 logical 以匹配 e.screenX/Y（CSS px / logical）
+    dragStartWinLogicalX = pos.x / scale
+    dragStartWinLogicalY = pos.y / scale
+  } catch {
+    return
+  }
+  // 挂 window 级监听 —— 万一拖到边角鼠标短暂离开 .avatar 元素也不丢事件
+  window.addEventListener('mousemove', onWindowMouseMove)
+  window.addEventListener('mouseup', onWindowMouseUp)
 }
 
-function onMouseMove(e: MouseEvent) {
-  if (!(e.buttons & 1)) return
-  if (isDragging) return
-  const dx = Math.abs(e.screenX - mouseDownX)
-  const dy = Math.abs(e.screenY - mouseDownY)
-  if (dx > 5 || dy > 5) {
+function onWindowMouseMove(e: MouseEvent) {
+  // 鼠标按键已释放但 mouseup 没派发（例如鼠标焦点被 OS 拿走）→ 主动清理
+  if (!(e.buttons & 1)) {
+    onWindowMouseUp(e)
+    return
+  }
+  if (!isDragging) {
+    const dx = Math.abs(e.screenX - mouseDownX)
+    const dy = Math.abs(e.screenY - mouseDownY)
+    if (dx <= 5 && dy <= 5) return
     isDragging = true
-    invoke('drag_window').catch(() => {})
+  }
+  const dxLogical = e.screenX - mouseDownX
+  const dyLogical = e.screenY - mouseDownY
+  pendingDragX = dragStartWinLogicalX + dxLogical
+  pendingDragY = dragStartWinLogicalY + dyLogical
+  if (dragRafId === null) {
+    dragRafId = requestAnimationFrame(flushDragPosition)
   }
 }
 
-function onMouseUp(e: MouseEvent) {
+function onWindowMouseUp(e: MouseEvent) {
+  window.removeEventListener('mousemove', onWindowMouseMove)
+  window.removeEventListener('mouseup', onWindowMouseUp)
+  if (dragRafId !== null) {
+    cancelAnimationFrame(dragRafId)
+    dragRafId = null
+  }
+  // 最后一帧的位置可能还在 pending，立刻 flush 保证终态准确
+  flushDragPosition()
+
   const duration = Date.now() - mouseDownTime
   const dx = Math.abs(e.screenX - mouseDownX)
   const dy = Math.abs(e.screenY - mouseDownY)
@@ -222,7 +337,12 @@ function onMouseUp(e: MouseEvent) {
     // 当前打开的就是目标面板时点一下应该收起 —— 保持原有 toggle 行为。
     handleAvatarLeftClick()
   }
+  const wasDragging = isDragging
   isDragging = false
+  if (wasDragging) {
+    // 真正发生过拖拽再算 anchor，避免点击也触发窗口位置抖动
+    recomputeAnchor()
+  }
 }
 
 function handleAvatarLeftClick() {
@@ -332,7 +452,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="jarvis-container" @contextmenu.prevent="toggleMenu">
+  <div class="jarvis-container" :data-anchor="avatarAnchor" @contextmenu.prevent="toggleMenu">
     <div v-if="showMenu" class="menu pointer-target">
       <button class="menu-item" @click="menuShowAlerts">
         <span>🔔</span><span>任务提醒</span>
@@ -377,8 +497,6 @@ onUnmounted(() => {
 
       <div class="avatar pointer-target" :class="{ active: state === 'working' }"
         @mousedown="onMouseDown"
-        @mousemove="onMouseMove"
-        @mouseup="onMouseUp"
       >
         <div class="avatar-glow" :style="{ boxShadow: `0 0 20px ${current.color}40, 0 0 40px ${current.color}20`, background: current.glowColor }" />
         <div class="avatar-body" :class="`state-${state}`">
@@ -423,17 +541,62 @@ onUnmounted(() => {
   user-select: none;
   overflow: visible;
   background: transparent;
+  /* 默认 anchor=rb 的 CSS variable，data-anchor 切换时被同名规则覆盖。
+     --avatar-* 控制 .avatar-group 在窗口的 4 个角；--panel-* 控制各面板的
+     inset 翻转，让面板始终在小人对侧 → 远离屏幕边界。 */
+  --avatar-top: auto;
+  --avatar-right: 10px;
+  --avatar-bottom: 10px;
+  --avatar-left: auto;
+  --panel-top: 8px;
+  --panel-right: 8px;
+  --panel-bottom: 90px;
+  --panel-left: 8px;
+}
+.jarvis-container[data-anchor="rt"] {
+  --avatar-top: 10px;
+  --avatar-right: 10px;
+  --avatar-bottom: auto;
+  --avatar-left: auto;
+  --panel-top: 90px;
+  --panel-bottom: 8px;
+}
+.jarvis-container[data-anchor="lb"] {
+  --avatar-top: auto;
+  --avatar-right: auto;
+  --avatar-bottom: 10px;
+  --avatar-left: 10px;
+}
+.jarvis-container[data-anchor="lt"] {
+  --avatar-top: 10px;
+  --avatar-right: auto;
+  --avatar-bottom: auto;
+  --avatar-left: 10px;
+  --panel-top: 90px;
+  --panel-bottom: 8px;
 }
 
 .avatar-group {
   position: absolute;
-  bottom: 10px;
-  right: 10px;
+  top: var(--avatar-top);
+  right: var(--avatar-right);
+  bottom: var(--avatar-bottom);
+  left: var(--avatar-left);
   display: flex;
+  /* anchor 在窗口顶时反转子元素顺序：avatar 放最上、状态条/气泡在下方
+     堆叠，避免 avatar 远离 group 锚点导致整体跑到屏幕外。 */
   flex-direction: column;
   align-items: flex-end;   /* 子元素全部贴右边对齐 */
   gap: 6px;
   touch-action: none;
+}
+.jarvis-container[data-anchor="rt"] .avatar-group,
+.jarvis-container[data-anchor="lt"] .avatar-group {
+  flex-direction: column-reverse;
+}
+.jarvis-container[data-anchor="lb"] .avatar-group,
+.jarvis-container[data-anchor="lt"] .avatar-group {
+  align-items: flex-start; /* 左侧 anchor 时，子元素改贴左对齐 */
 }
 
 /* ===== 状态条（始终显示） ===== */
