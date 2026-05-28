@@ -74,15 +74,7 @@ jobs:
       - run:
           name: Configure ad-hoc macOS signing
           command: |
-            node - <<'NODE'
-            const fs = require('node:fs')
-            const file = 'src-tauri/tauri.conf.json'
-            const conf = JSON.parse(fs.readFileSync(file, 'utf8'))
-            conf.bundle ||= {}
-            conf.bundle.macOS ||= {}
-            conf.bundle.macOS.signingIdentity = '-'
-            fs.writeFileSync(file, JSON.stringify(conf, null, 2) + '\n')
-            NODE
+            node -e "const fs=require('node:fs'); const file='src-tauri/tauri.conf.json'; const conf=JSON.parse(fs.readFileSync(file,'utf8')); conf.bundle ||= {}; conf.bundle.macOS ||= {}; conf.bundle.macOS.signingIdentity='-'; fs.writeFileSync(file, JSON.stringify(conf, null, 2) + '\n');"
       - run:
           name: Build macOS universal dev package
           no_output_timeout: 30m
