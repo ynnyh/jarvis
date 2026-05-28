@@ -1,6 +1,7 @@
 version: 2.1
 
 orbs:
+  node: circleci/node@5
   win: circleci/windows@5
 
 parameters:
@@ -24,9 +25,8 @@ jobs:
       size: medium
     steps:
       - checkout
-      - run:
-          name: Install Node.js
-          command: choco install nodejs-lts -y
+      - node/install:
+          node-version: "20.18.1"
       - run:
           name: Install Rust
           command: |
@@ -60,14 +60,12 @@ jobs:
     steps:
       - checkout
       - setup_rust
+      - node/install:
+          node-version: "20.18.1"
       - run:
           name: Install universal Rust targets
           command: |
             rustup target add aarch64-apple-darwin x86_64-apple-darwin
-      - run:
-          name: Install Node.js
-          command: |
-            brew install node
       - run:
           name: Install dependencies
           command: npm ci --no-audit --no-fund
