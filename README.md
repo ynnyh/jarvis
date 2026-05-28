@@ -182,6 +182,42 @@ npm run desktop:dev    # 开发模式（端口 5174）
 npm run desktop:build  # 构建 Tauri 应用
 ```
 
+### macOS 发版说明
+
+macOS 用户如果看到 `"Jarvis.app" 已损坏，无法打开。你应该将它移到废纸篓。`，通常不是包真的损坏，而是 Gatekeeper 拒绝了未签名、未公证，或架构不匹配的应用。当前 CI 会构建 `universal-apple-darwin`，同一个 DMG 兼容 Intel Mac 和 Apple Silicon Mac。
+
+当前项目按内部开发包分发，不配置正式 Apple Developer ID 签名/公证。内部用户推荐用安装脚本安装，它会下载 DMG、复制到 `/Applications`，并清理浏览器下载带来的 quarantine 标记：
+
+```bash
+curl -fsSL https://gitee.com/ynnyh/jarvis/releases/download/v0.6.4/install-macos-dev.sh | bash
+```
+
+如果要安装指定版本：
+
+```bash
+curl -fsSL https://gitee.com/ynnyh/jarvis/releases/download/v0.6.4/install-macos-dev.sh | JARVIS_VERSION=v0.6.4 bash
+```
+
+如果用户已经手动拖拽安装过，可以临时执行：
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Jarvis.app
+open /Applications/Jarvis.app
+```
+
+推荐在 GitHub Actions secrets 配置以下变量，让 CI 自动进行 Developer ID 签名和公证：
+
+| Secret | 说明 |
+|--------|------|
+| `APPLE_CERTIFICATE` | Developer ID Application 证书 `.p12` 的 base64 内容 |
+| `APPLE_CERTIFICATE_PASSWORD` | `.p12` 导出密码 |
+| `KEYCHAIN_PASSWORD` | CI 临时 keychain 密码 |
+| `APPLE_ID` | Apple 开发者账号邮箱 |
+| `APPLE_PASSWORD` | App 专用密码 |
+| `APPLE_TEAM_ID` | Apple Team ID |
+
+没有 Apple 证书时，CI 会退回 ad-hoc 签名。它能改善部分 Apple Silicon 启动问题，但浏览器下载后仍可能被 Gatekeeper 拦截；正式分发给外部用户时应使用 Developer ID 签名和公证。
+
 ## 开发
 
 ```bash

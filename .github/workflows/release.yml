@@ -14,11 +14,18 @@ jobs:
         include:
           - os: windows-latest
             platform_id: windows-x86_64
+            artifact_id: windows-x86_64
           - os: macos-latest
-            platform_id: darwin-aarch64
+            # Build one Universal macOS artifact and expose it to the updater
+            # under both runtime platform ids.
+            platform_id: darwin-aarch64,darwin-x86_64
+            artifact_id: darwin-universal
+            tauri_args: --target universal-apple-darwin
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
+    env:
+      HAS_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE != '' }}
 
     steps:
       - name: Checkout
@@ -33,6 +40,10 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install macOS universal Rust targets
+        if: matrix.os == 'macos-latest'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
@@ -43,11 +54,62 @@ jobs:
         run: npm ci --no-audit --no-fund
         timeout-minutes: 5
 
+      - name: Import Apple Developer certificate
+        if: matrix.os == 'macos-latest' && env.HAS_APPLE_CERTIFICATE == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          security find-identity -v -p codesigning build.keychain
+          CERT_ID=$(security find-identity -v -p codesigning build.keychain | awk -F'"' '/Developer ID Application/ { print $2; exit }')
+          if [ -z "$CERT_ID" ]; then
+            CERT_ID=$(security find-identity -v -p codesigning build.keychain | awk -F'"' '/"[^"]+"/ { print $2; exit }')
+          fi
+          if [ -z "$CERT_ID" ]; then
+            echo "❌ 没找到可用的 macOS code signing identity"
+            exit 1
+          fi
+          echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> "$GITHUB_ENV"
+
+      - name: Use ad-hoc macOS signing fallback
+        if: matrix.os == 'macos-latest' && env.HAS_APPLE_CERTIFICATE != 'true'
+        shell: bash
+        run: |
+          echo "APPLE_SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
+          echo "⚠ 未配置 Apple 证书，使用 ad-hoc 签名。Apple Silicon 可运行性会更好，但浏览器下载后仍可能需要在系统设置里手动允许。"
+
+      - name: Configure macOS signing identity
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs')
+          const file = 'src-tauri/tauri.conf.json'
+          const conf = JSON.parse(fs.readFileSync(file, 'utf8'))
+          conf.bundle ||= {}
+          conf.bundle.macOS ||= {}
+          conf.bundle.macOS.signingIdentity = process.env.APPLE_SIGNING_IDENTITY || '-'
+          fs.writeFileSync(file, JSON.stringify(conf, null, 2) + '\n')
+          NODE
+
       - name: Build Tauri (NSIS / DMG + updater artifacts)
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npx tauri build
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npx tauri build ${{ matrix.tauri_args }}
         timeout-minutes: 25
 
       - name: Stage artifacts (Windows)
@@ -67,7 +129,7 @@ jobs:
         run: |
           set -e
           mkdir -p staging
-          BUNDLE=src-tauri/target/release/bundle
+          BUNDLE=src-tauri/target/universal-apple-darwin/release/bundle
           # 动态找 updater sig（可能在 macos/ / updater/ / 任意子目录）
           SIG=$(find "$BUNDLE" -name "*.sig" | head -1)
           if [ -z "$SIG" ]; then
@@ -95,7 +157,7 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: jarvis-${{ matrix.platform_id }}-${{ github.ref_name }}
+          name: jarvis-${{ matrix.artifact_id }}-${{ github.ref_name }}
           path: staging/*
           retention-days: 14
 

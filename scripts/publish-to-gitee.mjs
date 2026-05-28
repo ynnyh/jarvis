@@ -125,7 +125,7 @@ if (platforms.length === 0) {
   process.exit(1)
 }
 
-console.log(`扫到 ${platforms.length} 个平台：${platforms.map(p => p.platformId).join(', ')}`)
+console.log(`扫到 ${platforms.length} 个平台产物：${platforms.map(p => p.platformId).join(', ')}`)
 
 // --- 3. 创建（或复用）Release ---
 async function createOrFindRelease() {
@@ -219,17 +219,30 @@ async function uploadAsset(filePath, name) {
 const platformEntries = {}
 const uploadJobs = []
 
+const macDevInstaller = path.join(repoRoot, 'scripts/install-macos-dev.sh')
+if (existsSync(macDevInstaller)) {
+  uploadJobs.push(uploadAsset(macDevInstaller, 'install-macos-dev.sh'))
+}
+
 for (const p of platforms) {
   const fileCount = 1 + 1 + p.extras.length
   console.log(`→ ${p.platformId}: 排队 ${fileCount} 个上传`)
-  platformEntries[p.platformId] = {
-    signature: readFileSync(p.sigPath, 'utf8').trim(),
-    url: null, // 待 updater 上传完填
+  const platformIds = p.platformId
+    .split(',')
+    .map(id => id.trim())
+    .filter(Boolean)
+  for (const platformId of platformIds) {
+    platformEntries[platformId] = {
+      signature: readFileSync(p.sigPath, 'utf8').trim(),
+      url: null, // 待 updater 上传完填
+    }
   }
   // updater target（latest.json 的 url 指向它）
   uploadJobs.push(
     uploadAsset(p.updaterPath, p.updaterName).then(url => {
-      platformEntries[p.platformId].url = url
+      for (const platformId of platformIds) {
+        platformEntries[platformId].url = url
+      }
     }),
   )
   // sig
