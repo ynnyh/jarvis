@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+## v0.6.5
+
+### 修复
+- **内部 macOS 开发包错误触发 Apple 公证**：没有 Apple 证书时不再向 Tauri 传 `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID`，避免打包时报 `Team ID must be at least 3 characters`。
+
 ## v0.6.4
 
 ### 新增
