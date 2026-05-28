@@ -31,6 +31,12 @@ export interface JarvisConfig {
     morningGreeting: boolean
     eveningSummary: boolean
     eveningSummaryMinutesBefore: number
+    effortClosingCheck: boolean
+    effortClosingMinutesAfterWork: number
+    effortClosingTargetHours: number
+    effortClosingRepeatMinutes: number
+    effortClosingLatestTime: string
+    effortClosingChannelNotify: boolean
     /** 上班时段定时小提示（喝水/起身/午饭/下班）总开关 */
     workdayNudges: boolean
     /** 周期性提示（喝水/起身交替）的间隔（分钟）。<30 视为关闭 */
@@ -50,7 +56,7 @@ export interface JarvisConfig {
     account: string           // 帆软用户名（多为禅道账号同名）
     realName: string          // 中文显示名 —— 用于按本人过滤工时，空则不查询
   }
-  /** LLM 接入（默认 DeepSeek，OpenAI 兼容）。apiKey 这阶段明文存 config —— 用户已确认 */
+  /** LLM 接入（默认 DeepSeek，OpenAI 兼容）。apiKey 由后端存 OS 密钥链，前端只保留占位符 */
   llm: {
     provider: 'deepseek' | 'openai' | 'custom'
     baseUrl: string           // 厂商根域名，客户端按 wireApi 拼端点
@@ -60,12 +66,14 @@ export interface JarvisConfig {
     wireApi?: 'chat' | 'responses'
   }
   channels: {
+    autoStart: boolean
     telegram: {
       enabled: boolean
       botToken: string
       apiBaseUrl: string
       proxy: string
       allowChatIds: string[]
+      notifyChatIds: string[]
     }
     qqbot: {
       enabled: boolean
@@ -74,6 +82,8 @@ export interface JarvisConfig {
       sandbox: boolean
       allowUserIds: string[]
       allowGroupIds: string[]
+      notifyUserIds: string[]
+      notifyGroupIds: string[]
     }
   }
 
@@ -103,6 +113,12 @@ const defaultConfig = (): JarvisConfig => ({
     morningGreeting: true,
     eveningSummary: true,
     eveningSummaryMinutesBefore: 30,
+    effortClosingCheck: true,
+    effortClosingMinutesAfterWork: 10,
+    effortClosingTargetHours: 8,
+    effortClosingRepeatMinutes: 0,
+    effortClosingLatestTime: '21:00',
+    effortClosingChannelNotify: false,
     workdayNudges: true,
     nudgeIntervalMinutes: 60,
   },
@@ -120,8 +136,9 @@ const defaultConfig = (): JarvisConfig => ({
     wireApi: 'chat',
   },
   channels: {
-    telegram: { enabled: false, botToken: '', apiBaseUrl: 'https://api.telegram.org', proxy: '', allowChatIds: [] },
-    qqbot: { enabled: false, appId: '', appSecret: '', sandbox: false, allowUserIds: [], allowGroupIds: [] },
+    autoStart: false,
+    telegram: { enabled: false, botToken: '', apiBaseUrl: 'https://api.telegram.org', proxy: '', allowChatIds: [], notifyChatIds: [] },
+    qqbot: { enabled: false, appId: '', appSecret: '', sandbox: false, allowUserIds: [], allowGroupIds: [], notifyUserIds: [], notifyGroupIds: [] },
   },
   repoRoots: [],
   commitsRange: 'thisWeek',
@@ -139,6 +156,8 @@ export const useConfigStore = defineStore('config', () => {
   const loaded = ref(false)
   const showSettingsWindow = ref(false)
   let savingTimer: ReturnType<typeof setTimeout> | null = null
+  const SECRET_PLACEHOLDER = '********'
+  const isPlaceholder = (value?: string) => value === SECRET_PLACEHOLDER
 
   async function load() {
     try {
@@ -174,16 +193,20 @@ export const useConfigStore = defineStore('config', () => {
           wireApi: remote.llm?.wireApi === 'responses' ? 'responses' : 'chat',
         },
         channels: {
+          autoStart: remote.channels?.autoStart ?? defaults.channels.autoStart,
           telegram: {
             ...defaults.channels.telegram,
             ...(remote.channels?.telegram ?? {}),
             allowChatIds: remote.channels?.telegram?.allowChatIds ?? defaults.channels.telegram.allowChatIds,
+            notifyChatIds: remote.channels?.telegram?.notifyChatIds ?? defaults.channels.telegram.notifyChatIds,
           },
           qqbot: {
             ...defaults.channels.qqbot,
             ...(remote.channels?.qqbot ?? {}),
             allowUserIds: remote.channels?.qqbot?.allowUserIds ?? defaults.channels.qqbot.allowUserIds,
             allowGroupIds: remote.channels?.qqbot?.allowGroupIds ?? defaults.channels.qqbot.allowGroupIds,
+            notifyUserIds: remote.channels?.qqbot?.notifyUserIds ?? defaults.channels.qqbot.notifyUserIds,
+            notifyGroupIds: remote.channels?.qqbot?.notifyGroupIds ?? defaults.channels.qqbot.notifyGroupIds,
           },
         },
         commitsRange: remote.commitsRange ?? defaults.commitsRange,
@@ -206,6 +229,15 @@ export const useConfigStore = defineStore('config', () => {
   async function save() {
     try {
       await invoke('config_save', { config: config.value })
+      if (config.value.llm.apiKey && !isPlaceholder(config.value.llm.apiKey)) {
+        config.value.llm.apiKey = SECRET_PLACEHOLDER
+      }
+      if (config.value.channels.telegram.botToken && !isPlaceholder(config.value.channels.telegram.botToken)) {
+        config.value.channels.telegram.botToken = SECRET_PLACEHOLDER
+      }
+      if (config.value.channels.qqbot.appSecret && !isPlaceholder(config.value.channels.qqbot.appSecret)) {
+        config.value.channels.qqbot.appSecret = SECRET_PLACEHOLDER
+      }
     } catch (e) {
       console.error('保存配置失败:', e)
     }

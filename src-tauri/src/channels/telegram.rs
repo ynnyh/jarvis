@@ -322,9 +322,16 @@ fn format_telegram_request_error(op: &str, url: &str, err: &reqwest::Error) -> S
         "Telegram {} 请求失败: {}\nURL: {}\n{}\n支持 http/https/socks5 代理，例如 socks5://127.0.0.1:7890",
         op,
         err,
-        url,
+        redact_telegram_url(url),
         if hints.is_empty() { proxy_hint } else { format!("{}；{}", hints.join("，"), proxy_hint) }
     )
+}
+
+fn redact_telegram_url(url: &str) -> String {
+    match regex::Regex::new(r"/bot[^/]+/") {
+        Ok(re) => re.replace(url, "/bot<redacted>/").to_string(),
+        Err(_) => url.to_string(),
+    }
 }
 
 fn is_allowed(allow: &[String], chat_id: &str) -> bool {

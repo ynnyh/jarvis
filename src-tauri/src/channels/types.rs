@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct ChannelsConfig {
     #[serde(default)]
+    pub auto_start: bool,
+    #[serde(default)]
     pub telegram: TelegramConfig,
     #[serde(default)]
     pub qqbot: QqBotConfig,
@@ -22,6 +24,8 @@ pub struct TelegramConfig {
     pub proxy: String,
     #[serde(default)]
     pub allow_chat_ids: Vec<String>,
+    #[serde(default)]
+    pub notify_chat_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -39,6 +43,10 @@ pub struct QqBotConfig {
     pub allow_user_ids: Vec<String>,
     #[serde(default)]
     pub allow_group_ids: Vec<String>,
+    #[serde(default)]
+    pub notify_user_ids: Vec<String>,
+    #[serde(default)]
+    pub notify_group_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

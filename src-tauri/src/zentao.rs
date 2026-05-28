@@ -40,8 +40,9 @@ pub struct ZentaoTestResult {
 #[serde(rename_all = "camelCase")]
 pub enum TaskCategory {
     Ops,     // 运维：需求对接、数据核对、问题反馈
-    Daily,   // 日常事务：会议、培训、站会等
-    Feature, // 新增功能：其余
+    Daily,   // 事务：公共会议、培训
+    Feature, // 新增功能：任务名含 XZGN
+    Other,   // 其他：未匹配上述关键词的
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,23 +61,27 @@ pub struct ClassifiedTasks {
     pub ops: Vec<ZenTaoTaskBrief>,
     pub daily: Vec<ZenTaoTaskBrief>,
     pub feature: Vec<ZenTaoTaskBrief>,
+    pub other: Vec<ZenTaoTaskBrief>,
 }
 
 fn classify_task(name: &str) -> TaskCategory {
-    let n = name.to_lowercase();
-    // 运维关键词
-    for kw in &["需求对接", "数据核对", "问题反馈", "工单", "运维", "线上问题", "故障", "排查"] {
-        if n.contains(kw) {
+    // 运维：需求对接 / 数据核对 / 问题反馈
+    for kw in &["需求对接", "数据核对", "问题反馈"] {
+        if name.contains(kw) {
             return TaskCategory::Ops;
         }
     }
-    // 日常事务关键词
-    for kw in &["会议", "培训", "周报", "日报", "站会", "述职", "评审", "review"] {
-        if n.contains(kw) {
+    // 新增功能：任务名含 XZGN（大小写敏感，XZGN 是项目编码约定）
+    if name.contains("XZGN") {
+        return TaskCategory::Feature;
+    }
+    // 事务：公共会议 / 培训
+    for kw in &["公共会议", "培训"] {
+        if name.contains(kw) {
             return TaskCategory::Daily;
         }
     }
-    TaskCategory::Feature
+    TaskCategory::Other
 }
 
 pub struct ZentaoClient {
@@ -387,14 +392,15 @@ impl ZentaoClient {
             .collect())
     }
 
-    /// 拉任务并按工时分类：运维 / 日常事务 / 新增功能。
+    /// 拉任务并按工时分类：运维 / 事务 / 新增功能 / 其他。
     /// 分类依据：任务名关键词匹配。运维 = 需求对接|数据核对|问题反馈；
-    /// 日常事务 = 会议|培训|周报|日报|站会；其余归入新增功能。
+    /// 新增功能 = 含 XZGN；事务 = 公共会议|培训；其余归入其他。
     pub async fn get_classified_tasks(&self) -> Result<ClassifiedTasks, String> {
         let tasks = self.get_my_tasks().await?;
         let mut ops = Vec::new();
         let mut daily = Vec::new();
         let mut feature = Vec::new();
+        let mut other = Vec::new();
 
         for t in &tasks {
             let id = t.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -416,6 +422,7 @@ impl ZentaoClient {
                 TaskCategory::Ops => ops.push(item),
                 TaskCategory::Daily => daily.push(item),
                 TaskCategory::Feature => feature.push(item),
+                TaskCategory::Other => other.push(item),
             }
         }
 
@@ -423,6 +430,7 @@ impl ZentaoClient {
             ops,
             daily,
             feature,
+            other,
         })
     }
 

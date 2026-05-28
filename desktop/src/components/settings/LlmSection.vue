@@ -1,7 +1,5 @@
 <script setup lang="ts">
 // LLM 接入 section：服务商 / 地址 / 模型 / apiKey / 协议 + 测试 + 从 CC Switch 导入。
-//
-// apiKey 明文存 ~/.jarvis/config.json，不写密钥链——用户偏好（隐私无所谓，干就完了）。
 
 import { ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
@@ -14,6 +12,7 @@ const testState = ref<'idle' | 'testing' | 'ok' | 'fail'>('idle')
 const testMessage = ref('')
 const ccImportState = ref<'idle' | 'importing' | 'ok' | 'fail'>('idle')
 const ccImportMessage = ref('')
+const hasApiKey = () => !!store.config.llm.apiKey?.trim()
 
 // 切换 provider 时把 baseUrl/model 顺手填成厂商默认值
 const PRESETS: Record<string, { baseUrl: string; model: string }> = {
@@ -32,7 +31,7 @@ function onProviderChange(next: string) {
 async function testConnection() {
   testState.value = 'testing'
   testMessage.value = ''
-  // 等一次保存（store watcher 250ms 防抖），确保最新 apiKey 已落盘
+  // 等一次保存（store watcher 250ms 防抖），确保新输入的 apiKey 已进入密钥链
   await new Promise(r => setTimeout(r, 400))
   try {
     const r = await invoke<{ success: boolean; data?: any; error?: string }>('tool_execute', {
@@ -103,7 +102,7 @@ async function importFromCcSwitch() {
 <template>
   <section class="settings-section">
     <h3 class="settings-section-title">LLM 接入</h3>
-    <p class="settings-section-hint">日报、风险摘要、commit↔任务评分可选调用。apiKey 明文存 config.json，不写密钥链</p>
+    <p class="settings-section-hint">日报、风险摘要、commit↔任务评分可选调用。apiKey 加密存到系统密钥链，配置文件只保留占位符</p>
     <label class="settings-field">
       <span class="settings-field-label">服务商</span>
       <select class="settings-input"
@@ -127,7 +126,7 @@ async function importFromCcSwitch() {
     <label class="settings-field">
       <span class="settings-field-label">apiKey</span>
       <input class="settings-input" :type="showKey ? 'text' : 'password'"
-        placeholder="sk-..." v-model="store.config.llm.apiKey" />
+        placeholder="sk-...；已保存时显示 ********" v-model="store.config.llm.apiKey" />
       <button class="settings-btn" style="margin-left:6px;padding:4px 8px;"
         @click="showKey = !showKey">
         {{ showKey ? '隐藏' : '显示' }}
@@ -142,7 +141,7 @@ async function importFromCcSwitch() {
     </label>
     <div class="settings-actions">
       <button class="settings-btn settings-btn-primary"
-        :disabled="testState === 'testing' || !store.config.llm.apiKey"
+        :disabled="testState === 'testing' || !hasApiKey()"
         @click="testConnection">
         {{ testState === 'testing' ? '测试中…' : '测试连接' }}
       </button>

@@ -13,6 +13,8 @@ const telegramBotName = ref('')
 const qqProbeState = ref<'idle' | 'checking' | 'ok' | 'fail'>('idle')
 const qqProbeMessage = ref('')
 const qqGateway = ref('')
+const hasTelegramToken = () => !!store.config.channels.telegram.botToken?.trim()
+const hasQqSecret = () => !!store.config.channels.qqbot.appSecret?.trim()
 const telegramRecentChats = ref<Array<{
   chatId: string
   chatType?: string
@@ -44,6 +46,7 @@ async function refreshStatus() {
 async function startService() {
   busy.value = true
   serviceMessage.value = ''
+  store.config.channels.autoStart = true
   await store.save()
   try {
     status.value = await invoke('channels_start')
@@ -58,6 +61,7 @@ async function startService() {
 async function restartService() {
   busy.value = true
   serviceMessage.value = ''
+  store.config.channels.autoStart = true
   await store.save()
   try {
     await invoke('channels_stop')
@@ -92,6 +96,8 @@ async function startQqOnly() {
 async function stopService() {
   busy.value = true
   serviceMessage.value = ''
+  store.config.channels.autoStart = false
+  await store.save()
   try {
     status.value = await invoke('channels_stop')
     serviceMessage.value = status.value.message
@@ -193,13 +199,16 @@ onMounted(refreshStatus)
 
     <div class="settings-actions">
       <span class="channel-status" :class="{ running: status.running }">{{ status.message }}</span>
+      <span class="channel-status" :class="{ running: store.config.channels.autoStart }">
+        {{ store.config.channels.autoStart ? '自动启动已开启' : '自动启动已关闭' }}
+      </span>
       <button class="settings-btn" :disabled="busy || !status.running" @click="stopService">停止全部</button>
     </div>
     <p v-if="serviceMessage" class="settings-msg" :class="status.running ? 'settings-msg-ok' : 'settings-msg-testing'">
       {{ serviceMessage }}
     </p>
     <p class="channel-next">
-      检查通过只是验证凭据；真正收发消息需要启动对应渠道。改过 token、代理、Secret 或白名单后，点对应渠道的重启按钮。
+      检查通过只是验证凭据；真正收发消息需要启动对应渠道。启动后会记住常驻状态，下次打开应用自动启动；点“停止全部”才会关闭自动启动。
     </p>
 
     <div class="channel-block">
@@ -219,7 +228,7 @@ onMounted(refreshStatus)
       </div>
       <label class="settings-field">
         <span class="settings-field-label">botToken</span>
-        <input class="settings-input" type="password" placeholder="123456:ABC..." v-model="store.config.channels.telegram.botToken" />
+        <input class="settings-input" type="password" placeholder="123456:ABC...；已保存时显示 ********" v-model="store.config.channels.telegram.botToken" />
       </label>
       <label class="settings-field">
         <span class="settings-field-label">API 地址</span>
@@ -231,10 +240,10 @@ onMounted(refreshStatus)
       </label>
       <p class="channel-note">OpenClaw/Hermes 能连通常是因为它们吃到了系统/环境代理，或使用了 Bot API 反代。Jarvis 这里的请求由 Rust 后端发出，需要在这里显式填代理，或把 API 地址换成你的反代根地址。</p>
       <div class="settings-actions">
-        <button class="settings-btn settings-btn-primary" :disabled="telegramProbeState === 'checking' || !store.config.channels.telegram.botToken" @click="checkTelegram">
+        <button class="settings-btn settings-btn-primary" :disabled="telegramProbeState === 'checking' || !hasTelegramToken()" @click="checkTelegram">
           {{ telegramProbeState === 'checking' ? '检查中...' : '检查 Telegram' }}
         </button>
-        <button class="settings-btn" :disabled="busy || !store.config.channels.telegram.botToken" @click="startTelegramOnly">
+        <button class="settings-btn" :disabled="busy || !hasTelegramToken()" @click="startTelegramOnly">
           {{ status.running ? '重启 Telegram' : '启动 Telegram' }}
         </button>
         <span v-if="telegramBotName" class="channel-status running">{{ telegramBotName }}</span>
@@ -285,7 +294,7 @@ onMounted(refreshStatus)
       </label>
       <label class="settings-field">
         <span class="settings-field-label">AppSecret</span>
-        <input class="settings-input" type="password" v-model="store.config.channels.qqbot.appSecret" />
+        <input class="settings-input" type="password" placeholder="已保存时显示 ********" v-model="store.config.channels.qqbot.appSecret" />
       </label>
       <label class="settings-toggle">
         <input type="checkbox" v-model="store.config.channels.qqbot.sandbox" />
@@ -294,12 +303,12 @@ onMounted(refreshStatus)
       <div class="settings-actions">
         <button
           class="settings-btn settings-btn-primary"
-          :disabled="qqProbeState === 'checking' || !store.config.channels.qqbot.appId || !store.config.channels.qqbot.appSecret"
+          :disabled="qqProbeState === 'checking' || !store.config.channels.qqbot.appId || !hasQqSecret()"
           @click="checkQqBot"
         >
           {{ qqProbeState === 'checking' ? '检查中...' : '检查 QQ' }}
         </button>
-        <button class="settings-btn" :disabled="busy || !store.config.channels.qqbot.appId || !store.config.channels.qqbot.appSecret" @click="startQqOnly">
+        <button class="settings-btn" :disabled="busy || !store.config.channels.qqbot.appId || !hasQqSecret()" @click="startQqOnly">
           {{ status.running ? '重启 QQ' : '启动 QQ' }}
         </button>
         <span v-if="qqGateway" class="channel-status running">Gateway OK</span>

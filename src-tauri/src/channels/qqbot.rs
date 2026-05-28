@@ -34,6 +34,8 @@ pub async fn probe(
         sandbox,
         allow_user_ids: vec![],
         allow_group_ids: vec![],
+        notify_user_ids: vec![],
+        notify_group_ids: vec![],
     };
     if config.app_id.trim().is_empty() || config.app_secret.trim().is_empty() {
         return Ok(QqBotProbeResult {
@@ -227,7 +229,11 @@ async fn app_access_token(config: &QqBotConfig) -> Result<String, String> {
     let status = resp.status();
     let text = resp.text().await.map_err(|e| e.to_string())?;
     if !status.is_success() {
-        return Err(format!("QQ Bot access token HTTP {}: {}", status.as_u16(), text));
+        return Err(format!(
+            "QQ Bot access token HTTP {}: {}",
+            status.as_u16(),
+            redact_qq_secret_echo(&text, &config.app_secret)
+        ));
     }
     let parsed: AppAccessTokenResp =
         serde_json::from_str(&text).map_err(|e| format!("QQ Bot token 解析失败: {}", e))?;
@@ -246,11 +252,39 @@ async fn gateway_url(config: &QqBotConfig, token: &str) -> Result<String, String
     let status = resp.status();
     let text = resp.text().await.map_err(|e| e.to_string())?;
     if !status.is_success() {
-        return Err(format!("QQ Bot gateway HTTP {}: {}", status.as_u16(), text));
+        return Err(format!("QQ Bot gateway HTTP {}: {}", status.as_u16(), redact_tokenish_text(&text)));
     }
     let parsed: GatewayResp =
         serde_json::from_str(&text).map_err(|e| format!("QQ Bot gateway 解析失败: {}", e))?;
     Ok(parsed.url)
+}
+
+fn redact_qq_secret_echo(text: &str, app_secret: &str) -> String {
+    let mut out = text.to_string();
+    if !app_secret.trim().is_empty() {
+        out = out.replace(app_secret.trim(), "<redacted>");
+    }
+    redact_tokenish_text(&out)
+}
+
+fn redact_tokenish_text(text: &str) -> String {
+    let mut out = text.to_string();
+    for pattern in [
+        r#""access_token"\s*:\s*"[^"]+""#,
+        r#""clientSecret"\s*:\s*"[^"]+""#,
+        r#""token"\s*:\s*"[^"]+""#,
+    ] {
+        if let Ok(re) = regex::Regex::new(pattern) {
+            out = re.replace_all(&out, |caps: &regex::Captures| {
+                let raw = caps.get(0).map(|m| m.as_str()).unwrap_or("");
+                match raw.split_once(':') {
+                    Some((key, _)) => format!("{}:\"<redacted>\"", key),
+                    None => "<redacted>".to_string(),
+                }
+            }).to_string();
+        }
+    }
+    out
 }
 
 fn event_to_channel_message(config: &QqBotConfig, payload: &GatewayPayload) -> Option<ChannelMessage> {

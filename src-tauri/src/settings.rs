@@ -11,6 +11,32 @@
 
 use std::path::PathBuf;
 
+pub const SECRET_PLACEHOLDER: &str = "********";
+const SECRET_SERVICE_NAME: &str = "Jarvis-Secrets";
+
+pub fn secret_get(account: &str) -> Option<String> {
+    keyring::Entry::new(SECRET_SERVICE_NAME, account)
+        .ok()
+        .and_then(|e| e.get_password().ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+pub fn secret_set(account: &str, value: &str) -> Result<(), String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed == SECRET_PLACEHOLDER {
+        return Ok(());
+    }
+    keyring::Entry::new(SECRET_SERVICE_NAME, account)
+        .map_err(|e| format!("无法访问密钥链: {}", e))?
+        .set_password(trimmed)
+        .map_err(|e| format!("保存密钥失败: {}", e))
+}
+
+pub fn secret_exists(account: &str) -> bool {
+    secret_get(account).is_some()
+}
+
 /// 配置目录 ~/.jarvis/
 pub fn jarvis_dir() -> PathBuf {
     let home = std::env::var("USERPROFILE")
@@ -44,7 +70,7 @@ pub struct LlmCredentials {
     pub wire_api: String,
 }
 
-/// 读 LLM 凭证。config.json 优先，缺字段从 env 兜底，再缺用 DeepSeek 默认值。
+/// 读 LLM 凭证。优先从 OS 密钥链取 apiKey；旧配置里的明文值仅作为迁移兜底。
 ///
 /// env fallback 顺序：
 ///   apiKey: LLM_API_KEY > DEEPSEEK_API_KEY > OPENAI_API_KEY
@@ -75,7 +101,8 @@ pub fn get_llm_credentials() -> LlmCredentials {
         model: s("model")
             .or_else(|| env_first(&["LLM_MODEL"]))
             .unwrap_or_else(|| "deepseek-chat".to_string()),
-        api_key: s("apiKey")
+        api_key: secret_get("llm.apiKey")
+            .or_else(|| s("apiKey").filter(|v| v != SECRET_PLACEHOLDER))
             .or_else(|| env_first(&["LLM_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY"]))
             .unwrap_or_default(),
         wire_api: match s("wireApi").as_deref() {
@@ -146,7 +173,8 @@ pub fn get_zentao_credentials() -> ZentaoCredentials {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
-    let session_cookie = s("sessionCookie")
+    let session_cookie = secret_get("zentao.sessionCookie")
+        .or_else(|| s("sessionCookie").filter(|v| v != SECRET_PLACEHOLDER))
         .or(cookie_from_file)
         .or_else(|| env_first(&["ZENTAO_SESSION_COOKIE"]));
 

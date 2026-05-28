@@ -44,6 +44,9 @@ interface ChatMessage {
   /** 老格式兼容：占位 UI 阶段用过的 camelCase 字段，读老对话用 */
   toolCalls?: any
   toolCallId?: string
+  pendingWrite?: PendingWrite
+  writeStatus?: 'pending' | 'writing' | 'done' | 'cancelled' | 'failed'
+  writeError?: string
 }
 interface Conversation {
   id: string
@@ -51,6 +54,16 @@ interface Conversation {
   createdAt: number
   updatedAt: number
   messages: ChatMessage[]
+}
+interface PendingWrite {
+  kind: 'log-task-effort'
+  payload: {
+    taskId: string
+    hours: number
+    work: string
+    date?: string
+  }
+  summary: string
 }
 
 // ===== 状态 =====
@@ -102,6 +115,61 @@ function newConversation() {
     id, title: '新对话', createdAt: now, updatedAt: now, messages: [],
   }
   inputText.value = ''
+}
+
+function pendingWriteFromToolMessage(m: ChatMessage): PendingWrite | null {
+  if (m.role !== 'tool' || m.name !== 'prepare-log-task-effort') return null
+  try {
+    const parsed = JSON.parse(m.content)
+    if (!parsed?.pendingWrite || parsed.kind !== 'log-task-effort') return null
+    const payload = parsed.payload ?? {}
+    if (!payload.taskId || !payload.hours || !payload.work) return null
+    return {
+      kind: 'log-task-effort',
+      payload: {
+        taskId: String(payload.taskId),
+        hours: Number(payload.hours),
+        work: String(payload.work),
+        date: payload.date ? String(payload.date) : undefined,
+      },
+      summary: String(parsed.summary || ''),
+    }
+  } catch {
+    return null
+  }
+}
+
+async function confirmPendingWrite(msg: ChatMessage) {
+  if (!currentConversation.value || !msg.pendingWrite) return
+  if (msg.writeStatus !== 'pending' && msg.writeStatus !== 'failed') return
+  msg.writeStatus = 'writing'
+  msg.writeError = undefined
+  try {
+    const r = await invoke<{ success: boolean; data?: any; error?: string }>('tool_execute', {
+      name: 'log-task-effort',
+      input: msg.pendingWrite.payload,
+    })
+    if (!r.success) {
+      msg.writeStatus = 'failed'
+      msg.writeError = r.error || '写入失败'
+    } else {
+      msg.writeStatus = 'done'
+    }
+  } catch (e: any) {
+    msg.writeStatus = 'failed'
+    msg.writeError = String(e?.message ?? e)
+  }
+  currentConversation.value.updatedAt = Date.now()
+  await invoke('conversations_save', { conversation: currentConversation.value })
+  await nextTick()
+  scrollToBottom()
+}
+
+async function cancelPendingWrite(msg: ChatMessage) {
+  if (!currentConversation.value || !msg.pendingWrite || msg.writeStatus !== 'pending') return
+  msg.writeStatus = 'cancelled'
+  currentConversation.value.updatedAt = Date.now()
+  await invoke('conversations_save', { conversation: currentConversation.value })
 }
 
 async function deleteConversation(id: string) {
@@ -196,7 +264,13 @@ async function sendMessage() {
       const baseTs = Date.now()
       for (let i = 0; i < r.data.newMessages.length; i++) {
         const m = r.data.newMessages[i]
-        conv.messages.push({ ...m, createdAt: baseTs + i })
+        const next: ChatMessage = { ...m, createdAt: baseTs + i }
+        const pendingWrite = pendingWriteFromToolMessage(next)
+        if (pendingWrite) {
+          next.pendingWrite = pendingWrite
+          next.writeStatus = 'pending'
+        }
+        conv.messages.push(next)
       }
     }
     conv.updatedAt = Date.now()
@@ -374,15 +448,44 @@ watch(() => configStore.config.assistantName, (n) => {
               class="msg" :class="`msg-${msg.role}`">
               <!-- tool 消息：折叠+格式化 -->
               <template v-if="msg.role === 'tool'">
-                <div class="msg-role tool-header" @click="toggleToolExpanded(i)">
-                  <span class="tool-toggle">{{ expandedToolMsgs.has(i) ? '▾' : '▸' }}</span>
-                  <span>🔧 {{ msg.name || '工具' }}</span>
-                  <span class="msg-time">{{ formatTime(msg.createdAt) }}</span>
+                <div v-if="msg.pendingWrite" class="pending-write">
+                  <div class="msg-role">
+                    <span>待确认写入</span>
+                    <span class="msg-time">{{ formatTime(msg.createdAt) }}</span>
+                  </div>
+                  <pre class="pending-summary">{{ msg.pendingWrite.summary }}</pre>
+                  <div class="pending-actions">
+                    <button
+                      class="pending-btn pending-btn-primary"
+                      :disabled="msg.writeStatus === 'writing' || msg.writeStatus === 'done' || msg.writeStatus === 'cancelled'"
+                      @click="confirmPendingWrite(msg)"
+                    >
+                      {{ msg.writeStatus === 'done' ? '已写入' : msg.writeStatus === 'writing' ? '写入中' : msg.writeStatus === 'failed' ? '重试写入' : '确认写入' }}
+                    </button>
+                    <button
+                      class="pending-btn"
+                      :disabled="msg.writeStatus !== 'pending' && msg.writeStatus !== 'failed'"
+                      @click="cancelPendingWrite(msg)"
+                    >
+                      {{ msg.writeStatus === 'cancelled' ? '已取消' : '取消' }}
+                    </button>
+                  </div>
+                  <p v-if="msg.writeStatus === 'done'" class="pending-note ok">已写入禅道。</p>
+                  <p v-else-if="msg.writeStatus === 'cancelled'" class="pending-note">已取消，这次不会写入。</p>
+                  <p v-else-if="msg.writeStatus === 'failed'" class="pending-note fail">{{ msg.writeError }}</p>
+                  <p v-else-if="msg.writeStatus === 'writing'" class="pending-note">正在写入禅道…</p>
                 </div>
-                <div v-if="!expandedToolMsgs.has(i)" class="msg-content tool-preview">
-                  {{ toolMsgPreview(msg.content) }}
-                </div>
-                <pre v-else class="msg-content tool-expanded">{{ toolMsgFormatted(msg.content) }}</pre>
+                <template v-else>
+                  <div class="msg-role tool-header" @click="toggleToolExpanded(i)">
+                    <span class="tool-toggle">{{ expandedToolMsgs.has(i) ? '▾' : '▸' }}</span>
+                    <span>🔧 {{ msg.name || '工具' }}</span>
+                    <span class="msg-time">{{ formatTime(msg.createdAt) }}</span>
+                  </div>
+                  <div v-if="!expandedToolMsgs.has(i)" class="msg-content tool-preview">
+                    {{ toolMsgPreview(msg.content) }}
+                  </div>
+                  <pre v-else class="msg-content tool-expanded">{{ toolMsgFormatted(msg.content) }}</pre>
+                </template>
               </template>
               <!-- user / assistant -->
               <template v-else>
@@ -643,6 +746,68 @@ watch(() => configStore.config.assistantName, (n) => {
   color: rgba(255, 255, 255, 0.85);
 }
 .msg-system { display: none; }   /* 系统消息不可见 */
+
+.pending-write {
+  min-width: min(420px, 72vw);
+}
+.pending-summary {
+  margin: 4px 0 10px;
+  padding: 10px 12px;
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(0, 0, 0, 0.24);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.pending-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.pending-btn {
+  height: 30px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.82);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  cursor: pointer;
+}
+.pending-btn:hover:not(:disabled) {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+}
+.pending-btn-primary {
+  color: rgba(8, 20, 34, 0.96);
+  background: rgba(0, 212, 255, 0.9);
+  border-color: rgba(0, 212, 255, 0.18);
+}
+.pending-btn-primary:hover:not(:disabled) {
+  color: rgba(8, 20, 34, 0.96);
+  background: rgba(44, 225, 255, 1);
+}
+.pending-btn:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+.pending-note {
+  margin: 8px 0 0;
+  color: rgba(255, 255, 255, 0.55);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 12px;
+}
+.pending-note.ok { color: rgba(52, 211, 153, 0.95); }
+.pending-note.fail { color: rgba(248, 113, 113, 0.95); }
 
 .typing {
   color: rgba(255, 255, 255, 0.55);

@@ -146,11 +146,30 @@ pub async fn chat(req: ChatRequest) -> Result<ChatResponse, String> {
     if cred.base_url.is_empty() {
         return Err("LLM baseUrl 未配置".into());
     }
-    if cred.wire_api == "responses" {
-        chat_via_responses(&req, &cred).await
-    } else {
-        chat_via_chat_completions(&req, &cred).await
+    let mut last_error: Option<String> = None;
+    for attempt in 0..3 {
+        let result = if cred.wire_api == "responses" {
+            chat_via_responses(&req, &cred).await
+        } else {
+            chat_via_chat_completions(&req, &cred).await
+        };
+        match result {
+            Ok(resp) => return Ok(resp),
+            Err(e) if should_retry_llm_error(&e) && attempt < 2 => {
+                last_error = Some(e);
+                tokio::time::sleep(Duration::from_millis(350 * (attempt + 1) as u64)).await;
+            }
+            Err(e) => return Err(e),
+        }
     }
+    Err(last_error.unwrap_or_else(|| "LLM 调用失败".to_string()))
+}
+
+fn should_retry_llm_error(e: &str) -> bool {
+    e.contains("LLM HTTP 502")
+        || e.contains("LLM HTTP 503")
+        || e.contains("LLM HTTP 504")
+        || e.contains("LLM 请求超时")
 }
 
 // ============================================================================

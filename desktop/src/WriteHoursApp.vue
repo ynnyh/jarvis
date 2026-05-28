@@ -116,10 +116,11 @@ onUnmounted(() => {
 
 <template>
   <div class="wh-root">
-    <header class="wh-header">
-      <h1 class="wh-title">
+    <header class="wh-header" data-tauri-drag-region>
+      <h1 class="wh-title" data-tauri-drag-region>
         {{ payload?.kind === 'orphan' ? '✍️ 写到任务（手动填任务 ID）' : '✍️ 写入工时到禅道' }}
       </h1>
+      <button class="wh-header-close" :disabled="submitting" @click="closeWindow" title="关闭">×</button>
     </header>
 
     <div class="wh-body">
@@ -203,16 +204,43 @@ onUnmounted(() => {
 
 .wh-header {
   flex-shrink: 0;
-  padding: 14px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 16px;
   background: rgba(0, 0, 0, 0.25);
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  user-select: none;
 }
 .wh-title {
   margin: 0;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   color: rgba(255, 255, 255, 0.95);
+  flex: 1;
 }
+.wh-header-close {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+.wh-header-close:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.25);
+  color: rgba(255, 255, 255, 0.98);
+}
+.wh-header-close:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .wh-body {
   flex: 1;

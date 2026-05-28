@@ -22,6 +22,7 @@ import { useTaskAlerts } from './composables/useTaskAlerts'
 import { useTaskCommits } from './composables/useTaskCommits'
 import { useDailyReview } from './composables/useDailyReview'
 import { useEveningReminder } from './composables/useEveningReminder'
+import { ignoreTodayEffortClosing, useEffortClosingCheck } from './composables/useEffortClosingCheck'
 import { useWorkdayNudges } from './composables/useWorkdayNudges'
 import { useTimeGreetings } from './composables/useTimeGreetings'
 import { useCursorPassthrough } from './composables/useCursorPassthrough'
@@ -48,6 +49,17 @@ useEveningReminder({
     store.showReviewWindow = true
   },
 })
+useEffortClosingCheck({
+  onReminder: (text, emoji) => {
+    showAlert(text, emoji, 'warning', 0, [
+      { label: '去写工时', action: menuOpenManualHours },
+      { label: '今天忽略', action: ignoreEffortClosingToday },
+    ])
+  },
+  onError: (text, emoji) => {
+    showAlert(text, emoji, 'warning', 12000)
+  },
+})
 useWorkdayNudges({
   onTrigger: (text, emoji) => {
     // 上班时段的小提示走 happy 表情、12s 自动消失，不打断工作
@@ -65,9 +77,10 @@ useCursorPassthrough()
 
 const updater = useUpdater({
   onAvailable: (version) => {
-    // 新版本到位，挂常驻气泡（duration=0），告诉用户去菜单里看详情。
-    // 不自动弹更新窗口 —— 用户可能正在专注做事，被弹窗打断很烦。
-    showAlert(`新版本 v${version} 可用（菜单→检查更新）`, '✨', 'happy', 0)
+    // 新版本到位：直接弹更新窗口让用户看到本次更新内容（含 CHANGELOG 节选），
+    // 同时挂常驻气泡作为残留提示——窗口被关掉之后用户还能看到提醒。
+    showAlert(`新版本 v${version} 可用`, '✨', 'happy', 0)
+    store.showUpdateWindow = true
   },
 })
 updater.start()
@@ -83,6 +96,7 @@ const state = ref<JarvisState>('idle')
 const showMenu = ref(false)
 const alertText = ref('')
 const alertEmoji = ref('')
+const alertActions = ref<Array<{ label: string; action: () => void | Promise<void> }>>([])
 
 // 小人在窗口的锚定角，根据拖拽后小人在屏幕上的位置自动选。
 // rb=右下(默认) / rt=右上 / lb=左下 / lt=左上。
@@ -227,15 +241,23 @@ async function ensureBubbleVisible() {
   await animateWindowToLogical(newX, newY, 220)
 }
 
-function showAlert(text: string, emoji: string, s: JarvisState, duration = 5000) {
+function showAlert(
+  text: string,
+  emoji: string,
+  s: JarvisState,
+  duration = 5000,
+  actions: Array<{ label: string; action: () => void | Promise<void> }> = [],
+) {
   state.value = s
   alertText.value = text
   alertEmoji.value = emoji
+  alertActions.value = actions
   if (alertTimer) clearTimeout(alertTimer)
   if (duration > 0) {
     alertTimer = window.setTimeout(() => {
       alertText.value = ''
       alertEmoji.value = ''
+      alertActions.value = []
       // 气泡消失时状态也归还 idle，避免小人卡在 thinking/warning 直到下次主动改 state
       state.value = 'idle'
     }, duration)
@@ -246,6 +268,25 @@ function showAlert(text: string, emoji: string, s: JarvisState, duration = 5000)
     await nextTick()
     await ensureBubbleVisible()
   })()
+}
+
+async function runAlertAction(action: () => void | Promise<void>) {
+  await action()
+  alertText.value = ''
+  alertEmoji.value = ''
+  alertActions.value = []
+  state.value = 'idle'
+}
+
+function dismissAlert() {
+  alertText.value = ''
+  alertEmoji.value = ''
+  alertActions.value = []
+  state.value = 'idle'
+}
+
+function ignoreEffortClosingToday() {
+  ignoreTodayEffortClosing()
 }
 
 /** 关闭所有面板和菜单。打开任意 panel/menu 前调用，确保左右键互斥 */
@@ -856,8 +897,20 @@ onUnmounted(() => {
       <transition name="bubble">
         <div v-if="hasAlert && (!dockEdge || isPoked)" class="alert-bubble pointer-target">
           <span class="alert-bubble__emoji">{{ alertEmoji }}</span>
-          <span class="alert-bubble__text">{{ alertText }}</span>
-          <button class="alert-bubble__close" @click.stop="alertText = ''; alertEmoji = ''; state = 'idle'" aria-label="关闭">×</button>
+          <span class="alert-bubble__body">
+            <span class="alert-bubble__text">{{ alertText }}</span>
+            <span v-if="alertActions.length" class="alert-bubble__actions">
+              <button
+                v-for="action in alertActions"
+                :key="action.label"
+                class="alert-bubble__action"
+                @click.stop="runAlertAction(action.action)"
+              >
+                {{ action.label }}
+              </button>
+            </span>
+          </span>
+          <button class="alert-bubble__close" @click.stop="dismissAlert" aria-label="关闭">×</button>
         </div>
       </transition>
 
@@ -1016,6 +1069,34 @@ onUnmounted(() => {
 .alert-bubble__text {
   flex: 1;
   min-width: 0;                    /* 让 flex 子项允许收缩 */
+}
+.alert-bubble__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.alert-bubble__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.alert-bubble__action {
+  height: 24px;
+  padding: 0 9px;
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.alert-bubble__action:hover {
+  color: #fff;
+  background: rgba(0, 212, 255, 0.16);
+  border-color: rgba(0, 212, 255, 0.32);
 }
 .alert-bubble__close {
   position: absolute;

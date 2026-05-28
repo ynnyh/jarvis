@@ -141,7 +141,13 @@ fn default_config() -> serde_json::Value {
             "quietOnWeekends": true,
             "morningGreeting": true,
             "eveningSummary": true,
-            "eveningSummaryMinutesBefore": 30
+            "eveningSummaryMinutesBefore": 30,
+            "effortClosingCheck": true,
+            "effortClosingMinutesAfterWork": 10,
+            "effortClosingTargetHours": 8,
+            "effortClosingRepeatMinutes": 0,
+            "effortClosingLatestTime": "21:00",
+            "effortClosingChannelNotify": false
         },
         "override": {
             "todayMode": "normal",                // normal | overtime | dayoff
@@ -152,8 +158,7 @@ fn default_config() -> serde_json::Value {
             "baseUrl": "",                         // 如 http://zentao.example.com:9538/zentao
             "account": ""                          // 同事的禅道账号名
         },
-        // LLM 接入（默认走 DeepSeek，OpenAI 兼容）。apiKey 这阶段先明文存 config，
-        // 用户已表态不在乎隐私。换厂商改 provider + baseUrl + model。
+        // LLM 接入（默认走 DeepSeek，OpenAI 兼容）。apiKey 存 OS 密钥链，config 里只放占位符。
         "llm": {
             "provider": "deepseek",                // deepseek | openai | custom
             "baseUrl": "https://api.deepseek.com", // 厂商根域名，客户端拼 /v1/chat/completions
@@ -162,12 +167,14 @@ fn default_config() -> serde_json::Value {
         },
         // 本地代码根目录列表，用于扫描 git 提交。同事电脑可能放在 D:/work、C:/projects 等
         "channels": {
+            "autoStart": false,
             "telegram": {
                 "enabled": false,
                 "botToken": "",
                 "apiBaseUrl": "https://api.telegram.org",
                 "proxy": "",
-                "allowChatIds": []
+                "allowChatIds": [],
+                "notifyChatIds": []
             },
             "qqbot": {
                 "enabled": false,
@@ -175,13 +182,88 @@ fn default_config() -> serde_json::Value {
                 "appSecret": "",
                 "sandbox": false,
                 "allowUserIds": [],
-                "allowGroupIds": []
+                "allowGroupIds": [],
+                "notifyUserIds": [],
+                "notifyGroupIds": []
             }
         },
         "repoRoots": [],
         // 左键单击小人弹什么。tasks=任务列表（默认），review=今日复盘
         "leftClickAction": "tasks"
     })
+}
+
+fn get_path<'a>(value: &'a serde_json::Value, path: &[&str]) -> Option<&'a serde_json::Value> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    Some(current)
+}
+
+fn get_path_str(value: &serde_json::Value, path: &[&str]) -> Option<String> {
+    get_path(value, path)
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn set_path_value(value: &mut serde_json::Value, path: &[&str], next: serde_json::Value) {
+    let mut current = value;
+    for key in &path[..path.len().saturating_sub(1)] {
+        if !current.get(*key).map(|v| v.is_object()).unwrap_or(false) {
+            current[*key] = serde_json::json!({});
+        }
+        current = current.get_mut(*key).expect("object path created");
+    }
+    if let Some(last) = path.last() {
+        current[*last] = next;
+    }
+}
+
+fn mark_secret_if_saved(value: &mut serde_json::Value, path: &[&str], secret_account: &str) {
+    if crate::settings::secret_exists(secret_account) {
+        set_path_value(
+            value,
+            path,
+            serde_json::Value::String(crate::settings::SECRET_PLACEHOLDER.to_string()),
+        );
+    }
+}
+
+fn extract_secret_to_keychain(
+    value: &mut serde_json::Value,
+    path: &[&str],
+    secret_account: &str,
+) -> Result<(), String> {
+    let Some(secret) = get_path_str(value, path) else {
+        return Ok(());
+    };
+    if secret == crate::settings::SECRET_PLACEHOLDER {
+        return Ok(());
+    }
+    crate::settings::secret_set(secret_account, &secret)?;
+    set_path_value(
+        value,
+        path,
+        serde_json::Value::String(crate::settings::SECRET_PLACEHOLDER.to_string()),
+    );
+    Ok(())
+}
+
+fn hydrate_secret_placeholders(value: &mut serde_json::Value) {
+    mark_secret_if_saved(value, &["llm", "apiKey"], "llm.apiKey");
+    mark_secret_if_saved(value, &["zentao", "sessionCookie"], "zentao.sessionCookie");
+    mark_secret_if_saved(value, &["channels", "telegram", "botToken"], "channels.telegram.botToken");
+    mark_secret_if_saved(value, &["channels", "qqbot", "appSecret"], "channels.qqbot.appSecret");
+}
+
+fn strip_secrets_for_save(value: &mut serde_json::Value) -> Result<(), String> {
+    extract_secret_to_keychain(value, &["llm", "apiKey"], "llm.apiKey")?;
+    extract_secret_to_keychain(value, &["zentao", "sessionCookie"], "zentao.sessionCookie")?;
+    extract_secret_to_keychain(value, &["channels", "telegram", "botToken"], "channels.telegram.botToken")?;
+    extract_secret_to_keychain(value, &["channels", "qqbot", "appSecret"], "channels.qqbot.appSecret")?;
+    Ok(())
 }
 
 /// 递归把缺失的字段从默认值补齐
@@ -202,6 +284,8 @@ pub fn config_load() -> Result<serde_json::Value, String> {
     let path = config_path();
     let defaults = default_config();
     if !path.exists() {
+        let mut defaults = defaults;
+        hydrate_secret_placeholders(&mut defaults);
         return Ok(defaults);
     }
     let content = std::fs::read_to_string(&path)
@@ -209,6 +293,17 @@ pub fn config_load() -> Result<serde_json::Value, String> {
     let mut value: serde_json::Value = serde_json::from_str(&content)
         .map_err(|e| format!("配置文件解析失败: {}", e))?;
     merge_defaults(&mut value, &defaults);
+    let mut persist_migrated = value.clone();
+    strip_secrets_for_save(&mut persist_migrated)?;
+    let migrated = persist_migrated != value;
+    if migrated {
+        let _ = std::fs::write(
+            &path,
+            serde_json::to_string_pretty(&persist_migrated).unwrap_or_else(|_| content.clone()),
+        );
+        value = persist_migrated;
+    }
+    hydrate_secret_placeholders(&mut value);
     Ok(value)
 }
 
@@ -218,7 +313,9 @@ pub async fn config_save(config: serde_json::Value) -> Result<(), String> {
     std::fs::create_dir_all(&dir)
         .map_err(|e| format!("创建配置目录失败: {}", e))?;
     let path = config_path();
-    let content = serde_json::to_string_pretty(&config)
+    let mut sanitized = config;
+    strip_secrets_for_save(&mut sanitized)?;
+    let content = serde_json::to_string_pretty(&sanitized)
         .map_err(|e| format!("配置序列化失败: {}", e))?;
     std::fs::write(&path, content)
         .map_err(|e| format!("写入配置失败: {}", e))?;

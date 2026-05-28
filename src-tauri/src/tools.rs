@@ -11,6 +11,7 @@
 //   get_daily_review  → daily_review::build_daily_review (+ 可选 LLM 改写)
 //   analyze_risk      → zentao.get_my_tasks + heuristic (+ 可选 LLM 改写)
 //   log-task-effort   → zentao.add_effort（带审计日志）
+//   prepare-log-task-effort → 生成待确认写工时建议（不写入）
 //   ask-llm           → llm.chat（直接转发）
 //   cc_switch_import  → 读 ~/.cc-switch/{settings.json,cc-switch.db}
 //   chat_send         → chat_agent::run_agent
@@ -21,6 +22,7 @@
 
 use std::path::PathBuf;
 
+use chrono::{Datelike, Duration as ChronoDuration, Local, NaiveDate};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -44,6 +46,7 @@ pub async fn dispatch(name: &str, input: Value) -> Result<Value, String> {
         "get_classified_tasks" => get_classified_tasks(input).await,
         "get_efforts" => get_efforts(input).await,
         "analyze_risk" => analyze_risk(input).await,
+        "prepare-log-task-effort" => prepare_log_task_effort(input).await,
         "log-task-effort" => log_task_effort(input).await,
         "ask-llm" => ask_llm(input).await,
         "cc_switch_import" => cc_switch_import(input).await,
@@ -147,6 +150,42 @@ pub async fn log_task_effort(input: Value) -> Result<Value, String> {
         "preservedLeft": r.preserved_left,
         "consumedBefore": r.consumed_before,
         "consumedAfter": r.consumed_after,
+    }))
+}
+
+pub async fn prepare_log_task_effort(input: Value) -> Result<Value, String> {
+    let parsed: LogEffortInput = serde_json::from_value(input)
+        .map_err(|e| format!("prepare-log-task-effort 入参错误: {}", e))?;
+    if parsed.task_id.trim().is_empty() {
+        return Err("taskId 不能为空".into());
+    }
+    if parsed.hours <= 0.0 {
+        return Err("hours 必须为正数".into());
+    }
+    if parsed.work.trim().is_empty() {
+        return Err("work 不能为空".into());
+    }
+    let date = parsed
+        .date
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string());
+    Ok(json!({
+        "pendingWrite": true,
+        "kind": "log-task-effort",
+        "payload": {
+            "taskId": parsed.task_id.trim(),
+            "hours": parsed.hours,
+            "work": parsed.work.trim(),
+            "date": date,
+        },
+        "summary": format!(
+            "任务: {}\n工时: {}h\n日期: {}\n内容: {}",
+            parsed.task_id.trim(),
+            parsed.hours,
+            date,
+            parsed.work.trim()
+        ),
+        "message": "已准备写入建议，请用户确认后再执行。"
     }))
 }
 
@@ -463,8 +502,12 @@ pub async fn get_today_tasks(_input: Value) -> Result<Value, String> {
 
 #[derive(Debug, Deserialize)]
 struct GetEffortsInput {
-    begin: String,
-    end: String,
+    #[serde(default)]
+    begin: Option<String>,
+    #[serde(default)]
+    end: Option<String>,
+    #[serde(default)]
+    range: Option<String>,
     #[serde(default, rename = "realName")]
     real_name: Option<String>,
 }
@@ -472,9 +515,10 @@ struct GetEffortsInput {
 pub async fn get_efforts(input: Value) -> Result<Value, String> {
     let parsed: GetEffortsInput = serde_json::from_value(input)
         .map_err(|e| format!("get_efforts 入参错误: {}", e))?;
+    let (begin, end, range_label) = resolve_effort_range(parsed.begin, parsed.end, parsed.range)?;
     let result = crate::fine_report::finereport_get_efforts(
-        parsed.begin,
-        parsed.end,
+        begin.clone(),
+        end.clone(),
         parsed.real_name,
     )
     .await?;
@@ -484,10 +528,82 @@ pub async fn get_efforts(input: Value) -> Result<Value, String> {
         .map_err(|e| format!("effort records 序列化失败: {}", e))?;
     let total_hours: f32 = result.records.iter().map(|r| r.item_hours).sum();
     Ok(json!({
+        "begin": begin,
+        "end": end,
+        "range": range_label,
         "records": records,
         "count": result.records.len(),
         "totalHours": total_hours,
     }))
+}
+
+fn resolve_effort_range(
+    begin: Option<String>,
+    end: Option<String>,
+    range: Option<String>,
+) -> Result<(String, String, String), String> {
+    let today = Local::now().date_naive();
+    let range = range
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("thisWeek");
+
+    let (mut begin_date, mut end_date, label) = match range {
+        "today" => (today, today, "today".to_string()),
+        "yesterday" => {
+            let day = today - ChronoDuration::days(1);
+            (day, day, "yesterday".to_string())
+        }
+        "thisMonth" | "month" => (
+            NaiveDate::from_ymd_opt(today.year(), today.month(), 1).unwrap_or(today),
+            today,
+            "thisMonth".to_string(),
+        ),
+        "thisYear" | "year" => (
+            NaiveDate::from_ymd_opt(today.year(), 1, 1).unwrap_or(today),
+            today,
+            "thisYear".to_string(),
+        ),
+        "thisWeek" | "week" => (
+            today - ChronoDuration::days(today.weekday().num_days_from_monday() as i64),
+            today,
+            "thisWeek".to_string(),
+        ),
+        other => {
+            if begin.is_none() || end.is_none() {
+                return Err(format!(
+                    "get_efforts range 不支持: {}。可用 today/yesterday/thisWeek/thisMonth/thisYear，或显式传 begin/end。",
+                    other
+                ));
+            }
+            (today, today, "custom".to_string())
+        }
+    };
+
+    if let Some(v) = begin.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        begin_date = parse_effort_date(v, "begin")?;
+    }
+    if let Some(v) = end.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        end_date = parse_effort_date(v, "end")?;
+    }
+    if begin_date > end_date {
+        return Err(format!(
+            "get_efforts 日期范围错误: begin {} 晚于 end {}",
+            begin_date, end_date
+        ));
+    }
+
+    Ok((
+        begin_date.format("%Y-%m-%d").to_string(),
+        end_date.format("%Y-%m-%d").to_string(),
+        label,
+    ))
+}
+
+fn parse_effort_date(value: &str, field: &str) -> Result<NaiveDate, String> {
+    NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .map_err(|_| format!("get_efforts {} 必须是 YYYY-MM-DD，例如 2026-05-28", field))
 }
 
 // ============================================================================

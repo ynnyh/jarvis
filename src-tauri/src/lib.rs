@@ -6,6 +6,7 @@ mod commit_link;
 mod conversations;
 mod credentials;
 mod daily_review;
+mod fine_report;
 mod git_scan;
 mod llm;
 mod repo_recommender;
@@ -160,6 +161,35 @@ pub fn run() {
                     }
                 });
             }
+
+            // ===== manualHours 关窗事件 Rust 侧拦截（同 writeHours 套路） =====
+            // OS × 按钮默认销毁窗口 → 下次 manual_hours_open 拿不到 webview，
+            // 又因为 avatar.hide() 没被 undo，小人也消失。同 writeHours 一样
+            // Rust 层 prevent_close + hide + 恢复 avatar。
+            if let Some(mh) = app.get_webview_window("manualHours") {
+                let app_handle = app.handle().clone();
+                let mh_clone = mh.clone();
+                mh.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = mh_clone.hide();
+                        if let Some(avatar) = app_handle.get_webview_window("avatar") {
+                            avatar.unminimize().ok();
+                            let _ = avatar.show();
+                            avatar.set_focus().ok();
+                        }
+                    }
+                });
+            }
+
+            if channels::should_auto_start() {
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = channels::start_gateway_background(app_handle) {
+                        eprintln!("[channels] 自动启动失败: {}", e);
+                    }
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -186,12 +216,18 @@ pub fn run() {
             channels::channels_start,
             channels::channels_stop,
             channels::channel_status,
+            channels::channels_notify,
             channels::telegram_probe,
             channels::qqbot_probe,
             credentials::credentials_set,
             credentials::credentials_get,
             credentials::credentials_delete,
             credentials::zentao_test_connection,
+            fine_report::finereport_credentials_set,
+            fine_report::finereport_credentials_get,
+            fine_report::finereport_credentials_delete,
+            fine_report::finereport_test_connection,
+            fine_report::finereport_get_efforts,
             settings_extras::pick_directory,
             settings_extras::excluded_business_lines_load,
             settings_extras::excluded_business_lines_save,

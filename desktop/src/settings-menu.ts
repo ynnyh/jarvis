@@ -2,6 +2,7 @@ import type { Component } from 'vue'
 import AssistantNameSection from './components/settings/AssistantNameSection.vue'
 import ChangelogSection from './components/settings/ChangelogSection.vue'
 import ChannelsSection from './components/settings/ChannelsSection.vue'
+import EffortClosingSection from './components/settings/EffortClosingSection.vue'
 import ExcludedLinesSection from './components/settings/ExcludedLinesSection.vue'
 import FineReportSection from './components/settings/FineReportSection.vue'
 import LeftClickActionSection from './components/settings/LeftClickActionSection.vue'
@@ -16,7 +17,7 @@ import WorkPeriodsSection from './components/settings/WorkPeriodsSection.vue'
 import WorkdayNudgesSection from './components/settings/WorkdayNudgesSection.vue'
 import ZentaoSection from './components/settings/ZentaoSection.vue'
 
-export type SettingsPageKey = 'zentao' | 'finereport' | 'ai' | 'channels' | 'code' | 'schedule' | 'nudges' | 'appearance' | 'about'
+export type SettingsPageKey = 'zentao' | 'finereport' | 'ai' | 'channels' | 'code' | 'schedule' | 'effortClosing' | 'nudges' | 'appearance' | 'about'
 
 export interface SettingsMenuItem {
   key: SettingsPageKey
@@ -32,6 +33,7 @@ export const SETTINGS_MENU: SettingsMenuItem[] = [
   { key: 'channels', title: '聊天渠道', desc: 'Telegram、QQ Bot', group: '接入' },
   { key: 'code', title: '代码与日报', desc: '仓库目录和业务线过滤', group: '工作流' },
   { key: 'schedule', title: '作息规则', desc: '工作日、时段、静默', group: '提醒' },
+  { key: 'effortClosing', title: '工时提醒', desc: '下班后检查今日工时', group: '提醒' },
   { key: 'nudges', title: '主动提醒', desc: '仪式、小提示、今日覆盖', group: '提醒' },
   { key: 'appearance', title: '外观与行为', desc: '称呼、形象、点击动作', group: '个性化' },
   { key: 'about', title: '关于与更新', desc: '版本信息与历史更新日志', group: '关于' },
@@ -44,8 +46,8 @@ export const SETTINGS_PAGE_COMPONENTS: Record<SettingsPageKey, Component[]> = {
   channels: [ChannelsSection],
   code: [RepoRootsSection, ExcludedLinesSection],
   schedule: [WorkDaysSection, WorkPeriodsSection, QuietRulesSection],
+  effortClosing: [EffortClosingSection],
   nudges: [RitualsSection, WorkdayNudgesSection, TodayOverrideSection],
   appearance: [AssistantNameSection, PetSection, LeftClickActionSection],
   about: [ChangelogSection],
 }
-

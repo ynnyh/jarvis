@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use tauri::Manager;
 use tokio::sync::{mpsc, watch};
 
 const MAX_HISTORY_MESSAGES: usize = 20;
@@ -24,6 +25,12 @@ pub struct GatewayContext {
     pub outbound: Sender,
 }
 
+#[derive(Debug, Clone)]
+pub struct NotificationTarget {
+    pub channel: String,
+    pub chat_id: String,
+}
+
 pub async fn run_gateway(
     app: tauri::AppHandle,
     status: Arc<Mutex<crate::channels::ChannelServiceStatus>>,
@@ -40,6 +47,11 @@ pub async fn run_gateway(
     let (in_tx, mut in_rx) = mpsc::channel::<ChannelMessage>(64);
     let (out_tx, out_rx) = mpsc::channel::<OutboundMessage>(64);
     let ctx = GatewayContext { outbound: out_tx };
+    if let Some(state) = app.try_state::<crate::channels::ChannelServiceState>() {
+        if let Ok(mut slot) = state.outbound_tx.lock() {
+            *slot = Some(ctx.outbound.clone());
+        }
+    }
     let (telegram_out_tx, telegram_out_rx) = mpsc::channel::<OutboundMessage>(64);
     let (qq_out_tx, qq_out_rx) = mpsc::channel::<OutboundMessage>(64);
 
@@ -103,6 +115,11 @@ pub async fn run_gateway(
             }
         }
     }
+    if let Some(state) = app.try_state::<crate::channels::ChannelServiceState>() {
+        if let Ok(mut slot) = state.outbound_tx.lock() {
+            *slot = None;
+        }
+    }
     set_status(&status, false, "渠道服务已停止");
 }
 
@@ -135,6 +152,57 @@ pub fn enabled_names(cfg: &ChannelsConfig) -> Vec<&'static str> {
     out
 }
 
+pub fn notification_targets(cfg: &ChannelsConfig) -> Vec<NotificationTarget> {
+    let mut out = Vec::new();
+    if cfg.telegram.enabled {
+        let ids = if cfg.telegram.notify_chat_ids.is_empty() {
+            &cfg.telegram.allow_chat_ids
+        } else {
+            &cfg.telegram.notify_chat_ids
+        };
+        for id in ids {
+            let id = id.trim();
+            if !id.is_empty() {
+                out.push(NotificationTarget {
+                    channel: "telegram".to_string(),
+                    chat_id: id.to_string(),
+                });
+            }
+        }
+    }
+    if cfg.qqbot.enabled {
+        let user_ids = if cfg.qqbot.notify_user_ids.is_empty() {
+            &cfg.qqbot.allow_user_ids
+        } else {
+            &cfg.qqbot.notify_user_ids
+        };
+        for id in user_ids {
+            let id = id.trim();
+            if !id.is_empty() {
+                out.push(NotificationTarget {
+                    channel: "qqbot".to_string(),
+                    chat_id: format!("c2c:{}", id),
+                });
+            }
+        }
+        let group_ids = if cfg.qqbot.notify_group_ids.is_empty() {
+            &cfg.qqbot.allow_group_ids
+        } else {
+            &cfg.qqbot.notify_group_ids
+        };
+        for id in group_ids {
+            let id = id.trim();
+            if !id.is_empty() {
+                out.push(NotificationTarget {
+                    channel: "qqbot".to_string(),
+                    chat_id: format!("group:{}", id),
+                });
+            }
+        }
+    }
+    out
+}
+
 fn set_status(
     status: &Arc<Mutex<crate::channels::ChannelServiceStatus>>,
     running: bool,
@@ -153,6 +221,22 @@ pub fn load_channels_config() -> ChannelsConfig {
         .and_then(|v| v.get("channels").cloned())
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
+    if channels.telegram.bot_token.trim() == settings::SECRET_PLACEHOLDER {
+        channels.telegram.bot_token.clear();
+    }
+    if channels.qqbot.app_secret.trim() == settings::SECRET_PLACEHOLDER {
+        channels.qqbot.app_secret.clear();
+    }
+    if channels.telegram.bot_token.trim().is_empty() {
+        if let Some(v) = settings::secret_get("channels.telegram.botToken") {
+            channels.telegram.bot_token = v;
+        }
+    }
+    if channels.qqbot.app_secret.trim().is_empty() {
+        if let Some(v) = settings::secret_get("channels.qqbot.appSecret") {
+            channels.qqbot.app_secret = v;
+        }
+    }
     if channels.telegram.bot_token.trim().is_empty() {
         if let Ok(v) = std::env::var("TELEGRAM_BOT_TOKEN") {
             channels.telegram.bot_token = v;
@@ -169,6 +253,64 @@ pub fn load_channels_config() -> ChannelsConfig {
         }
     }
     channels
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn notification_targets_prefer_explicit_notify_ids() {
+        let mut cfg = ChannelsConfig::default();
+        cfg.telegram.enabled = true;
+        cfg.telegram.allow_chat_ids = vec!["allow-tg".to_string()];
+        cfg.telegram.notify_chat_ids = vec!["notify-tg".to_string()];
+        cfg.qqbot.enabled = true;
+        cfg.qqbot.allow_user_ids = vec!["allow-user".to_string()];
+        cfg.qqbot.allow_group_ids = vec!["allow-group".to_string()];
+        cfg.qqbot.notify_user_ids = vec!["notify-user".to_string()];
+        cfg.qqbot.notify_group_ids = vec!["notify-group".to_string()];
+
+        let targets = notification_targets(&cfg);
+        let pairs: Vec<_> = targets
+            .iter()
+            .map(|t| (t.channel.as_str(), t.chat_id.as_str()))
+            .collect();
+
+        assert_eq!(
+            pairs,
+            vec![
+                ("telegram", "notify-tg"),
+                ("qqbot", "c2c:notify-user"),
+                ("qqbot", "group:notify-group"),
+            ]
+        );
+    }
+
+    #[test]
+    fn notification_targets_fallback_to_allow_ids_for_old_configs() {
+        let mut cfg = ChannelsConfig::default();
+        cfg.telegram.enabled = true;
+        cfg.telegram.allow_chat_ids = vec!["allow-tg".to_string()];
+        cfg.qqbot.enabled = true;
+        cfg.qqbot.allow_user_ids = vec!["allow-user".to_string()];
+        cfg.qqbot.allow_group_ids = vec!["allow-group".to_string()];
+
+        let targets = notification_targets(&cfg);
+        let pairs: Vec<_> = targets
+            .iter()
+            .map(|t| (t.channel.as_str(), t.chat_id.as_str()))
+            .collect();
+
+        assert_eq!(
+            pairs,
+            vec![
+                ("telegram", "allow-tg"),
+                ("qqbot", "c2c:allow-user"),
+                ("qqbot", "group:allow-group"),
+            ]
+        );
+    }
 }
 
 async fn handle_incoming(app: tauri::AppHandle, incoming: ChannelMessage) -> Result<AgentReply, String> {
@@ -190,6 +332,17 @@ async fn handle_incoming(app: tauri::AppHandle, incoming: ChannelMessage) -> Res
         .get("userTitle")
         .and_then(|v| v.as_str())
         .unwrap_or("主人");
+
+    if !should_use_agent_tools(&incoming.text) {
+        let reply = handle_plain_chat(history, assistant_name, user_title).await?;
+        append_channel_messages(&incoming, &reply.text, None)?;
+        return Ok(reply);
+    }
+
+    if let Some(reply) = maybe_handle_effort_query(&incoming.text).await? {
+        append_channel_messages(&incoming, &reply.text, None)?;
+        return Ok(reply);
+    }
 
     let response = tools::dispatch(
         "chat_send",
@@ -227,6 +380,183 @@ async fn handle_incoming(app: tauri::AppHandle, incoming: ChannelMessage) -> Res
     Ok(AgentReply { text })
 }
 
+async fn handle_plain_chat(
+    history: Vec<Value>,
+    assistant_name: &str,
+    user_title: &str,
+) -> Result<AgentReply, String> {
+    let mut messages = vec![json!({
+        "role": "system",
+        "content": format!(
+            "你是 {}，正在通过 QQ/Telegram 和{}聊天。请用中文自然、简洁地回答。遇到禅道任务、工时、风险、日报、项目进展等工作请求时，可以提示用户直接说明具体需求。",
+            assistant_name, user_title
+        ),
+    })];
+
+    for msg in history {
+        let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("");
+        if role == "tool" || msg.get("tool_calls").is_some() {
+            continue;
+        }
+        let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("").trim();
+        if content.is_empty() {
+            continue;
+        }
+        messages.push(json!({
+            "role": role,
+            "content": content,
+        }));
+    }
+
+    let response = tools::dispatch(
+        "ask-llm",
+        json!({
+            "messages": messages,
+            "temperature": 0.4,
+            "maxTokens": 800,
+        }),
+    )
+    .await?;
+
+    let text = response
+        .get("text")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "我在，但这次没有生成可展示的回复。".to_string());
+
+    Ok(AgentReply { text })
+}
+
+fn should_use_agent_tools(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    [
+        "禅道",
+        "任务",
+        "工时",
+        "耗时",
+        "小时",
+        "风险",
+        "延期",
+        "逾期",
+        "复盘",
+        "日报",
+        "周报",
+        "项目",
+        "进展",
+        "本周",
+        "今天",
+        "昨天",
+        "明天",
+        "写入",
+        "记录",
+        "提交",
+        "commit",
+        "bug",
+        "需求",
+    ]
+    .iter()
+    .any(|keyword| lower.contains(keyword))
+}
+
+async fn maybe_handle_effort_query(text: &str) -> Result<Option<AgentReply>, String> {
+    if !is_effort_query(text) {
+        return Ok(None);
+    }
+
+    let (range, label) = effort_query_range(text);
+    let response = tools::dispatch(
+        "get_efforts",
+        json!({
+            "range": range,
+        }),
+    )
+    .await?;
+
+    Ok(Some(AgentReply {
+        text: format_effort_reply(&label, &response),
+    }))
+}
+
+fn is_effort_query(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    let has_effort_word = ["工时", "耗时", "小时", "effort"].iter().any(|w| lower.contains(w));
+    if !has_effort_word {
+        return false;
+    }
+    if ["写", "写入", "记录", "新增", "填", "补", "提交"].iter().any(|w| lower.contains(w)) {
+        return false;
+    }
+    ["查", "查询", "看", "统计", "汇总", "多少", "明细", "本周", "今天", "昨天", "本月", "今年"]
+        .iter()
+        .any(|w| lower.contains(w))
+}
+
+fn effort_query_range(text: &str) -> (&'static str, String) {
+    let lower = text.to_lowercase();
+    if lower.contains("昨天") || lower.contains("昨日") {
+        ("yesterday", "昨天".to_string())
+    } else if lower.contains("今天") || lower.contains("今日") {
+        ("today", "今天".to_string())
+    } else if lower.contains("本月") || lower.contains("这个月") {
+        ("thisMonth", "本月".to_string())
+    } else if lower.contains("今年") || lower.contains("本年") {
+        ("thisYear", "今年".to_string())
+    } else {
+        ("thisWeek", "本周".to_string())
+    }
+}
+
+fn format_effort_reply(label: &str, response: &Value) -> String {
+    let count = response.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+    let total_hours = response
+        .get("totalHours")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let records = response
+        .get("records")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    if count == 0 || records.is_empty() {
+        return format!("{}没有查到工时记录。", label);
+    }
+
+    let begin = response.get("begin").and_then(|v| v.as_str()).unwrap_or("");
+    let end = response.get("end").and_then(|v| v.as_str()).unwrap_or("");
+    let mut lines = vec![format!(
+        "{}工时（{} ~ {}）：共 {} 条，合计 {:.1} 小时。",
+        label, begin, end, count, total_hours
+    )];
+    for record in records.iter().take(8) {
+        let date = record.get("date").and_then(|v| v.as_str()).unwrap_or("");
+        let hours = record
+            .get("itemHours")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        let task = record
+            .get("taskName")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("未命名任务");
+        let work = record
+            .get("workContent")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        if work.is_empty() {
+            lines.push(format!("- {} {:.1}h {}", date, hours, task));
+        } else {
+            lines.push(format!("- {} {:.1}h {}：{}", date, hours, task, work));
+        }
+    }
+    if records.len() > 8 {
+        lines.push(format!("还有 {} 条明细没有展开。", records.len() - 8));
+    }
+    lines.join("\n")
+}
+
 fn allowed_channel_tools() -> Vec<&'static str> {
     vec![
         "get_tasks",
@@ -235,6 +565,7 @@ fn allowed_channel_tools() -> Vec<&'static str> {
         "get_task_commits",
         "analyze_risk",
         "get_daily_review",
+        "get_efforts",
     ]
 }
 

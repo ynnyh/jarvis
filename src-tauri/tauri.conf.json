@@ -11,6 +11,7 @@
   },
   "app": {
     "macOSPrivateApi": true,
+    "withGlobalTauri": true,
     "windows": [
       {
         "label": "avatar",
@@ -92,7 +93,7 @@
         "alwaysOnTop": true,
         "skipTaskbar": false,
         "transparent": false,
-        "decorations": true,
+        "decorations": false,
         "shadow": true,
         "focus": true,
         "visible": false
@@ -114,7 +115,7 @@
         "alwaysOnTop": true,
         "skipTaskbar": false,
         "transparent": false,
-        "decorations": true,
+        "decorations": false,
         "shadow": true,
         "focus": true,
         "visible": false

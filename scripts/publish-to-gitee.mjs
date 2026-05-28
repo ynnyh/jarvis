@@ -246,9 +246,37 @@ await Promise.all(uploadJobs)
 console.log(`✓ 全部上传完成（${((Date.now() - t0) / 1000).toFixed(1)}s）`)
 
 // --- 5. 写 latest.json ---
+// notes 优先级：CHANGELOG.md 当前版本节 > RELEASE_NOTES env > 兜底占位。
+// CHANGELOG 节锚点是 "## ${tag}"（如 "## v0.6.3"），body 直到下一个 "## " 或文末。
+function extractChangelogNotes(targetTag) {
+  const changelogPath = path.join(repoRoot, 'CHANGELOG.md')
+  if (!existsSync(changelogPath)) return null
+  const text = readFileSync(changelogPath, 'utf8')
+  const header = `## ${targetTag}`
+  const lines = text.split('\n')
+  let i = lines.findIndex(l => l.trim() === header || l.trim().startsWith(header + ' '))
+  if (i < 0) return null
+  i++
+  const body = []
+  while (i < lines.length) {
+    if (lines[i].startsWith('## ')) break
+    body.push(lines[i])
+    i++
+  }
+  while (body.length && !body[0].trim()) body.shift()
+  while (body.length && !body[body.length - 1].trim()) body.pop()
+  return body.length ? body.join('\n') : null
+}
+const changelogNotes = extractChangelogNotes(tag)
+if (changelogNotes) {
+  console.log(`✓ 已从 CHANGELOG.md 抽到 ${tag} 的更新说明（${changelogNotes.length} 字符）`)
+} else {
+  console.log(`⚠ CHANGELOG.md 没找到 "## ${tag}" 节，回退到 RELEASE_NOTES env`)
+}
+
 const latest = {
   version,
-  notes: process.env.RELEASE_NOTES || `Jarvis ${tag}`,
+  notes: changelogNotes || process.env.RELEASE_NOTES || `Jarvis ${tag}`,
   pub_date: new Date().toISOString(),
   platforms: platformEntries,
 }
