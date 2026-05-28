@@ -218,6 +218,36 @@ open /Applications/Jarvis.app
 
 没有 Apple 证书时，CI 会退回 ad-hoc 签名。它能改善部分 Apple Silicon 启动问题，但浏览器下载后仍可能被 Gatekeeper 拦截；正式分发给外部用户时应使用 Developer ID 签名和公证。
 
+### 发版托底方案
+
+默认发版走 GitHub Actions；如果 GitHub Actions 免费额度耗尽，可以切到 CircleCI。CircleCI 使用独立免费 credits，当前配置会在 tag 推送时分别构建 Windows 和 macOS universal 包，再上传到 Gitee Release。
+
+CircleCI 项目环境变量需要配置：
+
+| 变量 | 说明 |
+|------|------|
+| `GITEE_TOKEN` | Gitee 私人访问令牌，用于创建 release、上传附件和写 `latest.json` |
+| `TAURI_SIGNING_PRIVATE_KEY` | Tauri updater 私钥 |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Tauri updater 私钥密码 |
+| `GITEE_OWNER` | 可选，默认 `ynnyh` |
+| `GITEE_REPO` | 可选，默认 `jarvis` |
+
+如果 GitHub Actions 和 CircleCI 都不可用，最后兜底是本地打包后上传 Gitee：
+
+```bash
+# Windows 机器
+npm ci
+npm run desktop:build
+$env:GITEE_TOKEN="..."
+npm run release:gitee
+
+# Mac 机器
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+npm ci
+npm run desktop:build-macos-dev
+GITEE_TOKEN="..." npm run release:gitee
+```
+
 ## 开发
 
 ```bash

@@ -1,0 +1,141 @@
+version: 2.1
+
+orbs:
+  win: circleci/windows@5
+
+commands:
+  setup_rust:
+    steps:
+      - run:
+          name: Install Rust
+          command: |
+            curl https://sh.rustup.rs -sSf | sh -s -- -y
+            echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$BASH_ENV"
+
+jobs:
+  build-windows:
+    executor:
+      name: win/default
+      size: medium
+    steps:
+      - checkout
+      - run:
+          name: Install Node.js
+          command: choco install nodejs-lts -y
+      - run:
+          name: Install Rust
+          command: |
+            Invoke-WebRequest -Uri https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
+            .\rustup-init.exe -y
+      - run:
+          name: Install dependencies
+          command: npm ci --no-audit --no-fund
+      - run:
+          name: Build Windows installer
+          no_output_timeout: 30m
+          command: |
+            $env:PATH="$env:USERPROFILE\.cargo\bin;$env:PATH"
+            npm run desktop:build
+      - run:
+          name: Stage Windows artifacts
+          command: |
+            New-Item -ItemType Directory -Force -Path artifacts\windows | Out-Null
+            Copy-Item src-tauri\target\release\bundle\nsis\*-setup.exe artifacts\windows\
+            Copy-Item src-tauri\target\release\bundle\nsis\*-setup.exe.sig artifacts\windows\
+            "windows-x86_64" | Out-File -Encoding ascii artifacts\windows\PLATFORM_ID
+      - persist_to_workspace:
+          root: artifacts
+          paths:
+            - windows
+
+  build-macos:
+    macos:
+      xcode: "16.4.0"
+    resource_class: m4pro.medium
+    steps:
+      - checkout
+      - setup_rust
+      - run:
+          name: Install universal Rust targets
+          command: |
+            rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - run:
+          name: Install Node.js
+          command: |
+            brew install node
+      - run:
+          name: Install dependencies
+          command: npm ci --no-audit --no-fund
+      - run:
+          name: Configure ad-hoc macOS signing
+          command: |
+            node - <<'NODE'
+            const fs = require('node:fs')
+            const file = 'src-tauri/tauri.conf.json'
+            const conf = JSON.parse(fs.readFileSync(file, 'utf8'))
+            conf.bundle ||= {}
+            conf.bundle.macOS ||= {}
+            conf.bundle.macOS.signingIdentity = '-'
+            fs.writeFileSync(file, JSON.stringify(conf, null, 2) + '\n')
+            NODE
+      - run:
+          name: Build macOS universal dev package
+          no_output_timeout: 30m
+          command: npm run desktop:build-macos-dev
+      - run:
+          name: Stage macOS artifacts
+          command: |
+            set -e
+            mkdir -p artifacts/macos
+            BUNDLE=src-tauri/target/universal-apple-darwin/release/bundle
+            SIG=$(find "$BUNDLE" -name "*.sig" | head -1)
+            TARGET="${SIG%.sig}"
+            cp "$SIG" "$TARGET" artifacts/macos/
+            DMG=$(find "$BUNDLE" -name "*.dmg" | head -1)
+            if [ -n "$DMG" ]; then cp "$DMG" artifacts/macos/; fi
+            echo "darwin-aarch64,darwin-x86_64" > artifacts/macos/PLATFORM_ID
+      - persist_to_workspace:
+          root: artifacts
+          paths:
+            - macos
+
+  publish-gitee:
+    docker:
+      - image: cimg/node:20.18
+    steps:
+      - checkout
+      - attach_workspace:
+          at: artifacts
+      - run:
+          name: Install dependencies
+          command: npm ci --no-audit --no-fund
+      - run:
+          name: Publish to Gitee
+          command: npm run release:gitee
+          environment:
+            ARTIFACTS_DIR: artifacts
+
+workflows:
+  release:
+    jobs:
+      - build-windows:
+          filters:
+            tags:
+              only: /^v.*/
+            branches:
+              ignore: /.*/
+      - build-macos:
+          filters:
+            tags:
+              only: /^v.*/
+            branches:
+              ignore: /.*/
+      - publish-gitee:
+          requires:
+            - build-windows
+            - build-macos
+          filters:
+            tags:
+              only: /^v.*/
+            branches:
+              ignore: /.*/

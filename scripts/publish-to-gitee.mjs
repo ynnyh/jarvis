@@ -97,27 +97,47 @@ if (ARTIFACTS_DIR && existsSync(ARTIFACTS_DIR)) {
     })
   }
 } else {
-  // 本机回退：扫 nsis/ 目录
-  const bundleDir = path.join(repoRoot, 'src-tauri/target/release/bundle/nsis')
-  if (!existsSync(bundleDir)) {
-    console.error(`❌ 找不到 ${bundleDir} 且未给 ARTIFACTS_DIR`)
-    process.exit(1)
+  // 本机回退：自动扫当前机器已经打出来的 Windows / macOS 包。
+  // Windows 和 Mac 可以分开上传，同版本 latest.json 会自动合并已有平台。
+  const winBundleDir = path.join(repoRoot, 'src-tauri/target/release/bundle/nsis')
+  if (existsSync(winBundleDir)) {
+    const files = readdirSync(winBundleDir)
+    const installer = files.find(f => f.endsWith('-setup.exe'))
+    const sig = files.find(f => f.endsWith('-setup.exe.sig'))
+    if (installer && sig) {
+      platforms.push({
+        platformId: 'windows-x86_64',
+        updaterPath: path.join(winBundleDir, installer),
+        updaterName: installer,
+        sigPath: path.join(winBundleDir, sig),
+        sigName: sig,
+        extras: [],
+      })
+    }
   }
-  const files = readdirSync(bundleDir)
-  const installer = files.find(f => f.endsWith('-setup.exe'))
-  const sig = files.find(f => f.endsWith('-setup.exe.sig'))
-  if (!installer || !sig) {
-    console.error('❌ nsis 目录里找不到 -setup.exe / .sig')
-    process.exit(1)
+
+  const macBundleRoots = [
+    path.join(repoRoot, 'src-tauri/target/universal-apple-darwin/release/bundle'),
+    path.join(repoRoot, 'src-tauri/target/release/bundle'),
+  ]
+  for (const macBundleRoot of macBundleRoots) {
+    if (!existsSync(macBundleRoot)) continue
+    const all = walkFiles(macBundleRoot)
+    const sigPath = all.find(f => f.endsWith('.sig'))
+    if (!sigPath) continue
+    const updaterPath = sigPath.replace(/\.sig$/, '')
+    if (!existsSync(updaterPath)) continue
+    const dmgPath = all.find(f => f.endsWith('.dmg'))
+    platforms.push({
+      platformId: 'darwin-aarch64,darwin-x86_64',
+      updaterPath,
+      updaterName: path.basename(updaterPath),
+      sigPath,
+      sigName: path.basename(sigPath),
+      extras: dmgPath ? [{ path: dmgPath, name: path.basename(dmgPath) }] : [],
+    })
+    break
   }
-  platforms.push({
-    platformId: 'windows-x86_64',
-    updaterPath: path.join(bundleDir, installer),
-    updaterName: installer,
-    sigPath: path.join(bundleDir, sig),
-    sigName: sig,
-    extras: [],
-  })
 }
 
 if (platforms.length === 0) {
@@ -126,6 +146,17 @@ if (platforms.length === 0) {
 }
 
 console.log(`扫到 ${platforms.length} 个平台产物：${platforms.map(p => p.platformId).join(', ')}`)
+
+function walkFiles(root) {
+  const out = []
+  for (const name of readdirSync(root)) {
+    const full = path.join(root, name)
+    const stat = statSync(full)
+    if (stat.isDirectory()) out.push(...walkFiles(full))
+    else out.push(full)
+  }
+  return out
+}
 
 // --- 3. 创建（或复用）Release ---
 async function createOrFindRelease() {
@@ -293,20 +324,41 @@ const latest = {
   pub_date: new Date().toISOString(),
   platforms: platformEntries,
 }
-const latestStr = JSON.stringify(latest, null, 2)
-const latestB64 = Buffer.from(latestStr, 'utf8').toString('base64')
 
-async function getFileSha(filePath) {
+async function getExistingFile(filePath) {
   const r = await fetch(
     `${API}/repos/${GITEE_OWNER}/${GITEE_REPO}/contents/${filePath}?access_token=${TOKEN}&ref=main`,
   )
   if (r.status === 404) return null
   if (!r.ok) throw new Error(`查询 ${filePath} 失败：${r.status} ${await r.text()}`)
   const j = await r.json()
-  return j.sha
+  let text = ''
+  if (j.content) {
+    text = Buffer.from(String(j.content).replace(/\s/g, ''), 'base64').toString('utf8')
+  }
+  return { sha: j.sha, text }
 }
 
-const sha = await getFileSha('latest.json')
+const existingLatest = await getExistingFile('latest.json')
+if (existingLatest?.text) {
+  try {
+    const parsed = JSON.parse(existingLatest.text)
+    if (parsed?.version === version && parsed?.platforms && typeof parsed.platforms === 'object') {
+      latest.platforms = {
+        ...parsed.platforms,
+        ...platformEntries,
+      }
+      console.log(`✓ 合并已有 latest.json 平台：${Object.keys(parsed.platforms).join(', ')}`)
+    }
+  } catch (e) {
+    console.warn(`⚠ 解析已有 latest.json 失败，将覆盖写入：${e?.message || e}`)
+  }
+}
+
+const latestStr = JSON.stringify(latest, null, 2)
+const latestB64 = Buffer.from(latestStr, 'utf8').toString('base64')
+
+const sha = existingLatest?.sha ?? null
 const method = sha ? 'PUT' : 'POST'
 const r = await fetch(
   `${API}/repos/${GITEE_OWNER}/${GITEE_REPO}/contents/latest.json`,
