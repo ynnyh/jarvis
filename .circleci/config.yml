@@ -1,7 +1,6 @@
 version: 2.1
 
 orbs:
-  node: circleci/node@5
   win: circleci/windows@5
 
 parameters:
@@ -25,8 +24,18 @@ jobs:
       size: medium
     steps:
       - checkout
-      - node/install:
-          node-version: "20.18.1"
+      - run:
+          name: Install Node.js 20.18.1
+          command: |
+            $nodeVersion = "20.18.1"
+            $zip = "node-v$nodeVersion-win-x64.zip"
+            Invoke-WebRequest -Uri "https://nodejs.org/dist/v$nodeVersion/$zip" -OutFile $zip
+            Expand-Archive -Path $zip -DestinationPath "$env:USERPROFILE\node" -Force
+            $nodeDir = "$env:USERPROFILE\node\node-v$nodeVersion-win-x64"
+            $env:PATH="$nodeDir;$env:PATH"
+            [Environment]::SetEnvironmentVariable("PATH", "$nodeDir;$env:PATH", "User")
+            node --version
+            npm --version
       - run:
           name: Install Rust
           command: |
@@ -34,12 +43,17 @@ jobs:
             .\rustup-init.exe -y
       - run:
           name: Install dependencies
-          command: npm ci --no-audit --no-fund
+          command: |
+            $nodeDir = "$env:USERPROFILE\node\node-v20.18.1-win-x64"
+            $env:PATH="$nodeDir;$env:PATH"
+            npm ci --no-audit --no-fund
       - run:
           name: Build Windows installer
           no_output_timeout: 30m
           command: |
+            $nodeDir = "$env:USERPROFILE\node\node-v20.18.1-win-x64"
             $env:PATH="$env:USERPROFILE\.cargo\bin;$env:PATH"
+            $env:PATH="$nodeDir;$env:PATH"
             npm run desktop:build
       - run:
           name: Stage Windows artifacts
@@ -60,8 +74,16 @@ jobs:
     steps:
       - checkout
       - setup_rust
-      - node/install:
-          node-version: "20.18.1"
+      - run:
+          name: Use Node.js 20
+          command: |
+            if command -v node >/dev/null 2>&1; then
+              node --version
+            else
+              brew install node@20
+              echo 'export PATH="/opt/homebrew/opt/node@20/bin:$PATH"' >> "$BASH_ENV"
+            fi
+            npm --version
       - run:
           name: Install universal Rust targets
           command: |
