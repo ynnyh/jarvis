@@ -220,7 +220,7 @@ open /Applications/Jarvis.app
 
 ### 发版托底方案
 
-默认发版走 GitHub Actions；如果 GitHub Actions 免费额度耗尽，可以切到 CircleCI。CircleCI 使用独立免费 credits，当前配置会在 tag 推送时分别构建 Windows 和 macOS universal 包，再上传到 Gitee Release。
+默认发版走 GitHub Actions；CircleCI 是手动保底，不会在推 tag 时自动抢跑。只有当 GitHub Actions 免费额度耗尽或临时失败时，才在 CircleCI 手动触发 `run_release=true` 的 pipeline。CircleCI 使用独立免费 credits，会分别构建 Windows 和 macOS universal 包，再上传到 Gitee Release。
 
 CircleCI 项目环境变量需要配置：
 
@@ -233,6 +233,14 @@ CircleCI 项目环境变量需要配置：
 | `GITEE_REPO` | 可选，默认 `jarvis` |
 
 如果 GitHub Actions 和 CircleCI 都不可用，最后兜底是本地打包后上传 Gitee：
+
+CircleCI 手动触发方式：
+
+1. 进入 CircleCI 项目页面。
+2. 点击 **Trigger Pipeline**。
+3. Branch 填要发布的分支，通常是 `main`。
+4. 添加 boolean 参数 `run_release=true`。
+5. 运行后产物会上传到 Gitee Release，并更新 `latest.json`。
 
 ```bash
 # Windows 机器

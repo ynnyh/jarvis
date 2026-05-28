@@ -3,6 +3,11 @@ version: 2.1
 orbs:
   win: circleci/windows@5
 
+parameters:
+  run_release:
+    type: boolean
+    default: false
+
 commands:
   setup_rust:
     steps:
@@ -117,25 +122,11 @@ jobs:
 
 workflows:
   release:
+    when: << pipeline.parameters.run_release >>
     jobs:
-      - build-windows:
-          filters:
-            tags:
-              only: /^v.*/
-            branches:
-              ignore: /.*/
-      - build-macos:
-          filters:
-            tags:
-              only: /^v.*/
-            branches:
-              ignore: /.*/
+      - build-windows
+      - build-macos
       - publish-gitee:
           requires:
             - build-windows
             - build-macos
-          filters:
-            tags:
-              only: /^v.*/
-            branches:
-              ignore: /.*/
