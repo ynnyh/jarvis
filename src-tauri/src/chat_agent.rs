@@ -23,17 +23,21 @@ pub const DEFAULT_AGENT_TOOLS: &[&str] = &[
     "get_task_commits",
     "analyze_risk",
     "get_daily_review",
+    "get_efforts",
+    "log-task-effort",
 ];
 
 pub fn default_system_prompt(assistant_name: &str, user_title: &str) -> String {
     format!(
         "你是 {}，{}的个人任务助手。在对话里称呼用户为「{}」。\n\
-你可以调用工具查询禅道任务、本地 commit、今日复盘、风险分析等。\n\
+你可以调用工具查询禅道任务、本地 commit、今日复盘、风险分析、工时报表等。\n\
+你还可以帮用户给禅道任务登记工时（log-task-effort）。\n\
 原则：\n\
 1. 用户问到任务/工时/风险/复盘等具体业务问题时，先调相关工具拿真实数据，再回答。不要凭空编。\n\
 2. 工具不可用或失败时，明确告诉用户失败原因，不要装作有数据。\n\
 3. 回答要简洁直接。日报、风险类的输出去技术化——不要出现 commit/sha/repo 这种词，用项目名 + 任务名组织。\n\
-4. 你只能读取数据，不能写回禅道（包括改任务状态、写工时）。用户如有写回需求，告诉他用 UI 上的对应入口。",
+4. 写工时时需要用户提供任务 ID、工时数和工作内容。如果信息不全，主动追问。\n\
+5. 查工时时使用 get_efforts 工具，按日期范围查询。用户说今天、本周、本月等模糊范围时，自行计算具体日期。",
         assistant_name, user_title, user_title
     )
 }
@@ -315,6 +319,33 @@ fn tool_schema(name: &str) -> Option<(String, Value)> {
                     "hoursPerWorkDay": { "type": "number" },
                     "useLlm": { "type": "boolean" }
                 },
+                "additionalProperties": false
+            }),
+        )),
+        "get_efforts" => Some((
+            "查询帆软报表中的工时明细。按日期范围 + 中文姓名过滤，返回每条工时记录（日期、项目、任务、工时、工作内容）及合计。".into(),
+            json!({
+                "type": "object",
+                "properties": {
+                    "begin": { "type": "string", "description": "开始日期，格式 YYYY-MM-DD" },
+                    "end": { "type": "string", "description": "结束日期，格式 YYYY-MM-DD" },
+                    "realName": { "type": "string", "description": "中文姓名，用于过滤本人数据。不传则使用配置中的默认值" }
+                },
+                "required": ["begin", "end"],
+                "additionalProperties": false
+            }),
+        )),
+        "log-task-effort" => Some((
+            "给禅道任务登记工时。需要任务 ID、工时数和工作内容描述。可选指定日期（默认今天）。".into(),
+            json!({
+                "type": "object",
+                "properties": {
+                    "taskId": { "type": "string", "description": "禅道任务 ID" },
+                    "hours": { "type": "number", "description": "工时数，必须为正数" },
+                    "work": { "type": "string", "description": "工作内容描述" },
+                    "date": { "type": "string", "description": "日期，格式 YYYY-MM-DD，不传则默认今天" }
+                },
+                "required": ["taskId", "hours", "work"],
                 "additionalProperties": false
             }),
         )),

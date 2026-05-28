@@ -42,6 +42,7 @@ pub async fn dispatch(name: &str, input: Value) -> Result<Value, String> {
         "get_task_commits" => get_task_commits(input).await,
         "get_daily_review" => get_daily_review(input).await,
         "get_classified_tasks" => get_classified_tasks(input).await,
+        "get_efforts" => get_efforts(input).await,
         "analyze_risk" => analyze_risk(input).await,
         "log-task-effort" => log_task_effort(input).await,
         "ask-llm" => ask_llm(input).await,
@@ -454,6 +455,39 @@ pub async fn get_today_tasks(_input: Value) -> Result<Value, String> {
         })
         .collect();
     Ok(Value::Array(filtered))
+}
+
+// ============================================================================
+// get_efforts：查帆软工时报表
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+struct GetEffortsInput {
+    begin: String,
+    end: String,
+    #[serde(default, rename = "realName")]
+    real_name: Option<String>,
+}
+
+pub async fn get_efforts(input: Value) -> Result<Value, String> {
+    let parsed: GetEffortsInput = serde_json::from_value(input)
+        .map_err(|e| format!("get_efforts 入参错误: {}", e))?;
+    let result = crate::fine_report::finereport_get_efforts(
+        parsed.begin,
+        parsed.end,
+        parsed.real_name,
+    )
+    .await?;
+
+    // 只返回 LLM 需要的字段，截断 summary/detailHtml 避免炸 token
+    let records = serde_json::to_value(&result.records)
+        .map_err(|e| format!("effort records 序列化失败: {}", e))?;
+    let total_hours: f32 = result.records.iter().map(|r| r.item_hours).sum();
+    Ok(json!({
+        "records": records,
+        "count": result.records.len(),
+        "totalHours": total_hours,
+    }))
 }
 
 // ============================================================================

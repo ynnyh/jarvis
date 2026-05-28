@@ -44,6 +44,12 @@ export interface JarvisConfig {
     baseUrl: string           // 如 http://zentao.example.com:9538/zentao
     account: string           // 用户的禅道账号；密码在 OS 密钥链里，不存这里
   }
+  /** 工时统计（FineReport）：禅道工时通过帆软报表读，密码在 keychain */
+  fineReport: {
+    baseUrl: string           // 如 http://REDACTED_DOMAIN
+    account: string           // 帆软用户名（多为禅道账号同名）
+    realName: string          // 中文显示名 —— 用于按本人过滤工时，空则不查询
+  }
   /** LLM 接入（默认 DeepSeek，OpenAI 兼容）。apiKey 这阶段明文存 config —— 用户已确认 */
   llm: {
     provider: 'deepseek' | 'openai' | 'custom'
@@ -105,6 +111,7 @@ const defaultConfig = (): JarvisConfig => ({
     todayModeSetOn: '',
   },
   zentao: { baseUrl: 'http://REDACTED_INTERNAL_IP:8989/zentao', account: '' },
+  fineReport: { baseUrl: 'http://REDACTED_DOMAIN', account: '', realName: '' },
   llm: {
     provider: 'deepseek',
     baseUrl: 'https://api.deepseek.com',
@@ -151,6 +158,13 @@ export const useConfigStore = defineStore('config', () => {
         zentao: {
           baseUrl: remote.zentao?.baseUrl?.trim() ? remote.zentao.baseUrl : defaults.zentao.baseUrl,
           account: remote.zentao?.account ?? defaults.zentao.account,
+        },
+        fineReport: {
+          baseUrl: remote.fineReport?.baseUrl?.trim()
+            ? remote.fineReport.baseUrl
+            : defaults.fineReport.baseUrl,
+          account: remote.fineReport?.account ?? defaults.fineReport.account,
+          realName: remote.fineReport?.realName ?? defaults.fineReport.realName,
         },
         llm: {
           provider: remote.llm?.provider ?? defaults.llm.provider,
