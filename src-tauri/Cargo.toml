@@ -1,6 +1,6 @@
 [package]
 name = "jarvis"
-version = "0.7.1"
+version = "0.7.2"
 description = "Jarvis Desktop AI Assistant"
 authors = ["you"]
 license = ""
@@ -44,3 +44,10 @@ tauri-plugin-autostart = "2.5.1"
 # Windows 走 tasklist，不需要 libc
 [target.'cfg(not(windows))'.dependencies]
 libc = "0.2"
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1
+opt-level = "s"
+panic = "abort"

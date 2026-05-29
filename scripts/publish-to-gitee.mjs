@@ -195,7 +195,9 @@ async function createOrFindRelease() {
 const release = await createOrFindRelease()
 
 // --- 4. 上传附件 ---
-async function uploadAsset(filePath, name) {
+async function uploadAsset(filePath, name, { optional = false } = {}) {
+  const stat = await fs.stat(filePath)
+  const fileSizeMB = stat.size / (1024 * 1024)
   const data = await fs.readFile(filePath)
   const maxAttempts = 5
   let lastErr
@@ -211,7 +213,7 @@ async function uploadAsset(filePath, name) {
       if (!r.ok) {
         const t = await r.text()
         if (t.includes('已存在') || t.includes('exist')) {
-          console.log(`  ↪ ${name} 已存在，跳过上传`)
+          console.log(`  ↪ ${name} (${fileSizeMB.toFixed(1)}MB) 已存在，跳过上传`)
           return `https://gitee.com/${GITEE_OWNER}/${GITEE_REPO}/releases/download/${tag}/${name}`
         }
         if (r.status >= 500 || r.status === 429) {
@@ -220,7 +222,7 @@ async function uploadAsset(filePath, name) {
         throw new Error(`上传 ${name} 失败：${r.status} ${t}`)
       }
       const j = await r.json()
-      console.log(`  ↪ 上传 ${name}: ${j.browser_download_url}`)
+      console.log(`  ✓ 上传 ${name} (${fileSizeMB.toFixed(1)}MB): ${j.browser_download_url}`)
       return j.browser_download_url
     } catch (e) {
       lastErr = e
@@ -236,30 +238,36 @@ async function uploadAsset(filePath, name) {
         /HTTP 5\d\d/.test(String(e?.message)) ||
         /HTTP 429/.test(String(e?.message))
       if (attempt < maxAttempts && isRetryable) {
-        const backoff = 5000 * attempt
-        console.warn(`  ⚠ ${name} 第 ${attempt}/${maxAttempts} 次失败（${errCode || e?.message}），${backoff}ms 后重试`)
+        const baseBackoff = fileSizeMB > 30 ? 15000 : 5000
+        const backoff = baseBackoff * attempt
+        console.warn(`  ⚠ ${name} (${fileSizeMB.toFixed(1)}MB) 第 ${attempt}/${maxAttempts} 次失败（${errCode || e?.message}），${(backoff / 1000).toFixed(0)}s 后重试`)
         await new Promise(r => setTimeout(r, backoff))
         continue
+      }
+      if (optional) {
+        console.warn(`  ⚠ ${name} 上传失败（可选文件，跳过）：${e?.message || e}`)
+        return null
       }
       throw e
     }
   }
+  if (optional) {
+    console.warn(`  ⚠ ${name} ${maxAttempts} 次全部失败（可选文件，跳过）`)
+    return null
+  }
   throw lastErr
 }
 
-// 并发上传：每个文件独立 connection，Gitee 单连接慢但多连接可压一半时间
-// 失败重试逻辑在 uploadAsset 内部，Promise.all 失败 fail-fast
+// 顺序上传：按优先级排序，小文件先传、大文件后传
+// 1 = sig（<1KB，确认 API 通不通）
+// 2 = updater target（自动更新必需）+ install script
+// 3 = 额外发行物（.dmg 等，可选）
 const platformEntries = {}
-const uploadJobs = []
-
-const macDevInstaller = path.join(repoRoot, 'scripts/install-macos-dev.sh')
-if (existsSync(macDevInstaller)) {
-  uploadJobs.push(uploadAsset(macDevInstaller, 'install-macos-dev.sh'))
-}
+const uploadQueue = []
 
 for (const p of platforms) {
   const fileCount = 1 + 1 + p.extras.length
-  console.log(`→ ${p.platformId}: 排队 ${fileCount} 个上传`)
+  console.log(`→ ${p.platformId}: ${fileCount} 个文件待上传`)
   const platformIds = p.platformId
     .split(',')
     .map(id => id.trim())
@@ -267,29 +275,131 @@ for (const p of platforms) {
   for (const platformId of platformIds) {
     platformEntries[platformId] = {
       signature: readFileSync(p.sigPath, 'utf8').trim(),
-      url: null, // 待 updater 上传完填
+      url: null,
     }
   }
-  // updater target（latest.json 的 url 指向它）
-  uploadJobs.push(
-    uploadAsset(p.updaterPath, p.updaterName).then(url => {
+  uploadQueue.push({
+    filePath: p.sigPath,
+    name: p.sigName,
+    priority: 1,
+    optional: false,
+    onComplete: () => {},
+  })
+  uploadQueue.push({
+    filePath: p.updaterPath,
+    name: p.updaterName,
+    priority: 2,
+    optional: false,
+    onComplete: (url) => {
       for (const platformId of platformIds) {
         platformEntries[platformId].url = url
       }
-    }),
-  )
-  // sig
-  uploadJobs.push(uploadAsset(p.sigPath, p.sigName))
-  // 额外发行物（macOS .dmg 等）
+    },
+  })
   for (const ex of p.extras) {
-    uploadJobs.push(uploadAsset(ex.path, ex.name))
+    uploadQueue.push({
+      filePath: ex.path,
+      name: ex.name,
+      priority: 3,
+      optional: true,
+      onComplete: () => {},
+    })
   }
 }
 
-console.log(`\n并发上传 ${uploadJobs.length} 个文件...`)
+const macDevInstaller = path.join(repoRoot, 'scripts/install-macos-dev.sh')
+if (existsSync(macDevInstaller)) {
+  uploadQueue.push({
+    filePath: macDevInstaller,
+    name: 'install-macos-dev.sh',
+    priority: 2,
+    optional: true,
+    onComplete: () => {},
+  })
+}
+
+uploadQueue.sort((a, b) => a.priority - b.priority)
+
+console.log(`\n顺序上传 ${uploadQueue.length} 个文件（小文件优先）...`)
 const t0 = Date.now()
-await Promise.all(uploadJobs)
+for (const job of uploadQueue) {
+  const url = await uploadAsset(job.filePath, job.name, { optional: job.optional })
+  job.onComplete(url)
+}
 console.log(`✓ 全部上传完成（${((Date.now() - t0) / 1000).toFixed(1)}s）`)
+
+// --- 4b. 备份上传 .dmg 到 GitHub Release ---
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN
+const GITHUB_REPO = process.env.GITHUB_REPO
+const dmgFiles = platforms.flatMap(p => p.extras).filter(ex => ex.name.endsWith('.dmg'))
+
+if (GITHUB_TOKEN && GITHUB_REPO && dmgFiles.length > 0) {
+  console.log(`\n--- 上传 .dmg 到 GitHub Release 备份 ---`)
+  try {
+    let ghRelease
+    const ghCheckRes = await fetch(
+      `https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${tag}`,
+      { headers: { Authorization: `token ${GITHUB_TOKEN}`, 'User-Agent': 'jarvis-ci' } },
+    )
+    if (ghCheckRes.ok) {
+      ghRelease = await ghCheckRes.json()
+      console.log(`✓ 复用已有 GitHub release ${tag}`)
+    } else {
+      const ghCreateRes = await fetch(
+        `https://api.github.com/repos/${GITHUB_REPO}/releases`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `token ${GITHUB_TOKEN}`,
+            'User-Agent': 'jarvis-ci',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            tag_name: tag,
+            name: tag,
+            body: process.env.RELEASE_NOTES || `Jarvis ${tag}`,
+            prerelease: false,
+            target_commitish: 'main',
+          }),
+        },
+      )
+      if (ghCreateRes.ok) {
+        ghRelease = await ghCreateRes.json()
+        console.log(`✓ 创建 GitHub release ${tag}`)
+      } else {
+        console.warn(`⚠ 创建 GitHub release 失败：${ghCreateRes.status} ${await ghCreateRes.text()}`)
+      }
+    }
+    if (ghRelease) {
+      for (const dmg of dmgFiles) {
+        try {
+          const dmgData = await fs.readFile(dmg.path)
+          const uploadUrl = ghRelease.upload_url.replace(/\{.*\}/, '')
+          const r = await fetch(`${uploadUrl}?name=${dmg.name}`, {
+            method: 'POST',
+            headers: {
+              Authorization: `token ${GITHUB_TOKEN}`,
+              'User-Agent': 'jarvis-ci',
+              'Content-Type': 'application/octet-stream',
+              'Content-Length': String(dmgData.length),
+            },
+            body: dmgData,
+          })
+          if (r.ok) {
+            const j = await r.json()
+            console.log(`  ✓ GitHub 备份 ${dmg.name}: ${j.browser_download_url}`)
+          } else {
+            console.warn(`  ⚠ GitHub 上传 ${dmg.name} 失败：${r.status} ${await r.text()}`)
+          }
+        } catch (e) {
+          console.warn(`  ⚠ GitHub 上传 ${dmg.name} 异常：${e?.message || e}`)
+        }
+      }
+    }
+  } catch (e) {
+    console.warn(`⚠ GitHub Release 操作失败（不影响 Gitee 发布）：${e?.message || e}`)
+  }
+}
 
 // --- 5. 写 latest.json ---
 // notes 优先级：CHANGELOG.md 当前版本节 > RELEASE_NOTES env > 兜底占位。

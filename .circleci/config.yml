@@ -86,8 +86,8 @@ jobs:
             node scripts/ci/prepare-tauri-signing.mjs
       - restore_cache:
           keys:
-            - win-cargo-target-{{ checksum "src-tauri/Cargo.lock" }}
-            - win-cargo-target-
+            - win-cargo-target-v2-{{ checksum "src-tauri/Cargo.lock" }}
+            - win-cargo-target-v2-
       - run:
           name: Build Windows installer
           no_output_timeout: 30m
@@ -97,9 +97,11 @@ jobs:
             $env:PATH="$nodeDir;$env:PATH"
             npm run desktop:build
       - save_cache:
-          key: win-cargo-target-{{ checksum "src-tauri/Cargo.lock" }}
+          key: win-cargo-target-v2-{{ checksum "src-tauri/Cargo.lock" }}
           paths:
-            - src-tauri/target
+            - src-tauri/target/release/deps
+            - src-tauri/target/release/build
+            - src-tauri/target/release/.fingerprint
       - run:
           name: Stage Windows artifacts
           command: |
@@ -161,17 +163,22 @@ jobs:
             node -e "const fs=require('node:fs'); const file='src-tauri/tauri.conf.json'; const conf=JSON.parse(fs.readFileSync(file,'utf8')); conf.bundle ||= {}; conf.bundle.macOS ||= {}; conf.bundle.macOS.signingIdentity='-'; fs.writeFileSync(file, JSON.stringify(conf, null, 2) + '\n');"
       - restore_cache:
           keys:
-            - macos-cargo-target-{{ checksum "src-tauri/Cargo.lock" }}
-            - macos-cargo-target-
+            - macos-cargo-target-v2-{{ checksum "src-tauri/Cargo.lock" }}
+            - macos-cargo-target-v2-
       - run:
           name: Build macOS universal dev package
           no_output_timeout: 30m
           command: |
             npm run desktop:build-macos-dev
       - save_cache:
-          key: macos-cargo-target-{{ checksum "src-tauri/Cargo.lock" }}
+          key: macos-cargo-target-v2-{{ checksum "src-tauri/Cargo.lock" }}
           paths:
-            - src-tauri/target
+            - src-tauri/target/release/deps
+            - src-tauri/target/release/build
+            - src-tauri/target/release/.fingerprint
+            - src-tauri/target/universal-apple-darwin/release/deps
+            - src-tauri/target/universal-apple-darwin/release/build
+            - src-tauri/target/universal-apple-darwin/release/.fingerprint
       - run:
           name: Stage macOS artifacts
           command: |
@@ -205,6 +212,8 @@ jobs:
           command: npm run release:gitee
           environment:
             ARTIFACTS_DIR: artifacts
+            GITHUB_TOKEN: ${GITHUB_TOKEN}
+            GITHUB_REPO: ${GITHUB_REPO}
 
 workflows:
   release:
