@@ -48,6 +48,12 @@ jobs:
             $env:PATH="$nodeDir;$env:PATH"
             npm ci --no-audit --no-fund
       - run:
+          name: Verify updater signing key
+          command: |
+            $nodeDir = "$env:USERPROFILE\node\node-v20.19.0-win-x64"
+            $env:PATH="$nodeDir;$env:PATH"
+            node scripts/ci/prepare-tauri-signing.mjs
+      - run:
           name: Verify frontend toolchain
           command: |
             $nodeDir = "$env:USERPROFILE\node\node-v20.19.0-win-x64"
@@ -63,6 +69,9 @@ jobs:
             $nodeDir = "$env:USERPROFILE\node\node-v20.19.0-win-x64"
             $env:PATH="$env:USERPROFILE\.cargo\bin;$env:PATH"
             $env:PATH="$nodeDir;$env:PATH"
+            $env:TAURI_SIGNING_PRIVATE_KEY_PATH="$PWD\.tauri-ci\updater-private.key"
+            Remove-Item Env:\TAURI_SIGNING_PRIVATE_KEY -ErrorAction SilentlyContinue
+            Remove-Item Env:\TAURI_SIGNING_PRIVATE_KEY_B64 -ErrorAction SilentlyContinue
             npm run desktop:build
       - run:
           name: Stage Windows artifacts
@@ -101,13 +110,20 @@ jobs:
           name: Install dependencies
           command: npm ci --no-audit --no-fund
       - run:
+          name: Verify updater signing key
+          command: node scripts/ci/prepare-tauri-signing.mjs
+      - run:
           name: Configure ad-hoc macOS signing
           command: |
             node -e "const fs=require('node:fs'); const file='src-tauri/tauri.conf.json'; const conf=JSON.parse(fs.readFileSync(file,'utf8')); conf.bundle ||= {}; conf.bundle.macOS ||= {}; conf.bundle.macOS.signingIdentity='-'; fs.writeFileSync(file, JSON.stringify(conf, null, 2) + '\n');"
       - run:
           name: Build macOS universal dev package
           no_output_timeout: 30m
-          command: npm run desktop:build-macos-dev
+          command: |
+            export TAURI_SIGNING_PRIVATE_KEY_PATH="$PWD/.tauri-ci/updater-private.key"
+            unset TAURI_SIGNING_PRIVATE_KEY
+            unset TAURI_SIGNING_PRIVATE_KEY_B64
+            npm run desktop:build-macos-dev
       - run:
           name: Stage macOS artifacts
           command: |

@@ -23,6 +23,7 @@ src-tauri/bundled/*
 # Tauri 签名密钥（绝对不能进库；PowerShell 不展开 ~ 会在项目根建出 ~ 目录，要拦死）
 ~/
 .tauri/
+.tauri-ci/
 *.key
 *.key.pub
 
