@@ -69,9 +69,6 @@ jobs:
             $nodeDir = "$env:USERPROFILE\node\node-v20.19.0-win-x64"
             $env:PATH="$env:USERPROFILE\.cargo\bin;$env:PATH"
             $env:PATH="$nodeDir;$env:PATH"
-            $env:TAURI_SIGNING_PRIVATE_KEY_PATH="$PWD\.tauri-ci\updater-private.key"
-            Remove-Item Env:\TAURI_SIGNING_PRIVATE_KEY -ErrorAction SilentlyContinue
-            Remove-Item Env:\TAURI_SIGNING_PRIVATE_KEY_B64 -ErrorAction SilentlyContinue
             npm run desktop:build
       - run:
           name: Stage Windows artifacts
