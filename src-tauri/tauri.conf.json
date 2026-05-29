@@ -142,7 +142,7 @@
       "endpoints": [
         "https://gitee.com/ynnyh/jarvis/raw/main/latest.json"
       ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDczRDc0RkIyQTU0RkU1RDUKUldUVjVVK2xzay9YYytYVkt6cThXODdqMlVDa0xxT01JUC8wQnRXby9sR2hwMEh5Y011YTBzK2QK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IHJzaWduIGVuY3J5cHRlZCBzZWNyZXQga2V5ClJXUlRZMEl5M2JHM3ZRKzdNUGVZZ0syNDJsZlBGQlRadDJEQXJtMjhFWlo0OE8ycWVFVUFBQkFBQUFBQUFBQUFBQUlBQUFBQVltUEhoREw0eUQvdmZGWnhpNmFrVFl1UGRjeExnZXlvclI4QWszR0FUTGJHL2ZJc2VZdGI2dTkvNGFqZUVhQWxYeWVKTzZIV1JXSW85T1BYOG9BNDJnU0taTVhyOTFZUmZCWEJWbExERUcvVEg0c0NKTk1FbFg3YUU1MDd0UVorM2xnS0Q3M3JUTFE9Cg==",
       "windows": {
         "installMode": "passive"
       }
