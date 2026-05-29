@@ -19,6 +19,12 @@ const keyFromBase64 = process.env.TAURI_SIGNING_PRIVATE_KEY_B64?.trim()
 const keyFromPlain = process.env.TAURI_SIGNING_PRIVATE_KEY?.trim()
 const password = process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD ?? ''
 
+console.log(`[debug] keyFromBase64 length: ${keyFromBase64?.length ?? '(not set)'}`)
+console.log(`[debug] keyFromPlain length: ${keyFromPlain?.length ?? '(not set)'}`)
+console.log(`[debug] password length: ${password.length}`)
+console.log(`[debug] keyFromPlain first 60 chars: ${keyFromPlain?.slice(0, 60) ?? '(not set)'}`)
+console.log(`[debug] keyFromPlain last 20 chars: ${keyFromPlain?.slice(-20) ?? '(not set)'}`)
+
 const privateKey = keyFromBase64 ? decodeBase64(keyFromBase64) : keyFromPlain
 const keySource = keyFromBase64 ? 'TAURI_SIGNING_PRIVATE_KEY_B64' : 'TAURI_SIGNING_PRIVATE_KEY'
 
