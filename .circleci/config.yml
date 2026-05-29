@@ -120,9 +120,7 @@ jobs:
           name: Build macOS universal dev package
           no_output_timeout: 30m
           command: |
-            export TAURI_SIGNING_PRIVATE_KEY_PATH="$PWD/.tauri-ci/updater-private.key"
-            unset TAURI_SIGNING_PRIVATE_KEY
-            unset TAURI_SIGNING_PRIVATE_KEY_B64
+            ls -la .tauri-ci/updater-private.key || true
             npm run desktop:build-macos-dev
       - run:
           name: Stage macOS artifacts
