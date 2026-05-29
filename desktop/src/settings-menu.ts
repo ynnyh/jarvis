@@ -1,5 +1,7 @@
 import type { Component } from 'vue'
+import AutoStartSection from './components/settings/AutoStartSection.vue'
 import AssistantNameSection from './components/settings/AssistantNameSection.vue'
+import RemindersSection from './components/settings/RemindersSection.vue'
 import ChangelogSection from './components/settings/ChangelogSection.vue'
 import ChannelsSection from './components/settings/ChannelsSection.vue'
 import EffortClosingSection from './components/settings/EffortClosingSection.vue'
@@ -47,7 +49,7 @@ export const SETTINGS_PAGE_COMPONENTS: Record<SettingsPageKey, Component[]> = {
   code: [RepoRootsSection, ExcludedLinesSection],
   schedule: [WorkDaysSection, WorkPeriodsSection, QuietRulesSection],
   effortClosing: [EffortClosingSection],
-  nudges: [RitualsSection, WorkdayNudgesSection, TodayOverrideSection],
-  appearance: [AssistantNameSection, PetSection, LeftClickActionSection],
+  nudges: [RitualsSection, WorkdayNudgesSection, TodayOverrideSection, RemindersSection],
+  appearance: [AutoStartSection, AssistantNameSection, PetSection, LeftClickActionSection],
   about: [ChangelogSection],
 }

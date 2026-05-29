@@ -403,7 +403,10 @@ impl ZentaoClient {
         let mut other = Vec::new();
 
         for t in &tasks {
-            let id = t.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            // 禅道 id 可能是数字或字符串，统一转成字符串
+            let id = t.get("id")
+                .and_then(|v| v.as_str().map(String::from).or_else(|| v.as_u64().map(|n| n.to_string())))
+                .unwrap_or_default();
             let name = t.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let status = t.get("status").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let pri = t.get("pri").and_then(|v| v.as_u64()).unwrap_or(0) as u8;

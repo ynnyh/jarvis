@@ -153,9 +153,13 @@ export function useUpdater(options: UseUpdaterOptions = {}) {
       phase.value = 'installed'
       await relaunch()
     } catch (e: any) {
-      lastError.value = e?.message ?? String(e)
+      const msg = e?.message ?? String(e)
+      lastError.value = msg
       phase.value = 'error'
       console.error('[updater] install 失败：', e)
+      // 安装失败后清掉 available，避免 UI 上"下载更新"按钮无限出现。
+      // 下次 checkNow() 会重新检测。
+      available.value = null
     }
   }
 

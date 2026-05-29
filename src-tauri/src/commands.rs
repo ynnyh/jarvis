@@ -256,6 +256,15 @@ fn hydrate_secret_placeholders(value: &mut serde_json::Value) {
     mark_secret_if_saved(value, &["zentao", "sessionCookie"], "zentao.sessionCookie");
     mark_secret_if_saved(value, &["channels", "telegram", "botToken"], "channels.telegram.botToken");
     mark_secret_if_saved(value, &["channels", "qqbot", "appSecret"], "channels.qqbot.appSecret");
+    // llmProfiles 中每个 profile 的 apiKey
+    if let Some(profiles) = value.get_mut("llmProfiles").and_then(|v| v.as_array_mut()) {
+        for p in profiles.iter_mut() {
+            if let Some(id) = p.get("id").and_then(|v| v.as_str()) {
+                let account = format!("llm.profile.{}.apiKey", id);
+                mark_secret_if_saved(p, &["apiKey"], &account);
+            }
+        }
+    }
 }
 
 fn strip_secrets_for_save(value: &mut serde_json::Value) -> Result<(), String> {
@@ -263,6 +272,15 @@ fn strip_secrets_for_save(value: &mut serde_json::Value) -> Result<(), String> {
     extract_secret_to_keychain(value, &["zentao", "sessionCookie"], "zentao.sessionCookie")?;
     extract_secret_to_keychain(value, &["channels", "telegram", "botToken"], "channels.telegram.botToken")?;
     extract_secret_to_keychain(value, &["channels", "qqbot", "appSecret"], "channels.qqbot.appSecret")?;
+    // llmProfiles 中每个 profile 的 apiKey
+    if let Some(profiles) = value.get_mut("llmProfiles").and_then(|v| v.as_array_mut()) {
+        for p in profiles.iter_mut() {
+            if let Some(id) = p.get("id").and_then(|v| v.as_str()) {
+                let account = format!("llm.profile.{}.apiKey", id);
+                extract_secret_to_keychain(p, &["apiKey"], &account)?;
+            }
+        }
+    }
     Ok(())
 }
 
@@ -322,6 +340,252 @@ pub async fn config_save(config: serde_json::Value) -> Result<(), String> {
 
     // 通知守护进程刷新缓存——daemon 已完全下线，pinging 已无意义，留个空 op
     Ok(())
+}
+
+// ===== LLM Profile 管理 =====
+
+/// 将当前 llm 配置保存为一个新的 profile（或更新已有 profile）
+#[tauri::command]
+pub async fn llm_profile_save(profile_id: String, name: String) -> Result<serde_json::Value, String> {
+    let path = config_path();
+    let mut cfg: serde_json::Value = if path.exists() {
+        let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        serde_json::from_str(&content).unwrap_or_default()
+    } else {
+        serde_json::json!({})
+    };
+
+    // 读当前 llm 配置
+    let llm = cfg.get("llm").cloned().unwrap_or_default();
+    let mut profile = llm.clone();
+    if let Some(obj) = profile.as_object_mut() {
+        obj.insert("id".into(), serde_json::Value::String(profile_id.clone()));
+        obj.insert("name".into(), serde_json::Value::String(name));
+    }
+
+    // 将当前 llm.apiKey（keychain）复制到 profile 专属 keychain 槽位
+    if let Some(key) = crate::settings::secret_get("llm.apiKey") {
+        let _ = crate::settings::secret_set(&format!("llm.profile.{}.apiKey", profile_id), &key);
+    }
+
+    // 更新或插入 profile
+    if cfg.get("llmProfiles").is_none() {
+        cfg.as_object_mut().unwrap().insert("llmProfiles".into(), serde_json::json!([]));
+    }
+    let profiles = cfg
+        .get_mut("llmProfiles")
+        .and_then(|v| v.as_array_mut())
+        .unwrap();
+    if let Some(idx) = profiles
+        .iter()
+        .position(|p| p.get("id").and_then(|v| v.as_str()) == Some(&profile_id))
+    {
+        profiles[idx] = profile;
+    } else {
+        profiles.push(profile);
+    }
+
+    cfg.as_object_mut()
+        .unwrap()
+        .insert("activeLlmProfileId".into(), serde_json::Value::String(profile_id));
+
+    strip_secrets_for_save(&mut cfg)?;
+    let content = serde_json::to_string_pretty(&cfg).unwrap_or_default();
+    std::fs::write(&path, content).map_err(|e| e.to_string())?;
+
+    hydrate_secret_placeholders(&mut cfg);
+    let defaults = default_config();
+    merge_defaults(&mut cfg, &defaults);
+    Ok(cfg)
+}
+
+/// 切换到指定 profile：把该 profile 的字段复制到 llm，apiKey 从 keychain 槽位拷到 llm.apiKey
+#[tauri::command]
+pub async fn llm_profile_switch(profile_id: String) -> Result<serde_json::Value, String> {
+    let path = config_path();
+    let mut cfg: serde_json::Value = if path.exists() {
+        let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        serde_json::from_str(&content).unwrap_or_default()
+    } else {
+        return Err("No config found".into());
+    };
+
+    // 把当前 llm.apiKey 保存到当前 profile 的 keychain 槽位
+    let current_id = cfg
+        .get("activeLlmProfileId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if !current_id.is_empty() {
+        if let Some(key) = crate::settings::secret_get("llm.apiKey") {
+            let _ = crate::settings::secret_set(
+                &format!("llm.profile.{}.apiKey", current_id),
+                &key,
+            );
+        }
+    }
+
+    // 找到目标 profile
+    let target = cfg
+        .get("llmProfiles")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| {
+            arr.iter()
+                .find(|p| p.get("id").and_then(|v| v.as_str()) == Some(&profile_id))
+                .cloned()
+        })
+        .ok_or("Profile not found")?;
+
+    // 把目标 profile 的字段复制到 llm
+    if let Some(llm) = cfg.get_mut("llm").and_then(|v| v.as_object_mut()) {
+        for key in &["provider", "baseUrl", "model", "wireApi"] {
+            if let Some(val) = target.get(*key) {
+                llm.insert(key.to_string(), val.clone());
+            }
+        }
+    }
+
+    // 把目标 profile 的 apiKey 从其 keychain 槽位拷到 llm.apiKey
+    let profile_key = format!("llm.profile.{}.apiKey", profile_id);
+    if let Some(key) = crate::settings::secret_get(&profile_key) {
+        let _ = crate::settings::secret_set("llm.apiKey", &key);
+    }
+
+    cfg.as_object_mut()
+        .unwrap()
+        .insert("activeLlmProfileId".into(), serde_json::Value::String(profile_id));
+
+    strip_secrets_for_save(&mut cfg)?;
+    let content = serde_json::to_string_pretty(&cfg).unwrap_or_default();
+    std::fs::write(&path, content).map_err(|e| e.to_string())?;
+
+    hydrate_secret_placeholders(&mut cfg);
+    let defaults = default_config();
+    merge_defaults(&mut cfg, &defaults);
+    Ok(cfg)
+}
+
+/// 删除指定 profile
+#[tauri::command]
+pub async fn llm_profile_delete(profile_id: String) -> Result<serde_json::Value, String> {
+    let path = config_path();
+    let mut cfg: serde_json::Value = if path.exists() {
+        let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        serde_json::from_str(&content).unwrap_or_default()
+    } else {
+        return Err("No config found".into());
+    };
+
+    if let Some(profiles) = cfg.get_mut("llmProfiles").and_then(|v| v.as_array_mut()) {
+        profiles.retain(|p| p.get("id").and_then(|v| v.as_str()) != Some(&profile_id));
+    }
+
+    let active_id = cfg
+        .get("activeLlmProfileId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if active_id == profile_id {
+        cfg.as_object_mut()
+            .unwrap()
+            .insert("activeLlmProfileId".into(), serde_json::Value::String(String::new()));
+    }
+
+    strip_secrets_for_save(&mut cfg)?;
+    let content = serde_json::to_string_pretty(&cfg).unwrap_or_default();
+    std::fs::write(&path, content).map_err(|e| e.to_string())?;
+
+    hydrate_secret_placeholders(&mut cfg);
+    let defaults = default_config();
+    merge_defaults(&mut cfg, &defaults);
+    Ok(cfg)
+}
+
+/// 从表单字段直接 upsert profile（新增或编辑）
+#[tauri::command]
+pub async fn llm_profile_upsert(
+    profile_id: String,
+    name: String,
+    provider: String,
+    base_url: String,
+    model: String,
+    api_key: String,
+    wire_api: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let path = config_path();
+    let mut cfg: serde_json::Value = if path.exists() {
+        let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        serde_json::from_str(&content).unwrap_or_default()
+    } else {
+        serde_json::json!({})
+    };
+
+    // 构造 profile 对象
+    let mut profile = serde_json::json!({
+        "id": profile_id,
+        "name": name,
+        "provider": provider,
+        "baseUrl": base_url,
+        "model": model,
+    });
+    if let Some(w) = wire_api {
+        profile.as_object_mut().unwrap().insert("wireApi".into(), serde_json::Value::String(w));
+    }
+
+    // API Key：非空则写入 keychain；空串表示不变更（编辑时保留原有）
+    let keychain_key = format!("llm.profile.{}.apiKey", profile_id);
+    if !api_key.is_empty() {
+        let _ = crate::settings::secret_set(&keychain_key, &api_key);
+    }
+
+    // upsert 到 llmProfiles
+    if cfg.get("llmProfiles").is_none() {
+        cfg.as_object_mut().unwrap().insert("llmProfiles".into(), serde_json::json!([]));
+    }
+    let profiles = cfg
+        .get_mut("llmProfiles")
+        .and_then(|v| v.as_array_mut())
+        .unwrap();
+    if let Some(idx) = profiles
+        .iter()
+        .position(|p| p.get("id").and_then(|v| v.as_str()) == Some(&profile_id))
+    {
+        profiles[idx] = profile;
+    } else {
+        profiles.push(profile);
+    }
+
+    // 设为 active
+    cfg.as_object_mut()
+        .unwrap()
+        .insert("activeLlmProfileId".into(), serde_json::Value::String(profile_id.clone()));
+
+    // 把该 profile 的字段同步到 llm
+    let target = cfg
+        .get("llmProfiles")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.iter().find(|p| p.get("id").and_then(|v| v.as_str()) == Some(&profile_id)).cloned())
+        .ok_or("Profile not found after upsert")?;
+    if let Some(llm) = cfg.get_mut("llm").and_then(|v| v.as_object_mut()) {
+        for key in &["provider", "baseUrl", "model", "wireApi"] {
+            if let Some(val) = target.get(*key) {
+                llm.insert(key.to_string(), val.clone());
+            }
+        }
+    }
+    // 同步 apiKey 到 llm.apiKey keychain
+    if !api_key.is_empty() {
+        let _ = crate::settings::secret_set("llm.apiKey", &api_key);
+    } else if let Some(existing) = crate::settings::secret_get(&keychain_key) {
+        let _ = crate::settings::secret_set("llm.apiKey", &existing);
+    }
+
+    strip_secrets_for_save(&mut cfg)?;
+    let content = serde_json::to_string_pretty(&cfg).unwrap_or_default();
+    std::fs::write(&path, content).map_err(|e| e.to_string())?;
+
+    hydrate_secret_placeholders(&mut cfg);
+    let defaults = default_config();
+    merge_defaults(&mut cfg, &defaults);
+    Ok(cfg)
 }
 
 // ===== 打开禅道任务页 =====

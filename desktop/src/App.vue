@@ -2,12 +2,11 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { getCurrentWindow, LogicalPosition } from '@tauri-apps/api/window'
+import { getCurrentWindow, LogicalPosition, currentMonitor } from '@tauri-apps/api/window'
 
 /** 获取当前窗口所在屏幕的逻辑像素全局边界（支持多屏幕） */
 async function getMonitorBounds(): Promise<{ x: number; y: number; w: number; h: number }> {
-  const win = getCurrentWindow()
-  const mon = await win.currentMonitor()
+  const mon = await currentMonitor()
   if (!mon) return { x: 0, y: 0, w: window.screen.width, h: window.screen.height }
   return {
     x: mon.position.x / mon.scaleFactor,
@@ -27,6 +26,7 @@ import { useWorkdayNudges } from './composables/useWorkdayNudges'
 import { useTimeGreetings } from './composables/useTimeGreetings'
 import { useCursorPassthrough } from './composables/useCursorPassthrough'
 import { useUpdater } from './composables/useUpdater'
+import { useScheduledReminders } from './composables/useScheduledReminders'
 import TaskWindow from './components/TaskWindow.vue'
 import SettingsWindow from './components/SettingsWindow.vue'
 import RiskWindow from './components/RiskWindow.vue'
@@ -74,6 +74,11 @@ useTimeGreetings({
 })
 // passthrough：让小人窗口的空白区域穿透到桌面，详见 composable 内部说明
 useCursorPassthrough()
+useScheduledReminders({
+  onFire: (message) => {
+    showAlert(message, '⏰', 'happy', 15000)
+  },
+})
 
 const updater = useUpdater({
   onAvailable: (version) => {

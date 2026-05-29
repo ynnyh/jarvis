@@ -55,6 +55,21 @@ jobs:
         run: npm ci --no-audit --no-fund
         timeout-minutes: 5
 
+      - name: Verify version consistency (Cargo.toml == tauri.conf.json)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo_ver=$(grep -m1 '^version' src-tauri/Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          tauri_ver=$(grep -m1 '"version"' src-tauri/tauri.conf.json | sed 's/.*: *"\(.*\)".*/\1/')
+          echo "Cargo.toml:  $cargo_ver"
+          echo "tauri.conf.json: $tauri_ver"
+          if [ "$cargo_ver" != "$tauri_ver" ]; then
+            echo "❌ 版本不一致！Cargo.toml=$cargo_ver vs tauri.conf.json=$tauri_ver"
+            echo "   请同步两个文件的版本号后再发版。"
+            exit 1
+          fi
+          echo "✓ 版本一致"
+
       - name: Verify updater signing key
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}

@@ -1,14 +1,25 @@
 use crate::channels::types::{AgentReply, ChannelMessage, ChannelsConfig, PendingAction};
 use crate::settings;
 use crate::tools;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tokio::sync::{mpsc, watch};
 
 const MAX_HISTORY_MESSAGES: usize = 20;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScheduledReminder {
+    pub id: String,
+    pub cron: String,
+    pub message: String,
+    pub enabled: bool,
+    #[serde(rename = "createdAt")]
+    pub created_at: i64,
+}
 
 type Sender = mpsc::Sender<OutboundMessage>;
 type Receiver = mpsc::Receiver<OutboundMessage>;
@@ -314,6 +325,12 @@ mod tests {
 }
 
 async fn handle_incoming(app: tauri::AppHandle, incoming: ChannelMessage) -> Result<AgentReply, String> {
+    // 定时提醒命令优先处理
+    if let Some(reply) = maybe_handle_reminder_command(&app, &incoming.text) {
+        append_channel_messages(&incoming, &reply.text, None)?;
+        return Ok(reply);
+    }
+
     if let Some(reply) = maybe_handle_confirmation(&incoming).await? {
         append_channel_messages(&incoming, &reply.text, None)?;
         return Ok(reply);
@@ -774,4 +791,184 @@ fn cleanup_effort_work(text: &str, task_id: &str) -> String {
     s.trim_matches(|c: char| c.is_whitespace() || "，,。.;；:：-_/".contains(c))
         .trim()
         .to_string()
+}
+
+// ===== 定时提醒命令 =====
+
+/**
+ * 支持的命令格式：
+ *   定时 HH:MM 提醒内容        → 每天 HH:MM 触发
+ *   定时 分 时 日 月 周 提醒内容 → 标准 cron 表达式
+ *   定时列表                   → 列出所有提醒
+ *   删除定时 N                 → 删除第 N 个提醒
+ */
+fn maybe_handle_reminder_command(app: &tauri::AppHandle, text: &str) -> Option<AgentReply> {
+    let trimmed = text.trim();
+
+    // 列表
+    if trimmed == "定时列表" || trimmed == "提醒列表" || trimmed == "我的定时" {
+        return Some(list_reminders());
+    }
+
+    // 删除
+    if let Some(idx) = try_parse_delete_reminder(trimmed) {
+        let reply = delete_reminder(idx);
+        let _ = app.emit("reminders-changed", ());
+        return Some(reply);
+    }
+
+    // 添加
+    if trimmed.starts_with("定时") || trimmed.starts_with("添加定时") || trimmed.starts_with("添加提醒") {
+        let reply = add_reminder(trimmed);
+        let _ = app.emit("reminders-changed", ());
+        return Some(reply);
+    }
+
+    None
+}
+
+fn try_parse_delete_reminder(text: &str) -> Option<usize> {
+    let patterns = ["删除定时 ", "删除提醒 ", "取消定时 ", "取消提醒 "];
+    for pat in patterns {
+        if let Some(rest) = text.strip_prefix(pat) {
+            if let Ok(n) = rest.trim().parse::<usize>() {
+                if n > 0 { return Some(n - 1); }
+            }
+        }
+    }
+    None
+}
+
+fn load_reminders() -> Vec<ScheduledReminder> {
+    let cfg = settings::load_raw_config().unwrap_or_else(|| json!({}));
+    cfg.get("reminders")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default()
+}
+
+fn save_reminders(reminders: &[ScheduledReminder]) {
+    let mut cfg = settings::load_raw_config().unwrap_or_else(|| json!({}));
+    cfg["reminders"] = serde_json::to_value(reminders).unwrap_or(json!([]));
+    let path = settings::config_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(content) = serde_json::to_string_pretty(&cfg) {
+        let _ = std::fs::write(&path, content);
+    }
+}
+
+fn add_reminder(text: &str) -> AgentReply {
+    // 去掉前缀
+    let content = text
+        .trim_start_matches("添加定时")
+        .trim_start_matches("添加提醒")
+        .trim_start_matches("定时")
+        .trim();
+
+    let (cron, message) = parse_reminder_input(content);
+    if message.is_empty() {
+        return AgentReply {
+            text: "格式不对。用法：\n定时 17:30 写日报\n定时 30 8 * * 1-5 晨会\n定时列表\n删除定时 1".to_string(),
+        };
+    }
+
+    let reminder = ScheduledReminder {
+        id: format!("r{}", chrono::Utc::now().timestamp_millis()),
+        cron: cron.clone(),
+        message: message.to_string(),
+        enabled: true,
+        created_at: chrono::Utc::now().timestamp_millis(),
+    };
+
+    let mut reminders = load_reminders();
+    reminders.push(reminder);
+    save_reminders(&reminders);
+
+    AgentReply {
+        text: format!("已添加定时提醒：\nCron: {}\n内容: {}\n\n用「定时列表」查看所有提醒，「删除定时 N」删除。", cron, message),
+    }
+}
+
+fn list_reminders() -> AgentReply {
+    let reminders = load_reminders();
+    if reminders.is_empty() {
+        return AgentReply {
+            text: "当前没有定时提醒。发送「定时 17:30 写日报」来添加。".to_string(),
+        };
+    }
+
+    let mut lines = vec!["📋 定时提醒列表：".to_string()];
+    for (i, r) in reminders.iter().enumerate() {
+        let status = if r.enabled { "✅" } else { "⏸" };
+        lines.push(format!("{}. {} {} — {}", i + 1, status, r.cron, r.message));
+    }
+    lines.push("\n发送「删除定时 N」删除指定提醒".to_string());
+
+    AgentReply { text: lines.join("\n") }
+}
+
+fn delete_reminder(index: usize) -> AgentReply {
+    let mut reminders = load_reminders();
+    if index >= reminders.len() {
+        return AgentReply {
+            text: format!("没有第 {} 个提醒，当前共 {} 个。", index + 1, reminders.len()),
+        };
+    }
+    let removed = reminders.remove(index);
+    save_reminders(&reminders);
+    AgentReply {
+        text: format!("已删除定时提醒：{} — {}", removed.cron, removed.message),
+    }
+}
+
+/**
+ * 解析用户输入为 (cron, message)。
+ *   "17:30 写日报"     → ("30 17 * * *", "写日报")
+ *   "30 8 * * 1-5 晨会" → ("30 8 * * 1-5", "晨会")
+ */
+fn parse_reminder_input(input: &str) -> (String, String) {
+    // 尝试匹配标准 cron 格式：5 个数字段 + 消息
+    let re = regex::Regex::new(
+        r"^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+)$"
+    ).ok();
+
+    if let Some(re) = &re {
+        if let Some(caps) = re.captures(input) {
+            let fields: Vec<&str> = (1..=5).filter_map(|i| caps.get(i).map(|m| m.as_str())).collect();
+            if fields.len() == 5 {
+                // 验证是否都是合法的 cron 字段
+                let all_valid = fields.iter().all(|f| {
+                    f.chars().all(|c| c.is_ascii_digit() || c == '*' || c == '-' || c == ',' || c == '/')
+                });
+                if all_valid {
+                    let msg = caps.get(6).map(|m| m.as_str().trim()).unwrap_or("");
+                    if !msg.is_empty() {
+                        return (fields.join(" "), msg.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // 尝试匹配 HH:MM 格式
+    let time_re = regex::Regex::new(
+        r"^([0-9]{1,2}):([0-9]{2})\s+(.+)$"
+    ).ok();
+
+    if let Some(re) = &time_re {
+        if let Some(caps) = re.captures(input) {
+            let hour: u32 = caps.get(1).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+            let minute: u32 = caps.get(2).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+            let msg = caps.get(3).map(|m| m.as_str().trim()).unwrap_or("");
+            if !msg.is_empty() && hour < 24 && minute < 60 {
+                return (
+                    format!("{} {} * * *", minute, hour),
+                    msg.to_string(),
+                );
+            }
+        }
+    }
+
+    (String::new(), String::new())
 }

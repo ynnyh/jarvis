@@ -10,7 +10,7 @@
 
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { getCurrentWindow, LogicalSize, LogicalPosition } from '@tauri-apps/api/window'
+import { getCurrentWindow, LogicalSize, LogicalPosition, currentMonitor } from '@tauri-apps/api/window'
 import { useConfigStore } from '../stores/config'
 import { normalizeZentaoBaseUrl } from '../composables/zentaoUrl'
 
@@ -42,7 +42,7 @@ async function enterWizardMode() {
       y: Math.round(outerPos.y / scale),
     }
     await win.setSize(new LogicalSize(WIZARD_W, WIZARD_H))
-    const monitor = await win.currentMonitor()
+    const monitor = await currentMonitor()
     if (monitor) {
       const monW = monitor.size.width / scale
       const monH = monitor.size.height / scale

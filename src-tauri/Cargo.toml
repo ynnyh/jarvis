@@ -1,6 +1,6 @@
 [package]
 name = "jarvis"
-version = "0.6.5"
+version = "0.7.1"
 description = "Jarvis Desktop AI Assistant"
 authors = ["you"]
 license = ""
@@ -38,6 +38,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 regex = "1"
 futures-util = "0.3"
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+tauri-plugin-autostart = "2.5.1"
 
 # 非 Windows 平台需要 libc::kill 来检测 daemon 进程存活
 # Windows 走 tasklist，不需要 libc

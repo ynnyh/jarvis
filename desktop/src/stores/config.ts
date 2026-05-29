@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 
 export interface WorkPeriod {
   start: string   // HH:MM
@@ -65,6 +66,10 @@ export interface JarvisConfig {
     /** 'chat'=/v1/chat/completions（默认）；'responses'=/v1/responses（Codex CLI 协议） */
     wireApi?: 'chat' | 'responses'
   }
+  /** 已保存的 LLM 配置列表，方便快速切换 */
+  llmProfiles: LlmProfile[]
+  /** 当前激活的 llmProfile id；空串表示未绑定 */
+  activeLlmProfileId: string
   channels: {
     autoStart: boolean
     telegram: {
@@ -94,6 +99,31 @@ export interface JarvisConfig {
   leftClickAction: LeftClickAction
   /** 选用的宠物形象 id（见 petManifest.ts）；默认 'robo'。形象不在列表时回退到默认 */
   petId: string
+  /** 开机自启 */
+  autoStartOnBoot: boolean
+  /** 定时提醒列表 */
+  reminders: ScheduledReminder[]
+}
+
+export interface ScheduledReminder {
+  id: string
+  /** 标准 cron 表达式（5段：分 时 日 月 周） */
+  cron: string
+  /** 提醒内容 */
+  message: string
+  enabled: boolean
+  createdAt: number
+}
+
+export interface LlmProfile {
+  id: string
+  /** 用户自定义名称 */
+  name: string
+  provider: 'deepseek' | 'openai' | 'custom'
+  baseUrl: string
+  model: string
+  apiKey: string
+  wireApi?: 'chat' | 'responses'
 }
 
 const defaultConfig = (): JarvisConfig => ({
@@ -144,6 +174,10 @@ const defaultConfig = (): JarvisConfig => ({
   commitsRange: 'thisWeek',
   leftClickAction: 'tasks',
   petId: 'robo',
+  autoStartOnBoot: true,
+  reminders: [],
+  llmProfiles: [],
+  activeLlmProfileId: '',
 })
 
 function todayStr(): string {
@@ -212,6 +246,10 @@ export const useConfigStore = defineStore('config', () => {
         commitsRange: remote.commitsRange ?? defaults.commitsRange,
         leftClickAction: remote.leftClickAction === 'review' ? 'review' : defaults.leftClickAction,
         petId: (remote.petId ?? '').trim() || defaults.petId,
+        autoStartOnBoot: remote.autoStartOnBoot ?? defaults.autoStartOnBoot,
+        reminders: Array.isArray(remote.reminders) ? remote.reminders : defaults.reminders,
+        llmProfiles: Array.isArray(remote.llmProfiles) ? remote.llmProfiles : defaults.llmProfiles,
+        activeLlmProfileId: remote.activeLlmProfileId ?? defaults.activeLlmProfileId,
       }
       // 临时覆盖只在当日有效
       if (merged.override.todayModeSetOn !== todayStr()) {
@@ -243,12 +281,41 @@ export const useConfigStore = defineStore('config', () => {
     }
   }
 
+  // 机器人写 reminders 后前端从磁盘刷新，此时不要反写回去覆盖
+  let suppressSave = false
+
+  function applyRemote(remote: Partial<JarvisConfig>, fields: (keyof JarvisConfig)[]) {
+    suppressSave = true
+    for (const key of fields) {
+      if (key in remote) {
+        (config.value as any)[key] = remote[key]
+      }
+    }
+    Promise.resolve().then(() => { suppressSave = false })
+  }
+
+  async function refreshReminders() {
+    try {
+      const remote = await invoke<JarvisConfig>('config_load')
+      applyRemote(remote, ['reminders'])
+    } catch (e) {
+      console.error('刷新提醒列表失败:', e)
+    }
+  }
+
+  async function applyLlmProfile(remote: JarvisConfig) {
+    applyRemote(remote, ['llm', 'llmProfiles', 'activeLlmProfileId'])
+  }
+
   // 任意字段变化 250ms 防抖后写回磁盘
   watch(config, () => {
-    if (!loaded.value) return
+    if (!loaded.value || suppressSave) return
     if (savingTimer) clearTimeout(savingTimer)
     savingTimer = setTimeout(save, 250)
   }, { deep: true })
+
+  // 机器人通过 channels 写入提醒后，Rust 端 emit 此事件
+  listen('reminders-changed', () => { refreshReminders() }).catch(() => {})
 
   // 临时覆盖：今晚加班 / 今天休假
   function setTodayMode(mode: JarvisConfig['override']['todayMode']) {
@@ -389,6 +456,8 @@ export const useConfigStore = defineStore('config', () => {
     showSettingsWindow,
     load,
     save,
+    refreshReminders,
+    applyLlmProfile,
     setTodayMode,
     phase,
     isQuietHours,

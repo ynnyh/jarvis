@@ -27,6 +27,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .manage(commands::WriteHoursState::default())
         .manage(channels::ChannelServiceState::default())
         .setup(|app| {
@@ -203,6 +204,10 @@ pub fn run() {
             commands::toggle_avatar_window,
             commands::config_load,
             commands::config_save,
+            commands::llm_profile_save,
+            commands::llm_profile_switch,
+            commands::llm_profile_delete,
+            commands::llm_profile_upsert,
             commands::chat_open,
             commands::chat_close,
             commands::settings_open,
