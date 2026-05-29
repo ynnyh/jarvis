@@ -27,7 +27,6 @@ jobs:
       - restore_cache:
           keys:
             - win-node-20.19.0
-          name: Restore Node.js cache
       - run:
           name: Install Node.js 20.19.0
           command: |
@@ -48,11 +47,9 @@ jobs:
           key: win-node-20.19.0
           paths:
             - ~/node
-          name: Save Node.js cache
       - restore_cache:
           keys:
             - win-rustup-v1
-          name: Restore Rust cache
       - run:
           name: Install Rust
           command: |
@@ -67,12 +64,10 @@ jobs:
           paths:
             - ~/.cargo
             - ~/.rustup
-          name: Save Rust cache
       - restore_cache:
           keys:
             - win-npm-{{ checksum "package-lock.json" }}
             - win-npm-
-          name: Restore npm cache
       - run:
           name: Install dependencies
           command: |
@@ -83,7 +78,6 @@ jobs:
           key: win-npm-{{ checksum "package-lock.json" }}
           paths:
             - node_modules
-          name: Save npm cache
       - run:
           name: Verify updater signing key
           command: |
@@ -94,7 +88,6 @@ jobs:
           keys:
             - win-cargo-target-{{ checksum "src-tauri/Cargo.lock" }}
             - win-cargo-target-
-          name: Restore cargo build cache
       - run:
           name: Build Windows installer
           no_output_timeout: 30m
@@ -107,7 +100,6 @@ jobs:
           key: win-cargo-target-{{ checksum "src-tauri/Cargo.lock" }}
           paths:
             - src-tauri/target
-          name: Save cargo build cache
       - run:
           name: Stage Windows artifacts
           command: |
@@ -129,14 +121,12 @@ jobs:
       - restore_cache:
           keys:
             - macos-rustup-v1
-          name: Restore Rust cache
       - setup_rust
       - save_cache:
           key: macos-rustup-v1
           paths:
             - ~/.cargo
             - ~/.rustup
-          name: Save Rust cache
       - run:
           name: Use Node.js 20
           command: |
@@ -155,7 +145,6 @@ jobs:
           keys:
             - macos-npm-{{ checksum "package-lock.json" }}
             - macos-npm-
-          name: Restore npm cache
       - run:
           name: Install dependencies
           command: npm ci --no-audit --no-fund
@@ -163,7 +152,6 @@ jobs:
           key: macos-npm-{{ checksum "package-lock.json" }}
           paths:
             - node_modules
-          name: Save npm cache
       - run:
           name: Verify updater signing key
           command: node scripts/ci/prepare-tauri-signing.mjs
@@ -175,7 +163,6 @@ jobs:
           keys:
             - macos-cargo-target-{{ checksum "src-tauri/Cargo.lock" }}
             - macos-cargo-target-
-          name: Restore cargo build cache
       - run:
           name: Build macOS universal dev package
           no_output_timeout: 30m
@@ -185,7 +172,6 @@ jobs:
           key: macos-cargo-target-{{ checksum "src-tauri/Cargo.lock" }}
           paths:
             - src-tauri/target
-          name: Save cargo build cache
       - run:
           name: Stage macOS artifacts
           command: |

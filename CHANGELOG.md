@@ -4,6 +4,15 @@
 
 ## Unreleased
 
+## v0.7.0
+
+### 优化
+- **CircleCI 发版流水线**：新增 Node.js、Rust、npm、cargo 构建缓存，后续构建大幅加速。
+- **Windows 构建资源升级**：executor 从 medium 升级到 large，更多 CPU 和内存。
+
+### 修复
+- **CircleCI 签名密钥验证失败**：构建步骤直接读取 CircleCI 项目级环境变量，不再手动 unset 导致私钥丢失。
+
 ## v0.6.5
 
 ### 修复
