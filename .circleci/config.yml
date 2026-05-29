@@ -25,9 +25,9 @@ jobs:
     steps:
       - checkout
       - run:
-          name: Install Node.js 20.18.1
+          name: Install Node.js 20.19.0
           command: |
-            $nodeVersion = "20.18.1"
+            $nodeVersion = "20.19.0"
             $zip = "node-v$nodeVersion-win-x64.zip"
             Invoke-WebRequest -Uri "https://nodejs.org/dist/v$nodeVersion/$zip" -OutFile $zip
             Expand-Archive -Path $zip -DestinationPath "$env:USERPROFILE\node" -Force
@@ -44,14 +44,23 @@ jobs:
       - run:
           name: Install dependencies
           command: |
-            $nodeDir = "$env:USERPROFILE\node\node-v20.18.1-win-x64"
+            $nodeDir = "$env:USERPROFILE\node\node-v20.19.0-win-x64"
             $env:PATH="$nodeDir;$env:PATH"
             npm ci --no-audit --no-fund
+      - run:
+          name: Verify frontend toolchain
+          command: |
+            $nodeDir = "$env:USERPROFILE\node\node-v20.19.0-win-x64"
+            $env:PATH="$nodeDir;$env:PATH"
+            node -p "'node ' + process.version + ' ' + process.platform + ' ' + process.arch"
+            npm ls vite rolldown @rolldown/binding-win32-x64-msvc
+            node -e "require('@rolldown/binding-win32-x64-msvc'); console.log('rolldown binding ok')"
+            npx vite build --config vite.config.ts
       - run:
           name: Build Windows installer
           no_output_timeout: 30m
           command: |
-            $nodeDir = "$env:USERPROFILE\node\node-v20.18.1-win-x64"
+            $nodeDir = "$env:USERPROFILE\node\node-v20.19.0-win-x64"
             $env:PATH="$env:USERPROFILE\.cargo\bin;$env:PATH"
             $env:PATH="$nodeDir;$env:PATH"
             npm run desktop:build
@@ -118,7 +127,7 @@ jobs:
 
   publish-gitee:
     docker:
-      - image: cimg/node:20.18
+      - image: cimg/node:20.19.0
     steps:
       - checkout
       - attach_workspace:
