@@ -21,47 +21,80 @@ jobs:
   build-windows:
     executor:
       name: win/default
-      size: medium
+      size: large
     steps:
       - checkout
+      - restore_cache:
+          keys:
+            - win-node-20.19.0
+          name: Restore Node.js cache
       - run:
           name: Install Node.js 20.19.0
           command: |
-            $nodeVersion = "20.19.0"
-            $zip = "node-v$nodeVersion-win-x64.zip"
-            Invoke-WebRequest -Uri "https://nodejs.org/dist/v$nodeVersion/$zip" -OutFile $zip
-            Expand-Archive -Path $zip -DestinationPath "$env:USERPROFILE\node" -Force
-            $nodeDir = "$env:USERPROFILE\node\node-v$nodeVersion-win-x64"
+            $nodeDir = "$env:USERPROFILE\node\node-v20.19.0-win-x64"
+            if (Test-Path "$nodeDir\node.exe") {
+              Write-Host "Node.js already installed, skipping download"
+            } else {
+              $nodeVersion = "20.19.0"
+              $zip = "node-v$nodeVersion-win-x64.zip"
+              Invoke-WebRequest -Uri "https://nodejs.org/dist/v$nodeVersion/$zip" -OutFile $zip
+              Expand-Archive -Path $zip -DestinationPath "$env:USERPROFILE\node" -Force
+            }
             $env:PATH="$nodeDir;$env:PATH"
             [Environment]::SetEnvironmentVariable("PATH", "$nodeDir;$env:PATH", "User")
             node --version
             npm --version
+      - save_cache:
+          key: win-node-20.19.0
+          paths:
+            - ~/node
+          name: Save Node.js cache
+      - restore_cache:
+          keys:
+            - win-rustup-v1
+          name: Restore Rust cache
       - run:
           name: Install Rust
           command: |
-            Invoke-WebRequest -Uri https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
-            .\rustup-init.exe -y
+            if (Test-Path "$env:USERPROFILE\.cargo\bin\rustc.exe") {
+              Write-Host "Rust already installed, skipping"
+            } else {
+              Invoke-WebRequest -Uri https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
+              .\rustup-init.exe -y
+            }
+      - save_cache:
+          key: win-rustup-v1
+          paths:
+            - ~/.cargo
+            - ~/.rustup
+          name: Save Rust cache
+      - restore_cache:
+          keys:
+            - win-npm-{{ checksum "package-lock.json" }}
+            - win-npm-
+          name: Restore npm cache
       - run:
           name: Install dependencies
           command: |
             $nodeDir = "$env:USERPROFILE\node\node-v20.19.0-win-x64"
             $env:PATH="$nodeDir;$env:PATH"
             npm ci --no-audit --no-fund
+      - save_cache:
+          key: win-npm-{{ checksum "package-lock.json" }}
+          paths:
+            - node_modules
+          name: Save npm cache
       - run:
           name: Verify updater signing key
           command: |
             $nodeDir = "$env:USERPROFILE\node\node-v20.19.0-win-x64"
             $env:PATH="$nodeDir;$env:PATH"
             node scripts/ci/prepare-tauri-signing.mjs
-      - run:
-          name: Verify frontend toolchain
-          command: |
-            $nodeDir = "$env:USERPROFILE\node\node-v20.19.0-win-x64"
-            $env:PATH="$nodeDir;$env:PATH"
-            node -p "'node ' + process.version + ' ' + process.platform + ' ' + process.arch"
-            npm ls vite rolldown @rolldown/binding-win32-x64-msvc
-            node -e "require('@rolldown/binding-win32-x64-msvc'); console.log('rolldown binding ok')"
-            npx vite build --config vite.config.ts
+      - restore_cache:
+          keys:
+            - win-cargo-target-{{ checksum "src-tauri/Cargo.lock" }}
+            - win-cargo-target-
+          name: Restore cargo build cache
       - run:
           name: Build Windows installer
           no_output_timeout: 30m
@@ -70,6 +103,11 @@ jobs:
             $env:PATH="$env:USERPROFILE\.cargo\bin;$env:PATH"
             $env:PATH="$nodeDir;$env:PATH"
             npm run desktop:build
+      - save_cache:
+          key: win-cargo-target-{{ checksum "src-tauri/Cargo.lock" }}
+          paths:
+            - src-tauri/target
+          name: Save cargo build cache
       - run:
           name: Stage Windows artifacts
           command: |
@@ -88,7 +126,17 @@ jobs:
     resource_class: m4pro.medium
     steps:
       - checkout
+      - restore_cache:
+          keys:
+            - macos-rustup-v1
+          name: Restore Rust cache
       - setup_rust
+      - save_cache:
+          key: macos-rustup-v1
+          paths:
+            - ~/.cargo
+            - ~/.rustup
+          name: Save Rust cache
       - run:
           name: Use Node.js 20
           command: |
@@ -103,9 +151,19 @@ jobs:
           name: Install universal Rust targets
           command: |
             rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - restore_cache:
+          keys:
+            - macos-npm-{{ checksum "package-lock.json" }}
+            - macos-npm-
+          name: Restore npm cache
       - run:
           name: Install dependencies
           command: npm ci --no-audit --no-fund
+      - save_cache:
+          key: macos-npm-{{ checksum "package-lock.json" }}
+          paths:
+            - node_modules
+          name: Save npm cache
       - run:
           name: Verify updater signing key
           command: node scripts/ci/prepare-tauri-signing.mjs
@@ -113,12 +171,21 @@ jobs:
           name: Configure ad-hoc macOS signing
           command: |
             node -e "const fs=require('node:fs'); const file='src-tauri/tauri.conf.json'; const conf=JSON.parse(fs.readFileSync(file,'utf8')); conf.bundle ||= {}; conf.bundle.macOS ||= {}; conf.bundle.macOS.signingIdentity='-'; fs.writeFileSync(file, JSON.stringify(conf, null, 2) + '\n');"
+      - restore_cache:
+          keys:
+            - macos-cargo-target-{{ checksum "src-tauri/Cargo.lock" }}
+            - macos-cargo-target-
+          name: Restore cargo build cache
       - run:
           name: Build macOS universal dev package
           no_output_timeout: 30m
           command: |
-            ls -la .tauri-ci/updater-private.key || true
             npm run desktop:build-macos-dev
+      - save_cache:
+          key: macos-cargo-target-{{ checksum "src-tauri/Cargo.lock" }}
+          paths:
+            - src-tauri/target
+          name: Save cargo build cache
       - run:
           name: Stage macOS artifacts
           command: |
