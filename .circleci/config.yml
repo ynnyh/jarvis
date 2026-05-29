@@ -201,6 +201,7 @@ jobs:
           command: npm ci --no-audit --no-fund
       - run:
           name: Publish to Gitee
+          no_output_timeout: 45m
           command: npm run release:gitee
           environment:
             ARTIFACTS_DIR: artifacts

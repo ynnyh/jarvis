@@ -197,7 +197,7 @@ const release = await createOrFindRelease()
 // --- 4. 上传附件 ---
 async function uploadAsset(filePath, name) {
   const data = await fs.readFile(filePath)
-  const maxAttempts = 3
+  const maxAttempts = 5
   let lastErr
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -214,7 +214,6 @@ async function uploadAsset(filePath, name) {
           console.log(`  ↪ ${name} 已存在，跳过上传`)
           return `https://gitee.com/${GITEE_OWNER}/${GITEE_REPO}/releases/download/${tag}/${name}`
         }
-        // 5xx / 429 值得重试，4xx 直接报
         if (r.status >= 500 || r.status === 429) {
           throw new Error(`HTTP ${r.status}: ${t}`)
         }
@@ -225,17 +224,20 @@ async function uploadAsset(filePath, name) {
       return j.browser_download_url
     } catch (e) {
       lastErr = e
-      const isTimeout =
-        e?.cause?.code === 'UND_ERR_HEADERS_TIMEOUT' ||
-        e?.cause?.code === 'UND_ERR_BODY_TIMEOUT' ||
-        e?.cause?.code === 'UND_ERR_CONNECT_TIMEOUT' ||
-        e?.cause?.code === 'ECONNRESET' ||
-        e?.code === 'ECONNRESET' ||
+      const errCode = e?.cause?.code || e?.code
+      const isRetryable =
+        errCode === 'UND_ERR_HEADERS_TIMEOUT' ||
+        errCode === 'UND_ERR_BODY_TIMEOUT' ||
+        errCode === 'UND_ERR_CONNECT_TIMEOUT' ||
+        errCode === 'ETIMEDOUT' ||
+        errCode === 'ECONNRESET' ||
+        errCode === 'ECONNREFUSED' ||
+        errCode === 'ENOTFOUND' ||
         /HTTP 5\d\d/.test(String(e?.message)) ||
         /HTTP 429/.test(String(e?.message))
-      if (attempt < maxAttempts && isTimeout) {
+      if (attempt < maxAttempts && isRetryable) {
         const backoff = 5000 * attempt
-        console.warn(`  ⚠ ${name} 第 ${attempt}/${maxAttempts} 次失败（${e?.cause?.code || e?.code || e?.message}），${backoff}ms 后重试`)
+        console.warn(`  ⚠ ${name} 第 ${attempt}/${maxAttempts} 次失败（${errCode || e?.message}），${backoff}ms 后重试`)
         await new Promise(r => setTimeout(r, backoff))
         continue
       }
