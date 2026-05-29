@@ -798,6 +798,12 @@ watch(() => store.alertLevel, (level) => {
 onMounted(() => {
   configStore.load()
   store.refreshTaskBindings()
+
+  // 窗口失焦时关闭所有面板和菜单：用户点击桌面或其他应用时自动收起
+  getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+    if (!focused) closeAllPanels()
+  })
+
   setTimeout(() => showAlert(`${configStore.config.userTitle}，${configStore.config.assistantName} 来啦`, '🤖', 'idle', 3000), 500)
   // 等数据加载后显示提醒
   watch(() => store.alertsLoaded, (loaded) => {
@@ -855,6 +861,8 @@ onUnmounted(() => {
 
 <template>
   <div class="jarvis-container" :data-anchor="avatarAnchor" @contextmenu.prevent="toggleMenu">
+    <!-- 菜单打开时铺满窗口的透明遮罩，点击任意位置关闭菜单 -->
+    <div v-if="showMenu" class="menu-backdrop pointer-target" @click="showMenu = false" @contextmenu.prevent="showMenu = false" />
     <div v-if="showMenu" class="menu pointer-target">
       <button class="menu-item" @click="menuShowAlerts">
         <span>🔔</span><span>任务提醒</span>
@@ -1168,6 +1176,11 @@ onUnmounted(() => {
 .jarvis-container[data-anchor="lb"] .menu-btn { left: 16px; right: auto; }
 .jarvis-container[data-anchor="lt"] .menu-btn { top: 86px; left: 16px; bottom: auto; right: auto; }
 
+.menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+}
 .menu {
   position: fixed; bottom: 16px; right: 90px;
   background: rgba(15, 23, 42, 0.97); backdrop-filter: blur(16px);
