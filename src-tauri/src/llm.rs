@@ -166,7 +166,8 @@ pub async fn chat(req: ChatRequest) -> Result<ChatResponse, String> {
 }
 
 fn should_retry_llm_error(e: &str) -> bool {
-    e.contains("LLM HTTP 502")
+    e.contains("LLM HTTP 429")
+        || e.contains("LLM HTTP 502")
         || e.contains("LLM HTTP 503")
         || e.contains("LLM HTTP 504")
         || e.contains("LLM 请求超时")
@@ -247,17 +248,17 @@ async fn chat_via_chat_completions(
         return Err(format!(
             "LLM HTTP {}: {}",
             status.as_u16(),
-            &text[..text.len().min(400)]
+            crate::util::truncate_chars(&text, 400)
         ));
     }
 
     let data: Value = serde_json::from_str(&text)
-        .map_err(|_| format!("LLM 返回非 JSON: {}", &text[..text.len().min(200)]))?;
+        .map_err(|_| format!("LLM 返回非 JSON: {}", crate::util::truncate_chars(&text, 200)))?;
 
     let choice = data.get("choices").and_then(|v| v.get(0));
     let message = choice
         .and_then(|c| c.get("message"))
-        .ok_or_else(|| format!("LLM 响应缺 choices[0].message: {}", &text[..text.len().min(200)]))?;
+        .ok_or_else(|| format!("LLM 响应缺 choices[0].message: {}", crate::util::truncate_chars(&text, 200)))?;
 
     // content 是常规模型回答的所在；reasoning_content 是 reasoning 系列模型（DeepSeek
     // R1/V4-flash、OpenAI o-series 兼容厂商）的字段，常规 content 在这种情况下会是空串。
@@ -282,7 +283,7 @@ async fn chat_via_chat_completions(
     if content.is_empty() && tool_calls.is_empty() {
         return Err(format!(
             "LLM 响应既无 content 也无 tool_calls: {}",
-            &text[..text.len().min(200)]
+            crate::util::truncate_chars(&text, 200)
         ));
     }
 
@@ -415,12 +416,12 @@ async fn chat_via_responses(
         return Err(format!(
             "LLM HTTP {}: {}",
             status.as_u16(),
-            &text[..text.len().min(400)]
+            crate::util::truncate_chars(&text, 400)
         ));
     }
 
     let data: Value = serde_json::from_str(&text)
-        .map_err(|_| format!("LLM 返回非 JSON: {}", &text[..text.len().min(200)]))?;
+        .map_err(|_| format!("LLM 返回非 JSON: {}", crate::util::truncate_chars(&text, 200)))?;
 
     parse_responses_output(&data, &model)
 }
@@ -591,7 +592,7 @@ fn parse_responses_output(data: &Value, fallback_model: &str) -> Result<ChatResp
         let snippet = data.to_string();
         return Err(format!(
             "Responses 响应既无文本也无 tool_calls: {}",
-            &snippet[..snippet.len().min(300)]
+            crate::util::truncate_chars(&snippet, 300)
         ));
     }
 

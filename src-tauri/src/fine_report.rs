@@ -134,7 +134,7 @@ fn save_cached_auth(auth: &CachedAuth) -> Result<(), String> {
     let dir = jarvis_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("创建配置目录失败: {}", e))?;
     let json = serde_json::to_string_pretty(auth).map_err(|e| e.to_string())?;
-    std::fs::write(cache_path(), json).map_err(|e| format!("写入帆软认证缓存失败: {}", e))
+    crate::util::write_atomic(&cache_path(), &json).map_err(|e| format!("写入帆软认证缓存失败: {}", e))
 }
 
 #[allow(dead_code)]
@@ -343,11 +343,16 @@ impl FineReportClient {
             ));
         }
 
-        // dump HTML 备查
-        let debug_path = jarvis_dir().join("finereport-debug.html");
-        if let Err(e) = std::fs::write(&debug_path, &html) {
-            eprintln!("[FineReport] 写 debug HTML 失败（不致命）: {}", e);
-        }
+        // dump HTML 备查（仅 debug 构建；release 不落盘，避免工时 PII 残留磁盘）
+        let debug_hint = if cfg!(debug_assertions) {
+            let debug_path = jarvis_dir().join("finereport-debug.html");
+            if let Err(e) = std::fs::write(&debug_path, &html) {
+                eprintln!("[FineReport] 写 debug HTML 失败（不致命）: {}", e);
+            }
+            format!("，已保存到 {}", debug_path.display())
+        } else {
+            String::new()
+        };
 
         // 抠 sessionID：优先 FR.SessionMgr.register('<uuid>', ...)，兜底 currentSessionID = '<uuid>'
         let re_register = regex::Regex::new(
@@ -371,9 +376,9 @@ impl FineReportClient {
         }
 
         Err(format!(
-            "未抠到 sessionID。HTML 总长 {} 字符（已保存到 {}）",
+            "未抠到 sessionID。HTML 总长 {} 字符{}",
             html.len(),
-            debug_path.display()
+            debug_hint
         ))
     }
 
@@ -458,7 +463,9 @@ impl FineReportClient {
             "LABELSTARTTIME_C_C_C_C_C_C": "角色：",
         });
         let params_str = parameters.to_string();
-        eprintln!("[FineReport] submit_filter payload: {}", params_str);
+        if cfg!(debug_assertions) {
+            eprintln!("[FineReport] submit_filter payload: {}", params_str);
+        }
 
         let url = self.url(&format!(
             "/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d&sessionID={}",
@@ -484,7 +491,9 @@ impl FineReportClient {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
         let preview: String = body.chars().take(500).collect();
-        eprintln!("[FineReport] submit_filter resp status={} body_preview={}", status, preview);
+        if cfg!(debug_assertions) {
+            eprintln!("[FineReport] submit_filter resp status={} body_preview={}", status, preview);
+        }
         if !status.is_success() {
             return Err(format!("parameters_d 返回 {}：{}", status, preview));
         }
@@ -758,11 +767,12 @@ pub async fn finereport_get_efforts(
 ) -> Result<EffortFetchResult, String> {
     use std::time::Instant;
     let total = Instant::now();
-    eprintln!("[FineReport] === get_efforts begin={} end={} realName={:?} ===", begin, end, real_name);
+    eprintln!("[FineReport] === get_efforts begin={} end={} realName_set={} ===", begin, end, real_name.is_some());
 
     let cred = get_fine_report_credentials();
-    eprintln!("[FineReport] cred: baseUrl={} account={} realName={} pwd={}",
-        cred.base_url, cred.account, cred.real_name, if cred.password.is_empty() { "<空>" } else { "<已读>" });
+    eprintln!("[FineReport] cred: baseUrl_set={} account_set={} realName_set={} pwd={}",
+        !cred.base_url.is_empty(), !cred.account.is_empty(), !cred.real_name.is_empty(),
+        if cred.password.is_empty() { "<空>" } else { "<已读>" });
 
     // 显式传入 > config > 空（不过滤）
     let effective_real_name = real_name
@@ -793,7 +803,7 @@ pub async fn finereport_get_efforts(
             eprintln!("[FineReport] step2 open_report_and_get_session FAILED ({}ms): {}", t.elapsed().as_millis(), e);
             e
         })?;
-    eprintln!("[FineReport] step2 sessionID ok ({}ms) sessionID={}", t.elapsed().as_millis(), session_id);
+    eprintln!("[FineReport] step2 sessionID ok ({}ms)", t.elapsed().as_millis());
 
     let cid = FineReportClient::generate_cid(&session_id);
     eprintln!("[FineReport] step2.5 cid generated: {}", cid);
@@ -806,7 +816,7 @@ pub async fn finereport_get_efforts(
             eprintln!("[FineReport] step3 submit_filter FAILED ({}ms): {}", t.elapsed().as_millis(), e);
             e
         })?;
-    eprintln!("[FineReport] step3 submit_filter ok ({}ms) realName='{}'", t.elapsed().as_millis(), effective_real_name);
+    eprintln!("[FineReport] step3 submit_filter ok ({}ms)", t.elapsed().as_millis());
 
     let t = Instant::now();
     let summary_html = client.fetch_report_html(&auth.jwt, &session_id, &cid, 0).await
@@ -815,8 +825,10 @@ pub async fn finereport_get_efforts(
             e
         })?;
     eprintln!("[FineReport] step4a summary ok ({}ms) len={}", t.elapsed().as_millis(), summary_html.len());
-    let summary_path = jarvis_dir().join("finereport-summary.html");
-    let _ = std::fs::write(&summary_path, &summary_html);
+    if cfg!(debug_assertions) {
+        let summary_path = jarvis_dir().join("finereport-summary.html");
+        let _ = std::fs::write(&summary_path, &summary_html);
+    }
 
     let t = Instant::now();
     let detail_html = client.fetch_report_html(&auth.jwt, &session_id, &cid, 1).await
@@ -825,8 +837,10 @@ pub async fn finereport_get_efforts(
             e
         })?;
     eprintln!("[FineReport] step4b detail ok ({}ms) len={}", t.elapsed().as_millis(), detail_html.len());
-    let detail_path = jarvis_dir().join("finereport-detail.html");
-    let _ = std::fs::write(&detail_path, &detail_html);
+    if cfg!(debug_assertions) {
+        let detail_path = jarvis_dir().join("finereport-detail.html");
+        let _ = std::fs::write(&detail_path, &detail_html);
+    }
 
     let records = parse_detail_html(&detail_html).unwrap_or_else(|e| {
         eprintln!("[FineReport] parse_detail_html FAILED: {}", e);
@@ -896,13 +910,11 @@ pub async fn finereport_test_connection(
             let secs_left = auth.expires_at - now;
             let days_left = secs_left / 86400;
             let hours_left = (secs_left % 86400) / 3600;
-            // 诊断信息：把 JWT 头部 + exp 原始值带回来，方便定位"0 天"
-            let jwt_preview: String = auth.jwt.chars().take(40).collect();
             Ok(FineReportTestResult {
                 ok: true,
                 message: format!(
-                    "登录成功。JWT={}…；exp={}, now={}, 剩 {} 天 {} 小时",
-                    jwt_preview, auth.expires_at, now, days_left.max(0), hours_left.max(0)
+                    "登录成功。exp={}, now={}, 剩 {} 天 {} 小时",
+                    auth.expires_at, now, days_left.max(0), hours_left.max(0)
                 ),
             })
         }

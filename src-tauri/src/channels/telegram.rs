@@ -199,36 +199,43 @@ async fn receive_loop(
             continue;
         }
         for update in parsed.result {
-            offset = update.update_id + 1;
-            let Some(msg) = update.message else { continue };
-            let Some(text) = msg.text.clone() else { continue };
-            let chat_id = msg.chat.id.to_string();
-            if !is_allowed(&config.allow_chat_ids, &chat_id) {
-                continue;
+            // 先记下"这条之后"的 offset，但只有在这条被妥善处理（成功投递，或
+            // 确属可跳过的非文本 / 白名单外消息）之后才推进。避免投递失败时 offset
+            // 已跨过这条 → 该消息被永久跳过丢失。
+            let next_offset = update.update_id + 1;
+            if let Some(msg) = update.message {
+                if let Some(text) = msg.text.clone() {
+                    let chat_id = msg.chat.id.to_string();
+                    if is_allowed(&config.allow_chat_ids, &chat_id) {
+                        let sender_id = msg
+                            .from
+                            .as_ref()
+                            .map(|f| f.id.to_string())
+                            .unwrap_or_else(|| chat_id.clone());
+                        let sender_name = msg.from.as_ref().and_then(|f| {
+                            f.username
+                                .clone()
+                                .or_else(|| f.first_name.clone())
+                                .or_else(|| f.last_name.clone())
+                        });
+                        let incoming = ChannelMessage {
+                            channel: "telegram".to_string(),
+                            chat_id,
+                            sender_id,
+                            sender_name,
+                            text,
+                            timestamp: msg.date.unwrap_or_else(|| chrono::Utc::now().timestamp()),
+                            raw: msg.raw,
+                        };
+                        if inbound.send(incoming).await.is_err() {
+                            // 接收端已关闭（dispatcher 退出）：不推进 offset，这条留待
+                            // 下次轮询 / 重启后重新拉取，不丢；已处理过的因 offset 已推进不会重复。
+                            return;
+                        }
+                    }
+                }
             }
-            let sender_id = msg
-                .from
-                .as_ref()
-                .map(|f| f.id.to_string())
-                .unwrap_or_else(|| chat_id.clone());
-            let sender_name = msg.from.as_ref().and_then(|f| {
-                f.username
-                    .clone()
-                    .or_else(|| f.first_name.clone())
-                    .or_else(|| f.last_name.clone())
-            });
-            let incoming = ChannelMessage {
-                channel: "telegram".to_string(),
-                chat_id,
-                sender_id,
-                sender_name,
-                text,
-                timestamp: msg.date.unwrap_or_else(|| chrono::Utc::now().timestamp()),
-                raw: msg.raw,
-            };
-            if inbound.send(incoming).await.is_err() {
-                return;
-            }
+            offset = next_offset;
         }
     }
 }
@@ -262,16 +269,42 @@ async fn send_loop(
         let url = format!("{}/bot{}/sendMessage", api_base, config.bot_token);
         let chunks = split_message(&msg.text, 3500);
         for chunk in chunks {
-            let _ = client
-                .post(&url)
-                .json(&serde_json::json!({
-                    "chat_id": msg.chat_id,
-                    "text": chunk,
-                    "disable_web_page_preview": true,
-                }))
-                .send()
-                .await;
+            send_telegram_chunk(&client, &url, &msg.chat_id, &chunk).await;
         }
+    }
+}
+
+/// 发送单条消息，对 429 / 5xx / 网络错误重试最多 3 次；失败时记日志而非静默吞。
+async fn send_telegram_chunk(client: &reqwest::Client, url: &str, chat_id: &str, text: &str) {
+    let body = serde_json::json!({
+        "chat_id": chat_id,
+        "text": text,
+        "disable_web_page_preview": true,
+    });
+    for attempt in 1..=3u32 {
+        match client.post(url).json(&body).send().await {
+            Ok(resp) if resp.status().is_success() => return,
+            Ok(resp) => {
+                let code = resp.status().as_u16();
+                if !(code == 429 || code >= 500) || attempt == 3 {
+                    eprintln!(
+                        "[channels/telegram] sendMessage 失败 HTTP {}（第 {} 次，放弃）",
+                        code, attempt
+                    );
+                    return;
+                }
+            }
+            Err(e) => {
+                if attempt == 3 {
+                    eprintln!(
+                        "[channels/telegram] sendMessage 网络失败（第 {} 次，放弃）: {}",
+                        attempt, e
+                    );
+                    return;
+                }
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500 * attempt as u64)).await;
     }
 }
 

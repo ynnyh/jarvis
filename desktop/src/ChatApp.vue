@@ -444,7 +444,7 @@ watch(() => configStore.config.assistantName, (n) => {
               <p>跟 {{ configStore.config.assistantName }} 聊点什么？</p>
               <p class="hint">例如："今天有哪些任务要做？"、"分析下我现在的风险"</p>
             </div>
-            <div v-for="(msg, i) in currentConversation.messages" :key="i"
+            <div v-for="(msg, i) in currentConversation.messages" :key="msg.createdAt"
               class="msg" :class="`msg-${msg.role}`">
               <!-- tool 消息：折叠+格式化 -->
               <template v-if="msg.role === 'tool'">

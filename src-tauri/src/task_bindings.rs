@@ -63,7 +63,7 @@ fn write_all(map: &BindingMap) -> Result<(), String> {
     fs::create_dir_all(&dir).map_err(|e| format!("创建配置目录失败: {}", e))?;
     let content = serde_json::to_string_pretty(map)
         .map_err(|e| format!("绑定表序列化失败: {}", e))?;
-    fs::write(bindings_path(), content).map_err(|e| format!("写入绑定表失败: {}", e))?;
+    crate::util::write_atomic(&bindings_path(), &content).map_err(|e| format!("写入绑定表失败: {}", e))?;
     Ok(())
 }
 

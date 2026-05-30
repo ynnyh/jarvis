@@ -180,15 +180,15 @@ impl ZentaoClient {
             return Err(format!(
                 "禅道 token HTTP {}: {}",
                 status.as_u16(),
-                &text[..text.len().min(300)]
+                crate::util::truncate_chars(&text, 300)
             ));
         }
         let v: Value = serde_json::from_str(&text)
-            .map_err(|_| format!("禅道 token 响应非 JSON: {}", &text[..text.len().min(200)]))?;
+            .map_err(|_| format!("禅道 token 响应非 JSON: {}", crate::util::truncate_chars(&text, 200)))?;
         let token = v
             .get("token")
             .and_then(|x| x.as_str())
-            .ok_or_else(|| format!("禅道 token 响应缺 token 字段: {}", &text[..text.len().min(200)]))?
+            .ok_or_else(|| format!("禅道 token 响应缺 token 字段: {}", crate::util::truncate_chars(&text, 200)))?
             .to_string();
         *self.token.lock().await = Some(token.clone());
         Ok(token)
@@ -247,7 +247,7 @@ impl ZentaoClient {
             format!(
                 "禅道 session 登录失败：refreshRandom 响应无可识别的 rand。HTTP {}，前 200 字: {}",
                 rand_status.as_u16(),
-                &rand_text[..rand_text.len().min(200)]
+                crate::util::truncate_chars(&rand_text, 200)
             )
         })?;
 
@@ -281,7 +281,7 @@ impl ZentaoClient {
             return Err(format!(
                 "禅道 session 登录失败：响应未带 zentaosid cookie。HTTP {}，前 200 字: {}",
                 login_status.as_u16(),
-                &text[..text.len().min(200)]
+                crate::util::truncate_chars(&text, 200)
             ));
         }
 
@@ -318,7 +318,7 @@ impl ZentaoClient {
                 return Err(format!(
                     "禅道 session 登录失败：/my.html 返回登录页（密码 md5 流程未通过，rand={}）。前 200 字: {}",
                     verify_rand,
-                    &text[..text.len().min(200)]
+                    crate::util::truncate_chars(&text, 200)
                 ));
             }
         }
@@ -362,11 +362,11 @@ impl ZentaoClient {
             return Err(format!(
                 "获取任务失败 HTTP {}: {}",
                 status.as_u16(),
-                &text[..text.len().min(300)]
+                crate::util::truncate_chars(&text, 300)
             ));
         }
         let json: Value = serde_json::from_str(&text)
-            .map_err(|_| format!("获取任务返回非 JSON: {}", &text[..text.len().min(200)]))?;
+            .map_err(|_| format!("获取任务返回非 JSON: {}", crate::util::truncate_chars(&text, 200)))?;
         if json.get("status").and_then(|v| v.as_str()) != Some("success") {
             return Err("禅道返回数据异常（status != success）".into());
         }
@@ -459,11 +459,11 @@ impl ZentaoClient {
             return Err(format!(
                 "读任务 HTTP {}: {}",
                 status.as_u16(),
-                &text[..text.len().min(300)]
+                crate::util::truncate_chars(&text, 300)
             ));
         }
         let json: Value = serde_json::from_str(&text)
-            .map_err(|_| format!("读任务返回非 JSON: {}", &text[..text.len().min(200)]))?;
+            .map_err(|_| format!("读任务返回非 JSON: {}", crate::util::truncate_chars(&text, 200)))?;
         // 兼容两种形态：{task: {...}} 或顶层就是 task
         Ok(Some(json.get("task").cloned().unwrap_or(json)))
     }
@@ -487,7 +487,12 @@ impl ZentaoClient {
         let current_left = task
             .get("left")
             .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
-            .unwrap_or(0.0);
+            .ok_or_else(|| {
+                format!(
+                    "任务 #{} 未返回 left（剩余工时）字段，已中止写入：缺字段时回填 left=0 会触发禅道把任务自动标记为完成。请在禅道确认该任务后重试。",
+                    task_id
+                )
+            })?;
         let consumed_before = task
             .get("consumed")
             .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
@@ -534,14 +539,14 @@ impl ZentaoClient {
             return Err(format!(
                 "禅道写工时失败 HTTP {}: {} (端点 {})",
                 status.as_u16(),
-                &resp_text[..resp_text.len().min(300)],
+                crate::util::truncate_chars(&resp_text, 300),
                 endpoint,
             ));
         }
         let data: Value = serde_json::from_str(&resp_text).map_err(|_| {
             format!(
                 "禅道写工时失败：返回非 JSON（session 可能过期）。前 300 字: {}",
-                &resp_text[..resp_text.len().min(300)]
+                crate::util::truncate_chars(&resp_text, 300)
             )
         })?;
         if data.get("result").and_then(|v| v.as_str()) == Some("fail") {
@@ -551,7 +556,7 @@ impl ZentaoClient {
                 .map(String::from)
                 .unwrap_or_else(|| {
                     let s = data.to_string();
-                    s[..s.len().min(300)].to_string()
+                    crate::util::truncate_chars(&s, 300)
                 });
             return Err(format!("禅道写工时失败: {}", msg));
         }
@@ -574,7 +579,7 @@ impl ZentaoClient {
                 consumed_after,
                 hours,
                 actual_delta,
-                &resp_text[..resp_text.len().min(200)]
+                crate::util::truncate_chars(&resp_text, 200)
             ));
         }
 
@@ -684,7 +689,7 @@ pub async fn test_connection(
                     message: format!(
                         "HTTP {}：{}\n实际请求：{}",
                         status.as_u16(),
-                        &text[..text.len().min(300)],
+                        crate::util::truncate_chars(&text, 300),
                         url
                     ),
                 };
@@ -700,7 +705,7 @@ pub async fn test_connection(
                 },
                 Err(_) => ZentaoTestResult {
                     ok: false,
-                    message: format!("响应非 JSON: {}", &text[..text.len().min(200)]),
+                    message: format!("响应非 JSON: {}", crate::util::truncate_chars(&text, 200)),
                 },
             }
         }

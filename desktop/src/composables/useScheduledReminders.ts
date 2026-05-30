@@ -21,6 +21,12 @@ export function useScheduledReminders(options: UseScheduledRemindersOptions) {
     const now = new Date()
     const dateKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
 
+    // 清理非当前分钟的去重 key：dedupKey 精确到分钟，过了这一分钟就不会再匹配，
+    // 否则 firedKeys 会随运行时长无限增长。
+    for (const k of firedKeys) {
+      if (!k.endsWith(dateKey)) firedKeys.delete(k)
+    }
+
     for (const r of reminders) {
       if (!r.enabled) continue
       const dedupKey = `jarvis.reminder.${r.id}.${dateKey}`

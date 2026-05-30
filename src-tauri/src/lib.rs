@@ -15,6 +15,7 @@ mod settings_extras;
 mod task_bindings;
 mod task_snapshot;
 mod tools;
+mod util;
 mod zentao;
 
 use tauri::Manager;

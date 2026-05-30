@@ -51,7 +51,7 @@ fn write_snapshot(ids: &HashSet<String>) {
     }
     let arr: Vec<&String> = ids.iter().collect();
     if let Ok(content) = serde_json::to_string_pretty(&arr) {
-        let _ = fs::write(snapshot_path(), content);
+        let _ = crate::util::write_atomic(&snapshot_path(), &content);
     }
 }
 

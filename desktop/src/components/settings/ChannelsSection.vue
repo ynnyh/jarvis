@@ -65,7 +65,9 @@ async function restartService() {
   await store.save()
   try {
     await invoke('channels_stop')
-    await new Promise(resolve => window.setTimeout(resolve, 250))
+    // channels_stop 只发停止信号即返回，不等后台 gateway task 真正退出。
+    // 留一段缓冲让旧 task 退出，否则新旧 task 短暂并存会让 Telegram getUpdates 撞 409 冲突。
+    await new Promise(resolve => window.setTimeout(resolve, 500))
     status.value = await invoke('channels_start')
     serviceMessage.value = status.value.message
   } catch (e: any) {

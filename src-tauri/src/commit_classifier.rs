@@ -168,7 +168,7 @@ fn parse_response(
     let (start, end) = (stripped.find('['), stripped.rfind(']'));
     let json_str = match (start, end) {
         (Some(s), Some(e)) if e > s => &stripped[s..=e],
-        _ => return Err(format!("LLM 输出不含 JSON 数组: {}", &text[..text.len().min(200)])),
+        _ => return Err(format!("LLM 输出不含 JSON 数组: {}", crate::util::truncate_chars(&text, 200))),
     };
     let arr: Vec<serde_json::Value> =
         serde_json::from_str(json_str).map_err(|e| format!("LLM JSON 解析失败: {}", e))?;

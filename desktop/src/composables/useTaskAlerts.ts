@@ -94,8 +94,13 @@ export function useTaskAlerts() {
           })
         }
       }
-      // 不管是不是首次，都把所有当前提醒记入已通知集合，避免下次重复
-      for (const a of mapped) notified.add(`${a.id}|${a.alertType}`)
+      // 裁剪掉已不在当前提醒集合里的 key（任务完成/消失），避免 notified 长期残留；
+      // 再把当前所有提醒记入，避免下次重复通知。
+      const currentKeys = new Set(mapped.map(a => `${a.id}|${a.alertType}`))
+      for (const k of notified) {
+        if (!currentKeys.has(k)) notified.delete(k)
+      }
+      for (const k of currentKeys) notified.add(k)
       isFirstFetch = false
 
       store.taskAlerts = mapped

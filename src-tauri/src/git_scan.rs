@@ -503,7 +503,7 @@ pub async fn get_commit_diff(repo: &str, sha: &str) -> Result<CommitDiff, String
     let meta = meta_out.trim_end_matches('\n');
     let parts: Vec<&str> = meta.split(FIELD_SEP).collect();
     if parts.len() < 5 {
-        return Err(format!("git show meta 输出格式异常: {}", &meta[..meta.len().min(200)]));
+        return Err(format!("git show meta 输出格式异常: {}", crate::util::truncate_chars(&meta, 200)));
     }
     let sha_out = parts[0].trim().to_string();
     let an = parts[1].to_string();
@@ -671,7 +671,7 @@ pub fn load_business_aliases() -> std::collections::HashMap<String, Vec<String>>
     if !path.exists() {
         let _ = std::fs::create_dir_all(crate::settings::jarvis_dir());
         let default = serde_json::json!({ "示例业务线": ["门禁", "计量"] });
-        let _ = std::fs::write(&path, serde_json::to_string_pretty(&default).unwrap_or_default());
+        let _ = crate::util::write_atomic(&path, &serde_json::to_string_pretty(&default).unwrap_or_default());
     }
 
     let content = match std::fs::read_to_string(&path) {
@@ -707,7 +707,7 @@ pub fn load_excluded_business_lines() -> std::collections::HashSet<String> {
     if !path.exists() {
         let _ = std::fs::create_dir_all(crate::settings::jarvis_dir());
         let default = serde_json::json!(["my-mcp-servers"]);
-        let _ = std::fs::write(&path, serde_json::to_string_pretty(&default).unwrap_or_default());
+        let _ = crate::util::write_atomic(&path, &serde_json::to_string_pretty(&default).unwrap_or_default());
     }
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,

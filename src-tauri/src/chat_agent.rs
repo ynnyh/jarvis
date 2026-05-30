@@ -68,6 +68,8 @@ pub struct RunAgentOptions<'a> {
 }
 
 pub async fn run_agent(opts: RunAgentOptions<'_>) -> RunAgentResult {
+    // max_iterations 至少为 1，避免调用方传 0 时循环不执行、直接返回"已达上限"的空结果。
+    let max_iterations = opts.max_iterations.max(1);
     let mut messages: Vec<ChatMessage> = Vec::new();
     if let Some(sp) = opts.system_prompt {
         messages.push(ChatMessage {
@@ -86,7 +88,7 @@ pub async fn run_agent(opts: RunAgentOptions<'_>) -> RunAgentResult {
     let mut tokens_in = 0u64;
     let mut tokens_out = 0u64;
 
-    for _ in 0..opts.max_iterations {
+    for _ in 0..max_iterations {
         let mut req = ChatRequest::new(messages.clone());
         req.temperature = Some(opts.temperature);
         req.max_tokens = Some(opts.max_tokens);
@@ -164,7 +166,7 @@ pub async fn run_agent(opts: RunAgentOptions<'_>) -> RunAgentResult {
         role: Role::Assistant,
         content: format!(
             "（达到最大工具调用轮数 {}，强制停止。可能任务过于复杂，或工具结果反复无法收敛。）",
-            opts.max_iterations
+            max_iterations
         ),
         tool_calls: None,
         tool_call_id: None,
@@ -182,6 +184,18 @@ pub async fn run_agent(opts: RunAgentOptions<'_>) -> RunAgentResult {
 
 async fn execute_tool_call(call: &ToolCall, allowed: &[String]) -> ChatMessage {
     let name = call.function.name.clone();
+    // 红线第二道防线：无论 allowed 列表怎么传，agent 都不能直接调用写禅道的工具。
+    // 写工时必须走 prepare-log-task-effort + 用户确认。
+    const AGENT_FORBIDDEN_TOOLS: &[&str] = &["log-task-effort"];
+    if AGENT_FORBIDDEN_TOOLS.contains(&name.as_str()) {
+        return ChatMessage {
+            role: Role::Tool,
+            content: json!({ "error": format!("工具 {} 是写操作，agent 不允许直接调用；请改用 prepare-log-task-effort 生成待确认建议。", name) }).to_string(),
+            tool_calls: None,
+            tool_call_id: Some(call.id.clone()),
+            name: Some(name),
+        };
+    }
     if !allowed.iter().any(|a| a == &name) {
         return ChatMessage {
             role: Role::Tool,

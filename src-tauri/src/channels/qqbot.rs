@@ -97,6 +97,14 @@ fn base_url(config: &QqBotConfig) -> &'static str {
     if config.sandbox { SANDBOX_BASE } else { PROD_BASE }
 }
 
+/// QQ Bot HTTP client：带 20s 超时，避免 token / 网关 / 发送请求在弱网下永久挂起阻塞 send_loop。
+fn build_qq_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
 async fn receive_loop(
     config: QqBotConfig,
     inbound: mpsc::Sender<ChannelMessage>,
@@ -183,6 +191,13 @@ async fn run_ws_once(
                             }
                         }
                     }
+                    1 => {
+                        // 服务端要求立即心跳：立刻回一个，避免被判离线踢连接。
+                        let hb = json!({ "op": 1, "d": seq });
+                        ws.send(Message::Text(hb.to_string()))
+                            .await
+                            .map_err(|e| format!("QQ Bot 即时心跳发送失败: {}", e))?;
+                    }
                     7 | 9 => break,
                     _ => {}
                 }
@@ -216,7 +231,7 @@ where
 }
 
 async fn app_access_token(config: &QqBotConfig) -> Result<String, String> {
-    let client = reqwest::Client::new();
+    let client = build_qq_client();
     let resp = client
         .post(TOKEN_URL)
         .json(&json!({
@@ -241,7 +256,7 @@ async fn app_access_token(config: &QqBotConfig) -> Result<String, String> {
 }
 
 async fn gateway_url(config: &QqBotConfig, token: &str) -> Result<String, String> {
-    let client = reqwest::Client::new();
+    let client = build_qq_client();
     let url = format!("{}/gateway", base_url(config));
     let resp = client
         .get(url)
@@ -355,27 +370,42 @@ async fn send_loop(
     if config.app_id.trim().is_empty() || config.app_secret.trim().is_empty() {
         return;
     }
+    let client = build_qq_client();
+    // access token 有效期约 7200s，缓存复用，避免每条消息都打一次 token 接口触发限流。
+    let mut cached_token: Option<(String, Instant)> = None;
     loop {
         let msg = tokio::select! {
             _ = stop_rx.changed() => break,
             msg = outbound.recv() => msg,
         };
         let Some(msg) = msg else { break };
-        let token = match app_access_token(&config).await {
-            Ok(t) => t,
-            Err(e) => {
-                eprintln!("[channels/qqbot] 发送前获取 token 失败: {}", e);
-                continue;
-            }
+        let token = match &cached_token {
+            Some((t, exp)) if *exp > Instant::now() => t.clone(),
+            _ => match app_access_token(&config).await {
+                Ok(t) => {
+                    cached_token = Some((t.clone(), Instant::now() + Duration::from_secs(6000)));
+                    t
+                }
+                Err(e) => {
+                    eprintln!("[channels/qqbot] 发送前获取 token 失败: {}", e);
+                    continue;
+                }
+            },
         };
-        if let Err(e) = send_message(&config, &token, &msg).await {
+        if let Err(e) = send_message(&client, &config, &token, &msg).await {
             eprintln!("[channels/qqbot] 发送失败: {}", e);
+            // 失败可能是 token 过期；清缓存下次强制刷新。
+            cached_token = None;
         }
     }
 }
 
-async fn send_message(config: &QqBotConfig, token: &str, msg: &OutboundMessage) -> Result<(), String> {
-    let client = reqwest::Client::new();
+async fn send_message(
+    client: &reqwest::Client,
+    config: &QqBotConfig,
+    token: &str,
+    msg: &OutboundMessage,
+) -> Result<(), String> {
     let endpoint = if let Some(openid) = msg.chat_id.strip_prefix("c2c:") {
         format!("{}/v2/users/{}/messages", base_url(config), openid)
     } else if let Some(openid) = msg.chat_id.strip_prefix("group:") {

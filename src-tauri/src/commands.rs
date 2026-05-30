@@ -315,9 +315,9 @@ pub fn config_load() -> Result<serde_json::Value, String> {
     strip_secrets_for_save(&mut persist_migrated)?;
     let migrated = persist_migrated != value;
     if migrated {
-        let _ = std::fs::write(
+        let _ = crate::util::write_atomic(
             &path,
-            serde_json::to_string_pretty(&persist_migrated).unwrap_or_else(|_| content.clone()),
+            &serde_json::to_string_pretty(&persist_migrated).unwrap_or_else(|_| content.clone()),
         );
         value = persist_migrated;
     }
@@ -335,8 +335,13 @@ pub async fn config_save(config: serde_json::Value) -> Result<(), String> {
     strip_secrets_for_save(&mut sanitized)?;
     let content = serde_json::to_string_pretty(&sanitized)
         .map_err(|e| format!("配置序列化失败: {}", e))?;
-    std::fs::write(&path, content)
-        .map_err(|e| format!("写入配置失败: {}", e))?;
+    {
+        let _guard = crate::settings::CONFIG_WRITE_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        crate::util::write_atomic(&path, &content)
+            .map_err(|e| format!("写入配置失败: {}", e))?;
+    }
 
     // 通知守护进程刷新缓存——daemon 已完全下线，pinging 已无意义，留个空 op
     Ok(())
@@ -370,7 +375,7 @@ pub async fn llm_profile_save(profile_id: String, name: String) -> Result<serde_
 
     // 更新或插入 profile
     if cfg.get("llmProfiles").is_none() {
-        cfg.as_object_mut().unwrap().insert("llmProfiles".into(), serde_json::json!([]));
+        cfg.as_object_mut().ok_or("配置文件顶层不是 JSON 对象")?.insert("llmProfiles".into(), serde_json::json!([]));
     }
     let profiles = cfg
         .get_mut("llmProfiles")
@@ -386,12 +391,12 @@ pub async fn llm_profile_save(profile_id: String, name: String) -> Result<serde_
     }
 
     cfg.as_object_mut()
-        .unwrap()
+        .ok_or("配置文件顶层不是 JSON 对象")?
         .insert("activeLlmProfileId".into(), serde_json::Value::String(profile_id));
 
     strip_secrets_for_save(&mut cfg)?;
     let content = serde_json::to_string_pretty(&cfg).unwrap_or_default();
-    std::fs::write(&path, content).map_err(|e| e.to_string())?;
+    crate::util::write_atomic(&path, &content).map_err(|e| e.to_string())?;
 
     hydrate_secret_placeholders(&mut cfg);
     let defaults = default_config();
@@ -451,12 +456,12 @@ pub async fn llm_profile_switch(profile_id: String) -> Result<serde_json::Value,
     }
 
     cfg.as_object_mut()
-        .unwrap()
+        .ok_or("配置文件顶层不是 JSON 对象")?
         .insert("activeLlmProfileId".into(), serde_json::Value::String(profile_id));
 
     strip_secrets_for_save(&mut cfg)?;
     let content = serde_json::to_string_pretty(&cfg).unwrap_or_default();
-    std::fs::write(&path, content).map_err(|e| e.to_string())?;
+    crate::util::write_atomic(&path, &content).map_err(|e| e.to_string())?;
 
     hydrate_secret_placeholders(&mut cfg);
     let defaults = default_config();
@@ -485,13 +490,13 @@ pub async fn llm_profile_delete(profile_id: String) -> Result<serde_json::Value,
         .unwrap_or("");
     if active_id == profile_id {
         cfg.as_object_mut()
-            .unwrap()
+            .ok_or("配置文件顶层不是 JSON 对象")?
             .insert("activeLlmProfileId".into(), serde_json::Value::String(String::new()));
     }
 
     strip_secrets_for_save(&mut cfg)?;
     let content = serde_json::to_string_pretty(&cfg).unwrap_or_default();
-    std::fs::write(&path, content).map_err(|e| e.to_string())?;
+    crate::util::write_atomic(&path, &content).map_err(|e| e.to_string())?;
 
     hydrate_secret_placeholders(&mut cfg);
     let defaults = default_config();
@@ -538,7 +543,7 @@ pub async fn llm_profile_upsert(
 
     // upsert 到 llmProfiles
     if cfg.get("llmProfiles").is_none() {
-        cfg.as_object_mut().unwrap().insert("llmProfiles".into(), serde_json::json!([]));
+        cfg.as_object_mut().ok_or("配置文件顶层不是 JSON 对象")?.insert("llmProfiles".into(), serde_json::json!([]));
     }
     let profiles = cfg
         .get_mut("llmProfiles")
@@ -580,7 +585,7 @@ pub async fn llm_profile_upsert(
 
     strip_secrets_for_save(&mut cfg)?;
     let content = serde_json::to_string_pretty(&cfg).unwrap_or_default();
-    std::fs::write(&path, content).map_err(|e| e.to_string())?;
+    crate::util::write_atomic(&path, &content).map_err(|e| e.to_string())?;
 
     hydrate_secret_placeholders(&mut cfg);
     let defaults = default_config();
@@ -976,9 +981,15 @@ pub async fn settings_open(app: tauri::AppHandle, page: Option<String>) -> Resul
     use tauri::Manager;
     if let Some(settings) = app.get_webview_window("settings") {
         let page = page.unwrap_or_else(|| "channels".to_string());
+        // 白名单：page 会拼进 eval 的 JS 串，只允许标识符字符，杜绝引号/换行/脚本注入。
+        let safe_page: String = page
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+            .collect();
+        let safe_page = if safe_page.is_empty() { "channels".to_string() } else { safe_page };
         let script = format!(
             "window.history.replaceState(null, '', 'settings.html?page={}'); window.location.reload();",
-            page.replace('\\', "").replace('\'', "")
+            safe_page
         );
         let _ = settings.eval(&script);
         settings

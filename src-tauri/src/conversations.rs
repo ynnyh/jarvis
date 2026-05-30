@@ -126,7 +126,7 @@ pub fn conversations_save(conversation: Conversation) -> Result<(), String> {
     let path = conversation_path(&conversation.id)?;
     let content = serde_json::to_string_pretty(&conversation)
         .map_err(|e| format!("序列化失败: {}", e))?;
-    fs::write(&path, content).map_err(|e| format!("写入失败: {}", e))?;
+    crate::util::write_atomic(&path, &content).map_err(|e| format!("写入失败: {}", e))?;
     Ok(())
 }
 

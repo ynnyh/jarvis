@@ -15,11 +15,20 @@ pub const SECRET_PLACEHOLDER: &str = "********";
 const SECRET_SERVICE_NAME: &str = "Jarvis-Secrets";
 
 pub fn secret_get(account: &str) -> Option<String> {
-    keyring::Entry::new(SECRET_SERVICE_NAME, account)
-        .ok()
-        .and_then(|e| e.get_password().ok())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+    let entry = keyring::Entry::new(SECRET_SERVICE_NAME, account).ok()?;
+    match entry.get_password() {
+        Ok(s) => {
+            let s = s.trim().to_string();
+            if s.is_empty() { None } else { Some(s) }
+        }
+        // NoEntry 是正常情况（还没存过）；其它错误（密钥链被锁/服务不可用）要留痕，
+        // 否则凭据静默变空，表现为"密码明明配了却登录失败"，极难排查。
+        Err(keyring::Error::NoEntry) => None,
+        Err(e) => {
+            eprintln!("[settings] 读取密钥链 '{}' 失败（非 NoEntry，凭据按空处理）: {}", account, e);
+            None
+        }
+    }
 }
 
 pub fn secret_set(account: &str, value: &str) -> Result<(), String> {
@@ -44,6 +53,11 @@ pub fn jarvis_dir() -> PathBuf {
         .unwrap_or_default();
     PathBuf::from(home).join(".jarvis")
 }
+
+/// 串行化所有对 config.json 的写入（config_save / save_reminders 等），避免
+/// read-modify-write 之间的 lost update：设置面板写整份 config 与机器人写 reminders
+/// 并发时互相覆盖字段。写入统一走 util::write_atomic + 本锁。
+pub static CONFIG_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 pub fn config_path() -> PathBuf {
     jarvis_dir().join("config.json")

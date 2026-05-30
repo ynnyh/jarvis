@@ -847,14 +847,15 @@ fn load_reminders() -> Vec<ScheduledReminder> {
 }
 
 fn save_reminders(reminders: &[ScheduledReminder]) {
+    // 持写锁覆盖整个 read-modify-write，避免与设置面板的 config_save 互相覆盖字段。
+    let _guard = settings::CONFIG_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let mut cfg = settings::load_raw_config().unwrap_or_else(|| json!({}));
     cfg["reminders"] = serde_json::to_value(reminders).unwrap_or(json!([]));
     let path = settings::config_path();
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
     if let Ok(content) = serde_json::to_string_pretty(&cfg) {
-        let _ = std::fs::write(&path, content);
+        let _ = crate::util::write_atomic(&path, &content);
     }
 }
 

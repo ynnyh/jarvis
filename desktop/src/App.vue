@@ -800,6 +800,7 @@ watch(() => store.alertLevel, (level) => {
   // safe 状态不主动打扰
 })
 
+let unlistenFocus: UnlistenFn | null = null
 onMounted(() => {
   configStore.load()
   store.refreshTaskBindings()
@@ -807,7 +808,7 @@ onMounted(() => {
   // 窗口失焦时关闭所有面板和菜单：用户点击桌面或其他应用时自动收起
   getCurrentWindow().onFocusChanged(({ payload: focused }) => {
     if (!focused) closeAllPanels()
-  })
+  }).then(un => { unlistenFocus = un })
 
   setTimeout(() => showAlert(`${configStore.config.userTitle}，${configStore.config.assistantName} 来啦`, '🤖', 'idle', 3000), 500)
   // 等数据加载后显示提醒
@@ -861,6 +862,7 @@ onUnmounted(() => {
   if (alertTimer) clearTimeout(alertTimer)
   unlistenNewTasks?.()
   unlistenSettingsClosed?.()
+  unlistenFocus?.()
 })
 </script>
 

@@ -178,11 +178,6 @@ async function openWriteModalForTask(t: {
 }) {
   if (writtenTasks.value.has(t.taskId)) return
   const content = buildWorkContent(t.commits)
-  console.log('[review] openWriteModalForTask payload:', {
-    taskId: t.taskId,
-    commitsCount: t.commits?.length ?? 0,
-    contentPreview: content.slice(0, 80),
-  })
   try {
     await invoke('write_hours_open', {
       payload: {
@@ -205,13 +200,6 @@ async function openWriteModalForOrphan(g: {
   commits: Array<{ title: string }>
 }) {
   const content = buildWorkContent(g.commits)
-  console.log('[review] openWriteModalForOrphan payload:', {
-    businessLine: g.businessLine,
-    commitsCount: g.commits?.length ?? 0,
-    firstTitle: g.commits?.[0]?.title ?? '(no commits)',
-    contentLen: content.length,
-    contentPreview: content.slice(0, 80),
-  })
   try {
     await invoke('write_hours_open', {
       payload: {

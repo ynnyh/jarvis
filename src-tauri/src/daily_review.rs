@@ -158,7 +158,7 @@ pub fn build_daily_review(
                 .max_by_key(|(_, n)| *n)
                 .map(|(k, _)| k)
                 .unwrap_or_default();
-            let effort: f64 = t.commits.iter().filter(|c| c.business_line == business_line).map(|c| c.effort).sum();
+            let effort: f64 = t.commits.iter().filter(|c| c.business_line == business_line).map(|c| c.effort).filter(|e| e.is_finite()).sum();
             let status = task_by_id
                 .get(&t.task_id)
                 .map(|x| x.status.clone())
@@ -194,7 +194,10 @@ pub fn build_daily_review(
         let dup = g.commits.iter().any(|x| x.sha == c.sha && x.repo_path == c.repo_path);
         if !dup {
             g.commits.push(c.clone());
-            g.effort += c.effort;
+            // 过滤 NaN/Inf：Inf 能绕过下方 total_effort > 0.0 守卫，导致 Inf/Inf=NaN 污染 suggested_hours。
+            if c.effort.is_finite() {
+                g.effort += c.effort;
+            }
         }
     };
     let collect_task = |map: &mut HashMap<String, BusinessLineGroup>, bl: &str, task_id: &str, task_name: &str| {
