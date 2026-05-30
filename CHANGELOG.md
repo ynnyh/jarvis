@@ -4,6 +4,42 @@
 
 ## Unreleased
 
+## v0.7.3
+
+### 修复
+- **设置页更新日志显示为空**：改用 Vite define 在构建时读取 CHANGELOG.md 并内联到 bundle，避免跨 root 的 `?raw` import 在不同环境下的行为差异。
+- **代码健壮性（续 v0.7.2）**：完成前端健壮性排查（渠道重启时序、去重 Set 清理、onFocusChanged unlisten 清理、消息列表 key 用 createdAt、移除泄露任务名的 console.log）。
+
+### 优化
+- **写工时体验**：Ctrl/Cmd+Enter 提交，打开窗口自动聚焦首个待填框。
+- **复盘体验**：写工时失败显示错误提示，防止连点开多个窗口。
+- **帆软工时查询**：日期预设 tab 高亮当前档。
+- **日常复盘**：孤儿工时求和增加 NaN 过滤。
+
+## v0.7.2
+
+### 修复
+- **全量代码健壮性排查**：修复一批生产隐患（详见下方）。
+- **发布到 Gitee 时 ETIMEDOWN 未触发重试**：增加网络错误重试机制。
+
+### 系统级修复（Rust 后端）
+- **PANIC 根治**：release 是 panic=abort，中文多字节 UTF-8 字节切片会杀进程且 debug 不暴露；新增 `util::truncate_chars` 替换 25 处危险切片。
+- **存储损坏防护**：所有 JSON 写盘改原子写（临时文件 + rename），防写一半进程退出留残文件。
+- **并发写安全**：config 并发加 `CONFIG_WRITE_LOCK` 串行化，防设置面板与机器人互相覆盖。
+- **禅道高危修复**：`add_effort` 缺 `left` 字段改报错中止（回填 0 会被禅道自动关任务）。
+- **消息丢包加固**：telegram offset 推进挪到 send 成功后 + 退避重试；qqbot 即时心跳 + token 缓存 + 失败清缓存。
+- **LLM 防护**：429 重试 + agent 循环上限 + 工具黑名单（agent 不准自调 log-task-effort）。
+- **命令安全**：`settings_open` page 参数走 ascii 白名单防 JS 注入；多处 `as_object_mut().unwrap()` 改 `?`；日志脱敏（debug 包裹 + 去明文）。
+
+### 前端修复
+- **时序与清理**：渠道重启防 telegram 409（250→500ms）；去重 Set 清理防内存增长；`onFocusChanged` unlisten 进 `onUnmounted`。
+- **消息列表渲染**：key 从 index 改 `msg.createdAt` 防切换对话 DOM 复用串状态。
+
+## v0.7.1
+
+### 新增
+- **自动关闭面板**：点击外部或窗口失焦时自动关闭浮层和菜单，减少手动关闭操作。
+
 ## v0.7.0
 
 ### 优化
