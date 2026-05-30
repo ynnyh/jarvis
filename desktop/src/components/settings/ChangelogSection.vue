@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-// ?raw 是 Vite 内置后缀，把目标文件作为字符串编进 bundle
-// 路径四层向上：components/settings → components → src → desktop → 项目根
-import changelogText from '../../../../CHANGELOG.md?raw'
+
+declare const __CHANGELOG_MD__: string
+const changelogText = __CHANGELOG_MD__
 
 interface Group { title: string; items: string[] }
 interface Section { version: string; groups: Group[]; intro: string }

@@ -1,6 +1,10 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
+import { readFileSync } from 'node:fs'
+
+// 在构建时读取 CHANGELOG.md 内容并内联到 bundle，避免 out-of-root ?raw import 的环境依赖问题
+const CHANGELOG_MD = readFileSync(resolve(__dirname, 'CHANGELOG.md'), 'utf-8')
 
 export default defineConfig({
   plugins: [vue()],
@@ -24,6 +28,9 @@ export default defineConfig({
     alias: {
       '@': resolve(__dirname, './desktop/src'),
     },
+  },
+  define: {
+    __CHANGELOG_MD__: JSON.stringify(CHANGELOG_MD),
   },
   server: {
     port: 5174,
