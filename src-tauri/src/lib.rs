@@ -1,5 +1,5 @@
-mod chat_agent;
 mod channels;
+mod chat_agent;
 mod commands;
 mod commit_classifier;
 mod commit_link;
@@ -18,9 +18,9 @@ mod tools;
 mod util;
 mod zentao;
 
-use tauri::Manager;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -28,7 +28,10 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .manage(commands::WriteHoursState::default())
         .manage(channels::ChannelServiceState::default())
         .setup(|app| {
@@ -40,7 +43,11 @@ pub fn run() {
             let tray_menu = Menu::with_items(app, &[&show_i, &hide_i, &sep, &quit_i])?;
 
             let _tray = TrayIconBuilder::with_id("main")
-                .icon(app.default_window_icon().cloned().expect("missing tray icon"))
+                .icon(
+                    app.default_window_icon()
+                        .cloned()
+                        .expect("missing tray icon"),
+                )
                 .tooltip("Jarvis · 你的任务助手")
                 .menu(&tray_menu)
                 .show_menu_on_left_click(false)
@@ -97,9 +104,17 @@ pub fn run() {
                 // 副屏去了，用户看不见。
                 // 历史教训 2：早期用 primary 优先，在「笔记本作为 primary + 用户在看外接」场景下也
                 // 把窗口丢到笔记本屏。但那种场景下用户应该把外接设为主屏 —— 现在尊重用户的主屏选择。
-                let monitor = window.primary_monitor().ok().flatten()
+                let monitor = window
+                    .primary_monitor()
+                    .ok()
+                    .flatten()
                     .or_else(|| window.current_monitor().ok().flatten())
-                    .or_else(|| window.available_monitors().ok().and_then(|m| m.first().cloned()));
+                    .or_else(|| {
+                        window
+                            .available_monitors()
+                            .ok()
+                            .and_then(|m| m.first().cloned())
+                    });
 
                 if let Some(monitor) = monitor {
                     // monitor.position() / size() 返回 PhysicalPosition/Size。
@@ -122,7 +137,8 @@ pub fn run() {
                     let x = m_x + m_w - logical_w - margin;
                     let y = m_y + m_h - logical_h - bottom_pad;
 
-                    let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }));
+                    let _ = window
+                        .set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }));
                 }
 
                 // 确保窗口可见并聚焦
@@ -209,6 +225,7 @@ pub fn run() {
             commands::llm_profile_switch,
             commands::llm_profile_delete,
             commands::llm_profile_upsert,
+            commands::llm_profile_test,
             commands::chat_open,
             commands::chat_close,
             commands::settings_open,

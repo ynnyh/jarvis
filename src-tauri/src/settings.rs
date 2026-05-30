@@ -19,13 +19,20 @@ pub fn secret_get(account: &str) -> Option<String> {
     match entry.get_password() {
         Ok(s) => {
             let s = s.trim().to_string();
-            if s.is_empty() { None } else { Some(s) }
+            if s.is_empty() {
+                None
+            } else {
+                Some(s)
+            }
         }
         // NoEntry 是正常情况（还没存过）；其它错误（密钥链被锁/服务不可用）要留痕，
         // 否则凭据静默变空，表现为"密码明明配了却登录失败"，极难排查。
         Err(keyring::Error::NoEntry) => None,
         Err(e) => {
-            eprintln!("[settings] 读取密钥链 '{}' 失败（非 NoEntry，凭据按空处理）: {}", account, e);
+            eprintln!(
+                "[settings] 读取密钥链 '{}' 失败（非 NoEntry，凭据按空处理）: {}",
+                account, e
+            );
             None
         }
     }
@@ -40,6 +47,15 @@ pub fn secret_set(account: &str, value: &str) -> Result<(), String> {
         .map_err(|e| format!("无法访问密钥链: {}", e))?
         .set_password(trimmed)
         .map_err(|e| format!("保存密钥失败: {}", e))
+}
+
+pub fn secret_clear(account: &str) -> Result<(), String> {
+    let entry = keyring::Entry::new(SECRET_SERVICE_NAME, account)
+        .map_err(|e| format!("Failed to access keychain: {}", e))?;
+    match entry.delete_credential() {
+        Ok(_) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(format!("Failed to clear secret: {}", e)),
+    }
 }
 
 pub fn secret_exists(account: &str) -> bool {

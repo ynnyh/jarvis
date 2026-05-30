@@ -55,6 +55,9 @@ jobs:
         run: npm ci --no-audit --no-fund
         timeout-minutes: 5
 
+      - name: Check text encoding
+        run: npm run check:text
+
       - name: Verify version consistency (Cargo.toml == tauri.conf.json)
         shell: bash
         run: |
@@ -177,7 +180,7 @@ jobs:
           fi
           cp "$SIG" "$TARGET" staging/
           # DMG 是用户下载入口，找到就一起上传
-          DMG=$(find "$BUNDLE" -name "*.dmg" | head -1)
+          DMG=$(find "$BUNDLE" -name "*.dmg" -not -name ".*" | head -1)
           if [ -n "$DMG" ]; then
             cp "$DMG" staging/
           else
@@ -210,6 +213,9 @@ jobs:
       - name: Install npm deps (for undici)
         run: npm ci --no-audit --no-fund
         timeout-minutes: 5
+
+      - name: Check text encoding
+        run: npm run check:text
 
       - name: Download all build artifacts
         uses: actions/download-artifact@v4

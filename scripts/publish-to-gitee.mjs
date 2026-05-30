@@ -28,9 +28,9 @@ import { Agent, setGlobalDispatcher } from 'undici'
 // Gitee 上传大文件（macOS .app.tar.gz + .dmg 加起来 ~70MB）从 GH Actions
 // 上行 + 服务端处理可能超过 5 分钟，需把超时拉长
 setGlobalDispatcher(new Agent({
-  headersTimeout: 30 * 60 * 1000,
-  bodyTimeout: 30 * 60 * 1000,
-  connectTimeout: 60 * 1000,
+  headersTimeout: 5 * 60 * 1000,
+  bodyTimeout: 5 * 60 * 1000,
+  connectTimeout: 30 * 1000,
 }))
 
 const __filename = fileURLToPath(import.meta.url)
@@ -86,7 +86,7 @@ if (ARTIFACTS_DIR && existsSync(ARTIFACTS_DIR)) {
       console.warn(`  ⚠ ${d} 有 ${sig} 但找不到 ${updaterTarget}，跳过`)
       continue
     }
-    const extras = all.filter(f => f !== sig && f !== updaterTarget)
+    const extras = all.filter(f => f !== sig && f !== updaterTarget && !f.startsWith('.'))
     platforms.push({
       platformId,
       updaterPath: path.join(sub, updaterTarget),
@@ -238,7 +238,7 @@ async function uploadAsset(filePath, name, { optional = false } = {}) {
         /HTTP 5\d\d/.test(String(e?.message)) ||
         /HTTP 429/.test(String(e?.message))
       if (attempt < maxAttempts && isRetryable) {
-        const baseBackoff = fileSizeMB > 30 ? 15000 : 5000
+        const baseBackoff = fileSizeMB > 30 ? 8000 : 3000
         const backoff = baseBackoff * attempt
         console.warn(`  ⚠ ${name} (${fileSizeMB.toFixed(1)}MB) 第 ${attempt}/${maxAttempts} 次失败（${errCode || e?.message}），${(backoff / 1000).toFixed(0)}s 后重试`)
         await new Promise(r => setTimeout(r, backoff))
@@ -320,18 +320,37 @@ if (existsSync(macDevInstaller)) {
 
 uploadQueue.sort((a, b) => a.priority - b.priority)
 
-console.log(`\n顺序上传 ${uploadQueue.length} 个文件（小文件优先）...`)
+console.log(`\n上传 ${uploadQueue.length} 个文件（同优先级并发=2）...`)
 const t0 = Date.now()
+
+// 按 priority 分组，组间串行、组内并发=2
+const groups = new Map()
 for (const job of uploadQueue) {
-  const url = await uploadAsset(job.filePath, job.name, { optional: job.optional })
-  job.onComplete(url)
+  if (!groups.has(job.priority)) groups.set(job.priority, [])
+  groups.get(job.priority).push(job)
+}
+const sortedGroups = [...groups.entries()].sort((a, b) => a[0] - b[0])
+
+for (const [, jobs] of sortedGroups) {
+  let idx = 0
+  const CONCURRENCY = 2
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, jobs.length) }, async () => {
+      while (idx < jobs.length) {
+        const job = jobs[idx++]
+        const url = await uploadAsset(job.filePath, job.name, { optional: job.optional })
+        job.onComplete(url)
+      }
+    }),
+  )
 }
 console.log(`✓ 全部上传完成（${((Date.now() - t0) / 1000).toFixed(1)}s）`)
 
 // --- 4b. 备份上传 .dmg 到 GitHub Release ---
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN
 const GITHUB_REPO = process.env.GITHUB_REPO
-const dmgFiles = platforms.flatMap(p => p.extras).filter(ex => ex.name.endsWith('.dmg'))
+const dmgFiles = platforms.flatMap(p => p.extras)
+  .filter(ex => ex.name.endsWith('.dmg') && !ex.name.startsWith('.'))
 
 if (GITHUB_TOKEN && GITHUB_REPO && dmgFiles.length > 0) {
   console.log(`\n--- 上传 .dmg 到 GitHub Release 备份 ---`)

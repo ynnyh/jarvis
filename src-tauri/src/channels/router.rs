@@ -54,7 +54,11 @@ pub async fn run_gateway(
         return;
     }
 
-    set_status(&status, true, format!("渠道服务运行中: {}", enabled.join(", ")));
+    set_status(
+        &status,
+        true,
+        format!("渠道服务运行中: {}", enabled.join(", ")),
+    );
     let (in_tx, mut in_rx) = mpsc::channel::<ChannelMessage>(64);
     let (out_tx, out_rx) = mpsc::channel::<OutboundMessage>(64);
     let ctx = GatewayContext { outbound: out_tx };
@@ -66,11 +70,7 @@ pub async fn run_gateway(
     let (telegram_out_tx, telegram_out_rx) = mpsc::channel::<OutboundMessage>(64);
     let (qq_out_tx, qq_out_rx) = mpsc::channel::<OutboundMessage>(64);
 
-    tauri::async_runtime::spawn(outbound_dispatcher(
-        out_rx,
-        telegram_out_tx,
-        qq_out_tx,
-    ));
+    tauri::async_runtime::spawn(outbound_dispatcher(out_rx, telegram_out_tx, qq_out_tx));
 
     if cfg.telegram.enabled {
         crate::channels::telegram::spawn(
@@ -83,12 +83,7 @@ pub async fn run_gateway(
         drop(telegram_out_rx);
     }
     if cfg.qqbot.enabled {
-        crate::channels::qqbot::spawn(
-            cfg.qqbot.clone(),
-            in_tx.clone(),
-            qq_out_rx,
-            stop_rx.clone(),
-        );
+        crate::channels::qqbot::spawn(cfg.qqbot.clone(), in_tx.clone(), qq_out_rx, stop_rx.clone());
     } else {
         drop(qq_out_rx);
     }
@@ -134,11 +129,7 @@ pub async fn run_gateway(
     set_status(&status, false, "渠道服务已停止");
 }
 
-async fn outbound_dispatcher(
-    mut out_rx: Receiver,
-    telegram_tx: Sender,
-    qq_tx: Sender,
-) {
+async fn outbound_dispatcher(mut out_rx: Receiver, telegram_tx: Sender, qq_tx: Sender) {
     while let Some(msg) = out_rx.recv().await {
         match msg.channel.as_str() {
             "telegram" => {
@@ -322,9 +313,105 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn should_use_agent_tools_matches_keywords() {
+        assert!(should_use_agent_tools("看看禅道上有什么任务"));
+        assert!(should_use_agent_tools("今天工时写了吗"));
+        assert!(should_use_agent_tools("这个 BUG 怎么修"));
+        assert!(should_use_agent_tools("commit 信息看一下"));
+    }
+
+    #[test]
+    fn should_use_agent_tools_rejects_plain_chat() {
+        assert!(!should_use_agent_tools("你好呀"));
+        assert!(!should_use_agent_tools("哈哈哈哈哈"));
+        assert!(!should_use_agent_tools("晚上吃什么"));
+    }
+
+    #[test]
+    fn is_effort_query_detects_query_not_write() {
+        assert!(is_effort_query("查看本周工时"));
+        assert!(is_effort_query("工时统计"));
+        assert!(is_effort_query("今天耗时明细"));
+    }
+
+    #[test]
+    fn is_effort_query_rejects_write_intent() {
+        assert!(!is_effort_query("写入工时"));
+        assert!(!is_effort_query("记录耗时"));
+        assert!(!is_effort_query("补填小时"));
+    }
+
+    #[test]
+    fn is_effort_query_rejects_no_effort_word() {
+        assert!(!is_effort_query("查看任务"));
+    }
+
+    #[test]
+    fn effort_query_range_defaults_to_week() {
+        let (range, label) = effort_query_range("查看工时");
+        assert_eq!(range, "thisWeek");
+        assert_eq!(label, "本周");
+    }
+
+    #[test]
+    fn effort_query_range_detects_yesterday() {
+        let (range, _) = effort_query_range("昨天工时");
+        assert_eq!(range, "yesterday");
+    }
+
+    #[test]
+    fn effort_query_range_detects_today() {
+        let (range, _) = effort_query_range("今日工时明细");
+        assert_eq!(range, "today");
+    }
+
+    #[test]
+    fn effort_query_range_detects_month() {
+        let (range, _) = effort_query_range("本月工时汇总");
+        assert_eq!(range, "thisMonth");
+    }
+
+    #[test]
+    fn effort_query_range_detects_year() {
+        let (range, _) = effort_query_range("今年工时统计");
+        assert_eq!(range, "thisYear");
+    }
+
+    #[test]
+    fn parse_reminder_cron_format() {
+        let (cron, msg) = parse_reminder_input("0 9 * * * 开会");
+        assert_eq!(cron, "0 9 * * *");
+        assert_eq!(msg, "开会");
+    }
+
+    #[test]
+    fn parse_reminder_hhmm_format() {
+        let (cron, msg) = parse_reminder_input("9:30 喝水");
+        assert_eq!(cron, "30 9 * * *");
+        assert_eq!(msg, "喝水");
+    }
+
+    #[test]
+    fn parse_reminder_invalid_returns_empty() {
+        let (cron, msg) = parse_reminder_input("随便说句话");
+        assert_eq!(cron, "");
+        assert_eq!(msg, "");
+    }
+
+    #[test]
+    fn parse_reminder_rejects_invalid_time() {
+        let (cron, msg) = parse_reminder_input("25:00 测试");
+        assert_eq!(cron, "");
+        assert_eq!(msg, "");
+    }
 }
 
-async fn handle_incoming(app: tauri::AppHandle, incoming: ChannelMessage) -> Result<AgentReply, String> {
+async fn handle_incoming(
+    app: tauri::AppHandle,
+    incoming: ChannelMessage,
+) -> Result<AgentReply, String> {
     // 定时提醒命令优先处理
     if let Some(reply) = maybe_handle_reminder_command(&app, &incoming.text) {
         append_channel_messages(&incoming, &reply.text, None)?;
@@ -415,7 +502,11 @@ async fn handle_plain_chat(
         if role == "tool" || msg.get("tool_calls").is_some() {
             continue;
         }
-        let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("").trim();
+        let content = msg
+            .get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
         if content.is_empty() {
             continue;
         }
@@ -448,28 +539,8 @@ async fn handle_plain_chat(
 fn should_use_agent_tools(text: &str) -> bool {
     let lower = text.to_lowercase();
     [
-        "禅道",
-        "任务",
-        "工时",
-        "耗时",
-        "小时",
-        "风险",
-        "延期",
-        "逾期",
-        "复盘",
-        "日报",
-        "周报",
-        "项目",
-        "进展",
-        "本周",
-        "今天",
-        "昨天",
-        "明天",
-        "写入",
-        "记录",
-        "提交",
-        "commit",
-        "bug",
+        "禅道", "任务", "工时", "耗时", "小时", "风险", "延期", "逾期", "复盘", "日报", "周报",
+        "项目", "进展", "本周", "今天", "昨天", "明天", "写入", "记录", "提交", "commit", "bug",
         "需求",
     ]
     .iter()
@@ -497,16 +568,23 @@ async fn maybe_handle_effort_query(text: &str) -> Result<Option<AgentReply>, Str
 
 fn is_effort_query(text: &str) -> bool {
     let lower = text.to_lowercase();
-    let has_effort_word = ["工时", "耗时", "小时", "effort"].iter().any(|w| lower.contains(w));
+    let has_effort_word = ["工时", "耗时", "小时", "effort"]
+        .iter()
+        .any(|w| lower.contains(w));
     if !has_effort_word {
         return false;
     }
-    if ["写", "写入", "记录", "新增", "填", "补", "提交"].iter().any(|w| lower.contains(w)) {
-        return false;
-    }
-    ["查", "查询", "看", "统计", "汇总", "多少", "明细", "本周", "今天", "昨天", "本月", "今年"]
+    if ["写", "写入", "记录", "新增", "填", "补", "提交"]
         .iter()
         .any(|w| lower.contains(w))
+    {
+        return false;
+    }
+    [
+        "查", "查询", "看", "统计", "汇总", "多少", "明细", "本周", "今天", "昨天", "本月", "今年",
+    ]
+    .iter()
+    .any(|w| lower.contains(w))
 }
 
 fn effort_query_range(text: &str) -> (&'static str, String) {
@@ -623,7 +701,8 @@ fn load_channel_history(msg: &ChannelMessage) -> Result<Vec<Value>, String> {
         return Ok(Vec::new());
     }
     let raw = std::fs::read_to_string(path).map_err(|e| format!("读取渠道会话失败: {}", e))?;
-    let parsed: Value = serde_json::from_str(&raw).map_err(|e| format!("渠道会话解析失败: {}", e))?;
+    let parsed: Value =
+        serde_json::from_str(&raw).map_err(|e| format!("渠道会话解析失败: {}", e))?;
     Ok(parsed
         .get("messages")
         .and_then(|v| v.as_array())
@@ -668,7 +747,9 @@ fn trim_history(messages: &mut Vec<Value>) {
     }
 }
 
-async fn maybe_handle_confirmation(incoming: &ChannelMessage) -> Result<Option<AgentReply>, String> {
+async fn maybe_handle_confirmation(
+    incoming: &ChannelMessage,
+) -> Result<Option<AgentReply>, String> {
     let text = incoming.text.trim();
     if !matches!(text, "确认" | "取消" | "confirm" | "cancel") {
         return Ok(None);
@@ -705,16 +786,14 @@ async fn maybe_handle_confirmation(incoming: &ChannelMessage) -> Result<Option<A
 }
 
 fn save_pending_action(action: &PendingAction) -> Result<(), String> {
-    let path = settings::jarvis_dir()
-        .join("channel-pending")
-        .join(format!(
-            "{}.json",
-            action
-                .id
-                .chars()
-                .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-                .collect::<String>()
-        ));
+    let path = settings::jarvis_dir().join("channel-pending").join(format!(
+        "{}.json",
+        action
+            .id
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect::<String>()
+    ));
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("创建待确认目录失败: {}", e))?;
     }
@@ -740,7 +819,9 @@ async fn detect_effort_proposal(
         .or_else(|| regex_capture(&combined, r"\b([0-9]{4,})\b"));
     let hours = regex_capture(&combined, r"([0-9]+(?:\.[0-9]+)?)\s*(?:小时|工时|h|hour)")
         .and_then(|s| s.parse::<f64>().ok());
-    let Some(task_id) = task_id else { return Ok(None) };
+    let Some(task_id) = task_id else {
+        return Ok(None);
+    };
     let Some(hours) = hours else { return Ok(None) };
     if hours <= 0.0 {
         return Ok(None);
@@ -780,8 +861,7 @@ fn regex_capture(text: &str, pattern: &str) -> Option<String> {
 fn cleanup_effort_work(text: &str, task_id: &str) -> String {
     let mut s = text.replace(task_id, "");
     for pat in [
-        "帮我", "帮忙", "写入", "写", "禅道", "任务", "工时", "小时", "hour", "hours",
-        "确认",
+        "帮我", "帮忙", "写入", "写", "禅道", "任务", "工时", "小时", "hour", "hours", "确认",
     ] {
         s = s.replace(pat, "");
     }
@@ -818,7 +898,10 @@ fn maybe_handle_reminder_command(app: &tauri::AppHandle, text: &str) -> Option<A
     }
 
     // 添加
-    if trimmed.starts_with("定时") || trimmed.starts_with("添加定时") || trimmed.starts_with("添加提醒") {
+    if trimmed.starts_with("定时")
+        || trimmed.starts_with("添加定时")
+        || trimmed.starts_with("添加提醒")
+    {
         let reply = add_reminder(trimmed);
         let _ = app.emit("reminders-changed", ());
         return Some(reply);
@@ -832,7 +915,9 @@ fn try_parse_delete_reminder(text: &str) -> Option<usize> {
     for pat in patterns {
         if let Some(rest) = text.strip_prefix(pat) {
             if let Ok(n) = rest.trim().parse::<usize>() {
-                if n > 0 { return Some(n - 1); }
+                if n > 0 {
+                    return Some(n - 1);
+                }
             }
         }
     }
@@ -870,7 +955,9 @@ fn add_reminder(text: &str) -> AgentReply {
     let (cron, message) = parse_reminder_input(content);
     if message.is_empty() {
         return AgentReply {
-            text: "格式不对。用法：\n定时 17:30 写日报\n定时 30 8 * * 1-5 晨会\n定时列表\n删除定时 1".to_string(),
+            text:
+                "格式不对。用法：\n定时 17:30 写日报\n定时 30 8 * * 1-5 晨会\n定时列表\n删除定时 1"
+                    .to_string(),
         };
     }
 
@@ -906,14 +993,20 @@ fn list_reminders() -> AgentReply {
     }
     lines.push("\n发送「删除定时 N」删除指定提醒".to_string());
 
-    AgentReply { text: lines.join("\n") }
+    AgentReply {
+        text: lines.join("\n"),
+    }
 }
 
 fn delete_reminder(index: usize) -> AgentReply {
     let mut reminders = load_reminders();
     if index >= reminders.len() {
         return AgentReply {
-            text: format!("没有第 {} 个提醒，当前共 {} 个。", index + 1, reminders.len()),
+            text: format!(
+                "没有第 {} 个提醒，当前共 {} 个。",
+                index + 1,
+                reminders.len()
+            ),
         };
     }
     let removed = reminders.remove(index);
@@ -930,17 +1023,18 @@ fn delete_reminder(index: usize) -> AgentReply {
  */
 fn parse_reminder_input(input: &str) -> (String, String) {
     // 尝试匹配标准 cron 格式：5 个数字段 + 消息
-    let re = regex::Regex::new(
-        r"^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+)$"
-    ).ok();
+    let re = regex::Regex::new(r"^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+)$").ok();
 
     if let Some(re) = &re {
         if let Some(caps) = re.captures(input) {
-            let fields: Vec<&str> = (1..=5).filter_map(|i| caps.get(i).map(|m| m.as_str())).collect();
+            let fields: Vec<&str> = (1..=5)
+                .filter_map(|i| caps.get(i).map(|m| m.as_str()))
+                .collect();
             if fields.len() == 5 {
                 // 验证是否都是合法的 cron 字段
                 let all_valid = fields.iter().all(|f| {
-                    f.chars().all(|c| c.is_ascii_digit() || c == '*' || c == '-' || c == ',' || c == '/')
+                    f.chars()
+                        .all(|c| c.is_ascii_digit() || c == '*' || c == '-' || c == ',' || c == '/')
                 });
                 if all_valid {
                     let msg = caps.get(6).map(|m| m.as_str().trim()).unwrap_or("");
@@ -953,20 +1047,21 @@ fn parse_reminder_input(input: &str) -> (String, String) {
     }
 
     // 尝试匹配 HH:MM 格式
-    let time_re = regex::Regex::new(
-        r"^([0-9]{1,2}):([0-9]{2})\s+(.+)$"
-    ).ok();
+    let time_re = regex::Regex::new(r"^([0-9]{1,2}):([0-9]{2})\s+(.+)$").ok();
 
     if let Some(re) = &time_re {
         if let Some(caps) = re.captures(input) {
-            let hour: u32 = caps.get(1).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
-            let minute: u32 = caps.get(2).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+            let hour: u32 = caps
+                .get(1)
+                .and_then(|m| m.as_str().parse().ok())
+                .unwrap_or(0);
+            let minute: u32 = caps
+                .get(2)
+                .and_then(|m| m.as_str().parse().ok())
+                .unwrap_or(0);
             let msg = caps.get(3).map(|m| m.as_str().trim()).unwrap_or("");
             if !msg.is_empty() && hour < 24 && minute < 60 {
-                return (
-                    format!("{} {} * * *", minute, hour),
-                    msg.to_string(),
-                );
+                return (format!("{} {} * * *", minute, hour), msg.to_string());
             }
         }
     }

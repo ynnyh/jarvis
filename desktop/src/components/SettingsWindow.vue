@@ -34,9 +34,21 @@ const phaseLabel = computed(() => {
   }
 })
 
+const aiStatus = computed(() => {
+  const profiles = store.config.llmProfiles ?? []
+  const activeProfile = profiles.find(p => p.id === store.config.activeLlmProfileId)
+  if (activeProfile) {
+    return activeProfile.name?.trim() || activeProfile.model || '已配置'
+  }
+  if (profiles.length > 0) {
+    return `已配 ${profiles.length} 个`
+  }
+  return store.config.llm.apiKey ? store.config.llm.model : '未配置'
+})
+
 function pageStatus(key: SettingsPageKey) {
   if (key === 'zentao') return store.config.zentao.account ? '已配置' : '未配置'
-  if (key === 'ai') return store.config.llm.apiKey ? store.config.llm.model : '未配置'
+  if (key === 'ai') return aiStatus.value
   if (key === 'channels') {
     const names = []
     if (store.config.channels.telegram.enabled) names.push('Telegram')

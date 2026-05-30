@@ -118,7 +118,10 @@ pub struct ChannelsNotifyResult {
 }
 
 #[tauri::command]
-pub async fn channels_notify(app: tauri::AppHandle, text: String) -> Result<ChannelsNotifyResult, String> {
+pub async fn channels_notify(
+    app: tauri::AppHandle,
+    text: String,
+) -> Result<ChannelsNotifyResult, String> {
     if text.trim().is_empty() {
         return Err("通知内容不能为空".to_string());
     }
@@ -135,18 +138,23 @@ pub async fn channels_notify(app: tauri::AppHandle, text: String) -> Result<Chan
     if targets.is_empty() {
         return Ok(ChannelsNotifyResult {
             sent: 0,
-            skipped: vec!["没有可用的机器人提醒目标。请启用 Telegram/QQ，并配置白名单。".to_string()],
+            skipped: vec![
+                "没有可用的机器人提醒目标。请启用 Telegram/QQ，并配置白名单。".to_string(),
+            ],
         });
     }
 
     let mut sent = 0usize;
     let mut skipped = Vec::new();
     for target in targets {
-        match sender.send(router::OutboundMessage {
-            channel: target.channel,
-            chat_id: target.chat_id,
-            text: text.clone(),
-        }).await {
+        match sender
+            .send(router::OutboundMessage {
+                channel: target.channel,
+                chat_id: target.chat_id,
+                text: text.clone(),
+            })
+            .await
+        {
             Ok(_) => sent += 1,
             Err(e) => skipped.push(format!("发送到渠道队列失败: {}", e)),
         }

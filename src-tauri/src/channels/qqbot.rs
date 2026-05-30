@@ -94,7 +94,11 @@ pub fn spawn(
 }
 
 fn base_url(config: &QqBotConfig) -> &'static str {
-    if config.sandbox { SANDBOX_BASE } else { PROD_BASE }
+    if config.sandbox {
+        SANDBOX_BASE
+    } else {
+        PROD_BASE
+    }
 }
 
 /// QQ Bot HTTP client：带 20s 超时，避免 token / 网关 / 发送请求在弱网下永久挂起阻塞 send_loop。
@@ -267,7 +271,11 @@ async fn gateway_url(config: &QqBotConfig, token: &str) -> Result<String, String
     let status = resp.status();
     let text = resp.text().await.map_err(|e| e.to_string())?;
     if !status.is_success() {
-        return Err(format!("QQ Bot gateway HTTP {}: {}", status.as_u16(), redact_tokenish_text(&text)));
+        return Err(format!(
+            "QQ Bot gateway HTTP {}: {}",
+            status.as_u16(),
+            redact_tokenish_text(&text)
+        ));
     }
     let parsed: GatewayResp =
         serde_json::from_str(&text).map_err(|e| format!("QQ Bot gateway 解析失败: {}", e))?;
@@ -290,19 +298,24 @@ fn redact_tokenish_text(text: &str) -> String {
         r#""token"\s*:\s*"[^"]+""#,
     ] {
         if let Ok(re) = regex::Regex::new(pattern) {
-            out = re.replace_all(&out, |caps: &regex::Captures| {
-                let raw = caps.get(0).map(|m| m.as_str()).unwrap_or("");
-                match raw.split_once(':') {
-                    Some((key, _)) => format!("{}:\"<redacted>\"", key),
-                    None => "<redacted>".to_string(),
-                }
-            }).to_string();
+            out = re
+                .replace_all(&out, |caps: &regex::Captures| {
+                    let raw = caps.get(0).map(|m| m.as_str()).unwrap_or("");
+                    match raw.split_once(':') {
+                        Some((key, _)) => format!("{}:\"<redacted>\"", key),
+                        None => "<redacted>".to_string(),
+                    }
+                })
+                .to_string();
         }
     }
     out
 }
 
-fn event_to_channel_message(config: &QqBotConfig, payload: &GatewayPayload) -> Option<ChannelMessage> {
+fn event_to_channel_message(
+    config: &QqBotConfig,
+    payload: &GatewayPayload,
+) -> Option<ChannelMessage> {
     let t = payload.t.as_deref().unwrap_or("");
     let d = &payload.d;
     let text = d

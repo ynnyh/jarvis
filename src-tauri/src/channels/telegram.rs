@@ -88,28 +88,28 @@ pub async fn probe(
         Err(_) => None,
     }
     .map(|u| {
-            u.result
-                .into_iter()
-                .filter_map(|update| update.message)
-                .filter_map(|msg| {
-                    let chat_id = msg.chat.id.to_string();
-                    Some(TelegramRecentChat {
-                        chat_id,
-                        chat_type: msg.chat.kind,
-                        title: msg.chat.title.or(msg.chat.username),
-                        from_id: msg.from.as_ref().map(|f| f.id.to_string()),
-                        from_name: msg.from.as_ref().and_then(|f| {
-                            f.username
-                                .clone()
-                                .or_else(|| f.first_name.clone())
-                                .or_else(|| f.last_name.clone())
-                        }),
-                        text: msg.text,
-                    })
+        u.result
+            .into_iter()
+            .filter_map(|update| update.message)
+            .filter_map(|msg| {
+                let chat_id = msg.chat.id.to_string();
+                Some(TelegramRecentChat {
+                    chat_id,
+                    chat_type: msg.chat.kind,
+                    title: msg.chat.title.or(msg.chat.username),
+                    from_id: msg.from.as_ref().map(|f| f.id.to_string()),
+                    from_name: msg.from.as_ref().and_then(|f| {
+                        f.username
+                            .clone()
+                            .or_else(|| f.first_name.clone())
+                            .or_else(|| f.last_name.clone())
+                    }),
+                    text: msg.text,
                 })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+            })
+            .collect::<Vec<_>>()
+    })
+    .unwrap_or_default();
 
     let message = if updates.is_empty() {
         "Token 有效。现在去 Telegram 给这个 bot 发一句“今天有哪些任务？”，再回来点一次检查，就能看到 chat id。".to_string()
@@ -313,11 +313,10 @@ fn normalize_api_base(raw: &str) -> String {
 }
 
 fn build_client(proxy: Option<&str>) -> Result<reqwest::Client, String> {
-    let mut builder = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(35));
+    let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(35));
     if let Some(proxy) = choose_proxy(proxy) {
-        let proxy = reqwest::Proxy::all(proxy)
-            .map_err(|e| format!("Telegram 代理配置无效: {}", e))?;
+        let proxy =
+            reqwest::Proxy::all(proxy).map_err(|e| format!("Telegram 代理配置无效: {}", e))?;
         builder = builder.proxy(proxy);
     }
     builder
@@ -329,7 +328,14 @@ fn choose_proxy(proxy: Option<&str>) -> Option<String> {
     if let Some(proxy) = proxy.map(str::trim).filter(|s| !s.is_empty()) {
         return Some(proxy.to_string());
     }
-    for key in ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"] {
+    for key in [
+        "HTTPS_PROXY",
+        "https_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+    ] {
         if let Ok(value) = std::env::var(key) {
             let value = value.trim().to_string();
             if !value.is_empty() {

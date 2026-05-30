@@ -92,8 +92,8 @@ struct LogEffortInput {
 }
 
 pub async fn log_task_effort(input: Value) -> Result<Value, String> {
-    let parsed: LogEffortInput = serde_json::from_value(input)
-        .map_err(|e| format!("log-task-effort 入参错误: {}", e))?;
+    let parsed: LogEffortInput =
+        serde_json::from_value(input).map_err(|e| format!("log-task-effort 入参错误: {}", e))?;
     if parsed.task_id.is_empty() {
         return Err("taskId 不能为空".into());
     }
@@ -318,16 +318,15 @@ pub async fn cc_switch_import(_input: Value) -> Result<Value, String> {
             .map_err(|e| format!("CC Switch settings.json 解析失败: {}", e))?;
         match json.get("currentProviderCodex").and_then(|v| v.as_str()) {
             Some(s) if !s.is_empty() => s.to_string(),
-            _ => {
-                return Ok(serde_json::to_value(CcImportResult {
-                    found: false,
-                    reason: Some(
-                        "CC Switch 没有选定的 Codex（OpenAI）provider，请先在 CC Switch 里切换到一个".into(),
-                    ),
-                    provider: None,
-                })
-                .unwrap())
-            }
+            _ => return Ok(serde_json::to_value(CcImportResult {
+                found: false,
+                reason: Some(
+                    "CC Switch 没有选定的 Codex（OpenAI）provider，请先在 CC Switch 里切换到一个"
+                        .into(),
+                ),
+                provider: None,
+            })
+            .unwrap()),
         }
     };
 
@@ -438,10 +437,7 @@ fn parse_codex_toml(text: &str) -> CodexTomlParsed {
     let mut wire_api: Option<String> = None;
     if let Some(p) = provider_name.as_deref() {
         let escaped = regex::escape(p);
-        let section_re = format!(
-            r"\[model_providers\.{}\]([\s\S]*?)(?:\n\[|$)",
-            escaped
-        );
+        let section_re = format!(r"\[model_providers\.{}\]([\s\S]*?)(?:\n\[|$)", escaped);
         if let Ok(re) = Regex::new(&section_re) {
             if let Some(cap) = re.captures(text) {
                 let section = cap.get(1).map(|m| m.as_str()).unwrap_or("");
@@ -513,15 +509,12 @@ struct GetEffortsInput {
 }
 
 pub async fn get_efforts(input: Value) -> Result<Value, String> {
-    let parsed: GetEffortsInput = serde_json::from_value(input)
-        .map_err(|e| format!("get_efforts 入参错误: {}", e))?;
+    let parsed: GetEffortsInput =
+        serde_json::from_value(input).map_err(|e| format!("get_efforts 入参错误: {}", e))?;
     let (begin, end, range_label) = resolve_effort_range(parsed.begin, parsed.end, parsed.range)?;
-    let result = crate::fine_report::finereport_get_efforts(
-        begin.clone(),
-        end.clone(),
-        parsed.real_name,
-    )
-    .await?;
+    let result =
+        crate::fine_report::finereport_get_efforts(begin.clone(), end.clone(), parsed.real_name)
+            .await?;
 
     // 只返回 LLM 需要的字段，截断 summary/detailHtml 避免炸 token
     let records = serde_json::to_value(&result.records)
@@ -616,8 +609,8 @@ struct GetTaskDetailInput {
 }
 
 pub async fn get_task_detail(input: Value) -> Result<Value, String> {
-    let parsed: GetTaskDetailInput = serde_json::from_value(input)
-        .map_err(|e| format!("get_task_detail 入参错误: {}", e))?;
+    let parsed: GetTaskDetailInput =
+        serde_json::from_value(input).map_err(|e| format!("get_task_detail 入参错误: {}", e))?;
     if parsed.id.is_empty() {
         return Err("id 不能为空".into());
     }
@@ -661,8 +654,8 @@ fn coerce_root_dir(v: Option<Value>) -> Vec<String> {
 }
 
 pub async fn get_task_commits(input: Value) -> Result<Value, String> {
-    let parsed: GetTaskCommitsInput = serde_json::from_value(input)
-        .map_err(|e| format!("get_task_commits 入参错误: {}", e))?;
+    let parsed: GetTaskCommitsInput =
+        serde_json::from_value(input).map_err(|e| format!("get_task_commits 入参错误: {}", e))?;
 
     // 1. 拉禅道任务（自己的全部）
     let client = ZentaoClient::from_settings()?;
@@ -752,7 +745,8 @@ struct AnalyzeRiskInput {
 }
 
 pub async fn analyze_risk(input: Value) -> Result<Value, String> {
-    let parsed: AnalyzeRiskInput = serde_json::from_value(input).unwrap_or(AnalyzeRiskInput { use_llm: None });
+    let parsed: AnalyzeRiskInput =
+        serde_json::from_value(input).unwrap_or(AnalyzeRiskInput { use_llm: None });
     let client = ZentaoClient::from_settings()?;
     let tasks = client.get_my_tasks().await?;
 
@@ -862,7 +856,10 @@ fn build_risk_summary(overdue: usize, near: usize, high: usize, dep: usize) -> S
         lines.push(format!("发现 {} 个已延期任务，需要立即处理。", overdue));
     }
     if near > 0 {
-        lines.push(format!("发现 {} 个即将到期任务（3天内），请密切关注。", near));
+        lines.push(format!(
+            "发现 {} 个即将到期任务（3天内），请密切关注。",
+            near
+        ));
     }
     if high > 0 {
         lines.push(format!("有 {} 个高优先级任务待处理。", high));
@@ -949,8 +946,8 @@ struct GetDailyReviewInput {
 }
 
 pub async fn get_daily_review(input: Value) -> Result<Value, String> {
-    let parsed: GetDailyReviewInput = serde_json::from_value(input)
-        .map_err(|e| format!("get_daily_review 入参错误: {}", e))?;
+    let parsed: GetDailyReviewInput =
+        serde_json::from_value(input).map_err(|e| format!("get_daily_review 入参错误: {}", e))?;
 
     // 1. 拉禅道任务
     let client = ZentaoClient::from_settings()?;
@@ -978,7 +975,11 @@ pub async fn get_daily_review(input: Value) -> Result<Value, String> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string(),
-            status: t.get("status").and_then(|v| v.as_str()).unwrap_or("wait").to_string(),
+            status: t
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("wait")
+                .to_string(),
         })
         .collect();
 
@@ -1019,7 +1020,10 @@ pub async fn get_daily_review(input: Value) -> Result<Value, String> {
             Ok(text) => {
                 let mut v = serde_json::to_value(&review).map_err(|e| e.to_string())?;
                 if let Value::Object(map) = &mut v {
-                    map.insert("plainTextHeuristic".into(), Value::String(review.plain_text.clone()));
+                    map.insert(
+                        "plainTextHeuristic".into(),
+                        Value::String(review.plain_text.clone()),
+                    );
                     map.insert("plainText".into(), Value::String(text));
                     map.insert("llmUsed".into(), Value::Bool(true));
                 }
@@ -1142,9 +1146,18 @@ pub async fn chat_send(input: Value) -> Result<Value, String> {
     let allowed_tools: Vec<String> = parsed
         .allowed_tools
         .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| crate::chat_agent::DEFAULT_AGENT_TOOLS.iter().map(|s| s.to_string()).collect());
+        .unwrap_or_else(|| {
+            crate::chat_agent::DEFAULT_AGENT_TOOLS
+                .iter()
+                .map(|s| s.to_string())
+                .collect()
+        });
 
-    let has_system = parsed.messages.first().map(|m| m.role == "system").unwrap_or(false);
+    let has_system = parsed
+        .messages
+        .first()
+        .map(|m| m.role == "system")
+        .unwrap_or(false);
     let system_prompt = if has_system {
         None
     } else {
@@ -1165,7 +1178,9 @@ pub async fn chat_send(input: Value) -> Result<Value, String> {
                 _ => Role::User,
             },
             content: m.content,
-            tool_calls: m.tool_calls.and_then(|tc| serde_json::from_value(Value::Array(tc)).ok()),
+            tool_calls: m
+                .tool_calls
+                .and_then(|tc| serde_json::from_value(Value::Array(tc)).ok()),
             tool_call_id: m.tool_call_id,
             name: m.name,
         })

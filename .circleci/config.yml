@@ -74,6 +74,12 @@ jobs:
             $nodeDir = "$env:USERPROFILE\node\node-v20.19.0-win-x64"
             $env:PATH="$nodeDir;$env:PATH"
             npm ci --no-audit --no-fund
+      - run:
+          name: Check text encoding
+          command: |
+            $nodeDir = "$env:USERPROFILE\node\node-v20.19.0-win-x64"
+            $env:PATH="$nodeDir;$env:PATH"
+            npm run check:text
       - save_cache:
           key: win-npm-{{ checksum "package-lock.json" }}
           paths:
@@ -150,6 +156,9 @@ jobs:
       - run:
           name: Install dependencies
           command: npm ci --no-audit --no-fund
+      - run:
+          name: Check text encoding
+          command: npm run check:text
       - save_cache:
           key: macos-npm-{{ checksum "package-lock.json" }}
           paths:
@@ -206,6 +215,9 @@ jobs:
       - run:
           name: Install dependencies
           command: npm ci --no-audit --no-fund
+      - run:
+          name: Check text encoding
+          command: npm run check:text
       - run:
           name: Publish to Gitee
           no_output_timeout: 45m

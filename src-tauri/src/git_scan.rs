@@ -235,8 +235,17 @@ async fn run_git_cmd(args: &[&str], cwd: Option<&Path>) -> Result<String, String
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let code = output.status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".into());
-        return Err(format!("git {} 退出码 {}: {}", args.join(" "), code, stderr));
+        let code = output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "?".into());
+        return Err(format!(
+            "git {} 退出码 {}: {}",
+            args.join(" "),
+            code,
+            stderr
+        ));
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
@@ -317,10 +326,18 @@ fn walk<'a>(
 
 pub async fn get_default_git_identities(cwd: Option<&Path>) -> Vec<String> {
     let read_one = |args: Vec<&'static str>| async move {
-        run_git_cmd(&args, cwd).await.ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+        run_git_cmd(&args, cwd)
+            .await
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
     };
-    let email = read_one(vec!["config", "user.email"]).await.or(read_one(vec!["config", "--global", "user.email"]).await);
-    let name = read_one(vec!["config", "user.name"]).await.or(read_one(vec!["config", "--global", "user.name"]).await);
+    let email = read_one(vec!["config", "user.email"])
+        .await
+        .or(read_one(vec!["config", "--global", "user.email"]).await);
+    let name = read_one(vec!["config", "user.name"])
+        .await
+        .or(read_one(vec!["config", "--global", "user.name"]).await);
 
     let mut out: Vec<String> = Vec::new();
     if let Some(e) = email.clone() {
@@ -347,7 +364,10 @@ pub struct GetCommitsOpts<'a> {
     pub include_stat: bool,
 }
 
-pub async fn get_local_commits(repo: &str, opts: GetCommitsOpts<'_>) -> Result<Vec<LocalCommit>, String> {
+pub async fn get_local_commits(
+    repo: &str,
+    opts: GetCommitsOpts<'_>,
+) -> Result<Vec<LocalCommit>, String> {
     // 拼 pretty format
     let mut fields = vec!["%H", "%an", "%ae", "%aI", "%cn", "%ce", "%cI", "%s"];
     if opts.include_body {
@@ -368,8 +388,18 @@ pub async fn get_local_commits(repo: &str, opts: GetCommitsOpts<'_>) -> Result<V
         pretty_arg,
     ];
     let author_args: Vec<String> = match opts.match_mode {
-        MatchDimension::Author => opts.authors.iter().filter(|s| !s.is_empty()).map(|s| format!("--author={}", s)).collect(),
-        MatchDimension::Committer => opts.authors.iter().filter(|s| !s.is_empty()).map(|s| format!("--committer={}", s)).collect(),
+        MatchDimension::Author => opts
+            .authors
+            .iter()
+            .filter(|s| !s.is_empty())
+            .map(|s| format!("--author={}", s))
+            .collect(),
+        MatchDimension::Committer => opts
+            .authors
+            .iter()
+            .filter(|s| !s.is_empty())
+            .map(|s| format!("--committer={}", s))
+            .collect(),
         MatchDimension::Any => Vec::new(),
     };
     args.extend(author_args);
@@ -390,10 +420,25 @@ pub async fn get_local_commits(repo: &str, opts: GetCommitsOpts<'_>) -> Result<V
                 return None;
             }
             let sha = parts[0].trim().to_string();
-            let short_sha = if sha.len() > 7 { sha[..7].to_string() } else { sha.clone() };
+            let short_sha = if sha.len() > 7 {
+                sha[..7].to_string()
+            } else {
+                sha.clone()
+            };
             let body = if opts.include_body {
-                let body_str = parts.iter().skip(8).cloned().collect::<Vec<&str>>().join(&FIELD_SEP.to_string()).trim().to_string();
-                if body_str.is_empty() { None } else { Some(body_str) }
+                let body_str = parts
+                    .iter()
+                    .skip(8)
+                    .cloned()
+                    .collect::<Vec<&str>>()
+                    .join(&FIELD_SEP.to_string())
+                    .trim()
+                    .to_string();
+                if body_str.is_empty() {
+                    None
+                } else {
+                    Some(body_str)
+                }
             } else {
                 None
             };
@@ -417,8 +462,15 @@ pub async fn get_local_commits(repo: &str, opts: GetCommitsOpts<'_>) -> Result<V
     if matches!(opts.match_mode, MatchDimension::Any) && !opts.authors.is_empty() {
         let patterns: Vec<String> = opts.authors.iter().map(|s| s.to_lowercase()).collect();
         commits.retain(|c| {
-            let fields = [&c.author_email, &c.author_name, &c.committer_email, &c.committer_name];
-            patterns.iter().any(|p| fields.iter().any(|f| f.to_lowercase().contains(p)))
+            let fields = [
+                &c.author_email,
+                &c.author_name,
+                &c.committer_email,
+                &c.committer_name,
+            ];
+            patterns
+                .iter()
+                .any(|p| fields.iter().any(|f| f.to_lowercase().contains(p)))
         });
     }
 
@@ -434,7 +486,11 @@ pub async fn get_local_commits(repo: &str, opts: GetCommitsOpts<'_>) -> Result<V
     Ok(commits)
 }
 
-async fn run_concurrent_stats(repo: &str, shas: &[String], limit: usize) -> Vec<Option<CommitStat>> {
+async fn run_concurrent_stats(
+    repo: &str,
+    shas: &[String],
+    limit: usize,
+) -> Vec<Option<CommitStat>> {
     use std::sync::Arc;
     use tokio::sync::Semaphore;
 
@@ -457,7 +513,11 @@ async fn run_concurrent_stats(repo: &str, shas: &[String], limit: usize) -> Vec<
 }
 
 pub async fn get_commit_stat(repo: &str, sha: &str) -> Result<CommitStat, String> {
-    let out = run_git_cmd(&["show", "--numstat", "--format=", sha], Some(Path::new(repo))).await?;
+    let out = run_git_cmd(
+        &["show", "--numstat", "--format=", sha],
+        Some(Path::new(repo)),
+    )
+    .await?;
     let mut files: Vec<CommitStatFile> = Vec::new();
     let mut insertions = 0usize;
     let mut deletions = 0usize;
@@ -477,8 +537,16 @@ pub async fn get_commit_stat(repo: &str, sha: &str) -> Result<CommitStat, String
             continue;
         }
         let binary = add_str == "-" && del_str == "-";
-        let ins = if binary { 0 } else { add_str.parse().unwrap_or(0) };
-        let del = if binary { 0 } else { del_str.parse().unwrap_or(0) };
+        let ins = if binary {
+            0
+        } else {
+            add_str.parse().unwrap_or(0)
+        };
+        let del = if binary {
+            0
+        } else {
+            del_str.parse().unwrap_or(0)
+        };
         files.push(CommitStatFile {
             path,
             insertions: ins,
@@ -503,21 +571,35 @@ pub async fn get_commit_diff(repo: &str, sha: &str) -> Result<CommitDiff, String
     let meta = meta_out.trim_end_matches('\n');
     let parts: Vec<&str> = meta.split(FIELD_SEP).collect();
     if parts.len() < 5 {
-        return Err(format!("git show meta 输出格式异常: {}", crate::util::truncate_chars(&meta, 200)));
+        return Err(format!(
+            "git show meta 输出格式异常: {}",
+            crate::util::truncate_chars(&meta, 200)
+        ));
     }
     let sha_out = parts[0].trim().to_string();
     let an = parts[1].to_string();
     let ae = parts[2].to_string();
     let ad = parts[3].to_string();
     let title = parts[4].to_string();
-    let body = parts.iter().skip(5).cloned().collect::<Vec<&str>>().join(&FIELD_SEP.to_string()).trim().to_string();
+    let body = parts
+        .iter()
+        .skip(5)
+        .cloned()
+        .collect::<Vec<&str>>()
+        .join(&FIELD_SEP.to_string())
+        .trim()
+        .to_string();
 
     let stat = get_commit_stat(repo, sha).await?;
     let patch_raw = run_git_cmd(&["show", "--format=", sha], Some(Path::new(repo))).await?;
     let patch = patch_raw.trim_start_matches('\n').to_string();
 
     Ok(CommitDiff {
-        sha: if sha_out.is_empty() { sha.to_string() } else { sha_out },
+        sha: if sha_out.is_empty() {
+            sha.to_string()
+        } else {
+            sha_out
+        },
         author_name: an,
         author_email: ae,
         authored_date: ad,
@@ -556,7 +638,9 @@ pub struct ListMyLocalCommitsInput<'a> {
     pub max_depth: usize,
 }
 
-pub async fn list_my_local_commits(input: ListMyLocalCommitsInput<'_>) -> Result<ListMyLocalCommitsResult, String> {
+pub async fn list_my_local_commits(
+    input: ListMyLocalCommitsInput<'_>,
+) -> Result<ListMyLocalCommitsResult, String> {
     if input.root_dirs.is_empty() {
         return Err("缺少 rootDir。请在 settings 里配置代码根目录".into());
     }
@@ -576,7 +660,10 @@ pub async fn list_my_local_commits(input: ListMyLocalCommitsInput<'_>) -> Result
     let until = input.until.unwrap_or(&preset_range.until).to_string();
 
     let authors: Vec<String> = if let Some(a) = input.author {
-        a.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+        a.split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
     } else {
         get_default_git_identities(Some(Path::new(&input.root_dirs[0]))).await
     };
@@ -622,7 +709,10 @@ pub async fn list_my_local_commits(input: ListMyLocalCommitsInput<'_>) -> Result
                 include_stat,
             };
             let commits = get_local_commits(&repo, opts).await.unwrap_or_default();
-            RepoCommits { repo_path: repo, commits }
+            RepoCommits {
+                repo_path: repo,
+                commits,
+            }
         }));
     }
 
@@ -636,12 +726,21 @@ pub async fn list_my_local_commits(input: ListMyLocalCommitsInput<'_>) -> Result
     }
     // 每仓内按 authoredDate desc
     for r in &mut repo_results {
-        r.commits.sort_by(|a, b| b.authored_date.cmp(&a.authored_date));
+        r.commits
+            .sort_by(|a, b| b.authored_date.cmp(&a.authored_date));
     }
     // 仓之间按最新 commit 时间 desc
     repo_results.sort_by(|a, b| {
-        let av = a.commits.first().map(|c| c.authored_date.clone()).unwrap_or_default();
-        let bv = b.commits.first().map(|c| c.authored_date.clone()).unwrap_or_default();
+        let av = a
+            .commits
+            .first()
+            .map(|c| c.authored_date.clone())
+            .unwrap_or_default();
+        let bv = b
+            .commits
+            .first()
+            .map(|c| c.authored_date.clone())
+            .unwrap_or_default();
         bv.cmp(&av)
     });
 
@@ -649,7 +748,11 @@ pub async fn list_my_local_commits(input: ListMyLocalCommitsInput<'_>) -> Result
     let repos_with_commits = repo_results.len();
 
     Ok(ListMyLocalCommitsResult {
-        range: DateRange { since, until, label: preset_range.label },
+        range: DateRange {
+            since,
+            until,
+            label: preset_range.label,
+        },
         authors,
         root_dirs: input.root_dirs.to_vec(),
         repos: repo_results,
@@ -671,7 +774,10 @@ pub fn load_business_aliases() -> std::collections::HashMap<String, Vec<String>>
     if !path.exists() {
         let _ = std::fs::create_dir_all(crate::settings::jarvis_dir());
         let default = serde_json::json!({ "示例业务线": ["门禁", "计量"] });
-        let _ = crate::util::write_atomic(&path, &serde_json::to_string_pretty(&default).unwrap_or_default());
+        let _ = crate::util::write_atomic(
+            &path,
+            &serde_json::to_string_pretty(&default).unwrap_or_default(),
+        );
     }
 
     let content = match std::fs::read_to_string(&path) {
@@ -707,7 +813,10 @@ pub fn load_excluded_business_lines() -> std::collections::HashSet<String> {
     if !path.exists() {
         let _ = std::fs::create_dir_all(crate::settings::jarvis_dir());
         let default = serde_json::json!(["my-mcp-servers"]);
-        let _ = crate::util::write_atomic(&path, &serde_json::to_string_pretty(&default).unwrap_or_default());
+        let _ = crate::util::write_atomic(
+            &path,
+            &serde_json::to_string_pretty(&default).unwrap_or_default(),
+        );
     }
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
@@ -812,7 +921,9 @@ fn strip_leading_emoji(s: &str) -> String {
 fn is_cjk(c: char) -> bool {
     let cp = c as u32;
     // 中日韩统一表意 + 常用全角符号（不全，但够用）
-    (0x4E00..=0x9FFF).contains(&cp) || (0x3400..=0x4DBF).contains(&cp) || (0x3000..=0x303F).contains(&cp)
+    (0x4E00..=0x9FFF).contains(&cp)
+        || (0x3400..=0x4DBF).contains(&cp)
+        || (0x3000..=0x303F).contains(&cp)
 }
 
 fn strip_cc_prefix(s: &str) -> String {
@@ -869,7 +980,16 @@ pub fn is_generated_path(p: &str) -> bool {
     if lower.ends_with(".map") {
         return true;
     }
-    for dir in ["node_modules", "dist", "build", "out", ".next", "target", ".cache", ".turbo"] {
+    for dir in [
+        "node_modules",
+        "dist",
+        "build",
+        "out",
+        ".next",
+        "target",
+        ".cache",
+        ".turbo",
+    ] {
         let pat = format!("/{}/", dir);
         if lower.starts_with(&format!("{}/", dir)) || lower.contains(&pat) {
             return true;

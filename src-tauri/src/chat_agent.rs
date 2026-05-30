@@ -13,7 +13,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::llm::{self, ChatMessage, ChatRequest, Role, ToolCall, ToolDefinition, ToolDefinitionFunction};
+use crate::llm::{
+    self, ChatMessage, ChatRequest, Role, ToolCall, ToolDefinition, ToolDefinitionFunction,
+};
 use crate::tools;
 
 pub const DEFAULT_AGENT_TOOLS: &[&str] = &[
@@ -127,7 +129,11 @@ pub async fn run_agent(opts: RunAgentOptions<'_>) -> RunAgentResult {
         let assistant_msg = ChatMessage {
             role: Role::Assistant,
             content: res.text.clone(),
-            tool_calls: if res.tool_calls.is_empty() { None } else { Some(res.tool_calls.clone()) },
+            tool_calls: if res.tool_calls.is_empty() {
+                None
+            } else {
+                Some(res.tool_calls.clone())
+            },
             tool_call_id: None,
             name: None,
         };

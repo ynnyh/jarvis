@@ -5,6 +5,7 @@
 import { onMounted, onUnmounted, ref, computed, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { emit } from '@tauri-apps/api/event'
+import ErrorBoundary from './components/ErrorBoundary.vue'
 
 interface ZenTaoTaskBrief {
   id: string
@@ -212,6 +213,7 @@ onUnmounted(() => {
 </script>
 
 <template>
+  <ErrorBoundary>
   <div class="mh-root">
     <header class="mh-header" data-tauri-drag-region>
       <h1 class="mh-title" data-tauri-drag-region>📝 手动写工时</h1>
@@ -337,6 +339,7 @@ onUnmounted(() => {
       </button>
     </footer>
   </div>
+  </ErrorBoundary>
 </template>
 
 <style scoped>

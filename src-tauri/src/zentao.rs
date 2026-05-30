@@ -183,12 +183,21 @@ impl ZentaoClient {
                 crate::util::truncate_chars(&text, 300)
             ));
         }
-        let v: Value = serde_json::from_str(&text)
-            .map_err(|_| format!("禅道 token 响应非 JSON: {}", crate::util::truncate_chars(&text, 200)))?;
+        let v: Value = serde_json::from_str(&text).map_err(|_| {
+            format!(
+                "禅道 token 响应非 JSON: {}",
+                crate::util::truncate_chars(&text, 200)
+            )
+        })?;
         let token = v
             .get("token")
             .and_then(|x| x.as_str())
-            .ok_or_else(|| format!("禅道 token 响应缺 token 字段: {}", crate::util::truncate_chars(&text, 200)))?
+            .ok_or_else(|| {
+                format!(
+                    "禅道 token 响应缺 token 字段: {}",
+                    crate::util::truncate_chars(&text, 200)
+                )
+            })?
             .to_string();
         *self.token.lock().await = Some(token.clone());
         Ok(token)
@@ -332,7 +341,10 @@ impl ZentaoClient {
             Err(_) => return false,
         };
         match self.jar.cookies(&cookie_url) {
-            Some(h) => h.to_str().map(|s| s.contains("zentaosid=")).unwrap_or(false),
+            Some(h) => h
+                .to_str()
+                .map(|s| s.contains("zentaosid="))
+                .unwrap_or(false),
             None => false,
         }
     }
@@ -365,15 +377,20 @@ impl ZentaoClient {
                 crate::util::truncate_chars(&text, 300)
             ));
         }
-        let json: Value = serde_json::from_str(&text)
-            .map_err(|_| format!("获取任务返回非 JSON: {}", crate::util::truncate_chars(&text, 200)))?;
+        let json: Value = serde_json::from_str(&text).map_err(|_| {
+            format!(
+                "获取任务返回非 JSON: {}",
+                crate::util::truncate_chars(&text, 200)
+            )
+        })?;
         if json.get("status").and_then(|v| v.as_str()) != Some("success") {
             return Err("禅道返回数据异常（status != success）".into());
         }
         // data 通常是字符串化 JSON
         let inner = match json.get("data") {
-            Some(Value::String(s)) => serde_json::from_str::<Value>(s)
-                .map_err(|e| format!("data 字段解析失败: {}", e))?,
+            Some(Value::String(s)) => {
+                serde_json::from_str::<Value>(s).map_err(|e| format!("data 字段解析失败: {}", e))?
+            }
             Some(v) => v.clone(),
             None => return Err("禅道返回数据缺 data 字段".into()),
         };
@@ -404,13 +421,30 @@ impl ZentaoClient {
 
         for t in &tasks {
             // 禅道 id 可能是数字或字符串，统一转成字符串
-            let id = t.get("id")
-                .and_then(|v| v.as_str().map(String::from).or_else(|| v.as_u64().map(|n| n.to_string())))
+            let id = t
+                .get("id")
+                .and_then(|v| {
+                    v.as_str()
+                        .map(String::from)
+                        .or_else(|| v.as_u64().map(|n| n.to_string()))
+                })
                 .unwrap_or_default();
-            let name = t.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let status = t.get("status").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let name = t
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let status = t
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             let pri = t.get("pri").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
-            let deadline = t.get("deadline").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let deadline = t
+                .get("deadline")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
 
             let item = ZenTaoTaskBrief {
                 id: id.clone(),
@@ -462,8 +496,12 @@ impl ZentaoClient {
                 crate::util::truncate_chars(&text, 300)
             ));
         }
-        let json: Value = serde_json::from_str(&text)
-            .map_err(|_| format!("读任务返回非 JSON: {}", crate::util::truncate_chars(&text, 200)))?;
+        let json: Value = serde_json::from_str(&text).map_err(|_| {
+            format!(
+                "读任务返回非 JSON: {}",
+                crate::util::truncate_chars(&text, 200)
+            )
+        })?;
         // 兼容两种形态：{task: {...}} 或顶层就是 task
         Ok(Some(json.get("task").cloned().unwrap_or(json)))
     }
@@ -495,7 +533,10 @@ impl ZentaoClient {
             })?;
         let consumed_before = task
             .get("consumed")
-            .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+            .and_then(|v| {
+                v.as_f64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            })
             .unwrap_or(0.0);
 
         // 2. 构造 form body —— 字面方括号 + 3 行占位（与浏览器表单 1:1 对齐）
@@ -569,7 +610,10 @@ impl ZentaoClient {
             .ok_or_else(|| "写入响应正常但验证读取找不到任务".to_string())?;
         let consumed_after = verify_task
             .get("consumed")
-            .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+            .and_then(|v| {
+                v.as_f64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            })
             .unwrap_or(consumed_before);
         let actual_delta = consumed_after - consumed_before;
         if (actual_delta - hours).abs() > 0.001 {
@@ -637,20 +681,22 @@ fn extract_first_digits(s: &str) -> Option<String> {
 
 /// 简化版连接测试：直接打 /api.php/v1/tokens，成功就说能登。
 /// 不依赖密钥链，完全从入参取凭证。
-pub async fn test_connection(
-    base_url: &str,
-    account: &str,
-    password: &str,
-) -> ZentaoTestResult {
+pub async fn test_connection(base_url: &str, account: &str, password: &str) -> ZentaoTestResult {
     let mut base = base_url.trim().to_string();
     if base.is_empty() {
-        return ZentaoTestResult { ok: false, message: "禅道地址不能为空".into() };
+        return ZentaoTestResult {
+            ok: false,
+            message: "禅道地址不能为空".into(),
+        };
     }
     if !base.ends_with('/') {
         base.push('/');
     }
     if account.trim().is_empty() {
-        return ZentaoTestResult { ok: false, message: "账号不能为空".into() };
+        return ZentaoTestResult {
+            ok: false,
+            message: "账号不能为空".into(),
+        };
     }
 
     let client = match reqwest::Client::builder()

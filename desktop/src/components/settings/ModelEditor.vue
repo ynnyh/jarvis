@@ -79,24 +79,22 @@ async function save() {
 async function testConnection() {
   testState.value = 'testing'
   testMessage.value = ''
-  await new Promise(r => setTimeout(r, 400))
   try {
-    const r = await invoke<{ success: boolean; data?: any; error?: string }>('tool_execute', {
-      name: 'ask-llm',
-      input: {
-        messages: [
-          { role: 'system', content: '只回一个字：好' },
-          { role: 'user', content: 'ping' },
-        ],
-        maxTokens: 8,
-      },
+    const r = await invoke<any>('llm_profile_test', {
+      profileId: props.profileId || null,
+      provider: form.value.provider,
+      baseUrl: form.value.baseUrl,
+      model: form.value.model,
+      apiKey: keyDirty.value ? form.value.apiKey : '',
+      allowSavedKeyWhenEmpty: !keyDirty.value,
+      wireApi: form.value.wireApi,
     })
-    if (r.success && r.data?.text) {
+    if (r?.text) {
       testState.value = 'ok'
-      testMessage.value = `连通：${r.data.model ?? form.value.model} → "${String(r.data.text).slice(0, 40)}"`
+      testMessage.value = `连通：${r.model ?? form.value.model} -> "${String(r.text).slice(0, 40)}"`
     } else {
       testState.value = 'fail'
-      testMessage.value = r.error || '调用失败：无文本返回'
+      testMessage.value = '调用成功，但没有文本返回'
     }
   } catch (e: any) {
     testState.value = 'fail'
@@ -224,7 +222,7 @@ function genId(): string {
       {{ ccImportMessage }}
     </p>
     <p class="settings-section-hint" style="margin-top: 8px;">
-      apiKey 加密存到系统密钥链。保存后自动设为当前启用模型。
+      测试连接只验证当前表单，不需要先保存。保存会写入模型列表；启用模型请在列表里点击切换。
     </p>
   </div>
 </template>

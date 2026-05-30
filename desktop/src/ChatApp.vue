@@ -9,6 +9,7 @@ import type { Directive } from 'vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { invoke } from '@tauri-apps/api/core'
 import { useConfigStore } from './stores/config'
+import ErrorBoundary from './components/ErrorBoundary.vue'
 
 // rename input 出现时自动 focus + select。Vue 3 <script setup> 里 v 前缀的常量
 // 自动被识别为模板里的 v-focus 指令
@@ -399,6 +400,7 @@ watch(() => configStore.config.assistantName, (n) => {
 </script>
 
 <template>
+  <ErrorBoundary>
   <div class="chat-root">
     <!-- 头部（可拖动） -->
     <header class="chat-header">
@@ -524,6 +526,7 @@ watch(() => configStore.config.assistantName, (n) => {
       </main>
     </div>
   </div>
+  </ErrorBoundary>
 </template>
 
 <style scoped>

@@ -7,7 +7,11 @@ fn project_root() -> PathBuf {
     let cwd = std::env::current_dir().unwrap_or_default();
     if cwd.join("package.json").exists() {
         cwd
-    } else if cwd.parent().map(|p| p.join("package.json").exists()).unwrap_or(false) {
+    } else if cwd
+        .parent()
+        .map(|p| p.join("package.json").exists())
+        .unwrap_or(false)
+    {
         cwd.parent().unwrap().to_path_buf()
     } else {
         cwd
@@ -101,11 +105,22 @@ pub struct ToolResult {
 }
 
 #[tauri::command]
-pub async fn tool_execute(name: String, input: Option<serde_json::Value>) -> Result<ToolResult, String> {
+pub async fn tool_execute(
+    name: String,
+    input: Option<serde_json::Value>,
+) -> Result<ToolResult, String> {
     let input = input.unwrap_or(serde_json::json!({}));
     match crate::tools::dispatch(&name, input).await {
-        Ok(data) => Ok(ToolResult { success: true, data: Some(data), error: None }),
-        Err(e) => Ok(ToolResult { success: false, data: None, error: Some(e) }),
+        Ok(data) => Ok(ToolResult {
+            success: true,
+            data: Some(data),
+            error: None,
+        }),
+        Err(e) => Ok(ToolResult {
+            success: false,
+            data: None,
+            error: Some(e),
+        }),
     }
 }
 
@@ -254,8 +269,16 @@ fn extract_secret_to_keychain(
 fn hydrate_secret_placeholders(value: &mut serde_json::Value) {
     mark_secret_if_saved(value, &["llm", "apiKey"], "llm.apiKey");
     mark_secret_if_saved(value, &["zentao", "sessionCookie"], "zentao.sessionCookie");
-    mark_secret_if_saved(value, &["channels", "telegram", "botToken"], "channels.telegram.botToken");
-    mark_secret_if_saved(value, &["channels", "qqbot", "appSecret"], "channels.qqbot.appSecret");
+    mark_secret_if_saved(
+        value,
+        &["channels", "telegram", "botToken"],
+        "channels.telegram.botToken",
+    );
+    mark_secret_if_saved(
+        value,
+        &["channels", "qqbot", "appSecret"],
+        "channels.qqbot.appSecret",
+    );
     // llmProfiles 中每个 profile 的 apiKey
     if let Some(profiles) = value.get_mut("llmProfiles").and_then(|v| v.as_array_mut()) {
         for p in profiles.iter_mut() {
@@ -270,8 +293,16 @@ fn hydrate_secret_placeholders(value: &mut serde_json::Value) {
 fn strip_secrets_for_save(value: &mut serde_json::Value) -> Result<(), String> {
     extract_secret_to_keychain(value, &["llm", "apiKey"], "llm.apiKey")?;
     extract_secret_to_keychain(value, &["zentao", "sessionCookie"], "zentao.sessionCookie")?;
-    extract_secret_to_keychain(value, &["channels", "telegram", "botToken"], "channels.telegram.botToken")?;
-    extract_secret_to_keychain(value, &["channels", "qqbot", "appSecret"], "channels.qqbot.appSecret")?;
+    extract_secret_to_keychain(
+        value,
+        &["channels", "telegram", "botToken"],
+        "channels.telegram.botToken",
+    )?;
+    extract_secret_to_keychain(
+        value,
+        &["channels", "qqbot", "appSecret"],
+        "channels.qqbot.appSecret",
+    )?;
     // llmProfiles 中每个 profile 的 apiKey
     if let Some(profiles) = value.get_mut("llmProfiles").and_then(|v| v.as_array_mut()) {
         for p in profiles.iter_mut() {
@@ -306,10 +337,9 @@ pub fn config_load() -> Result<serde_json::Value, String> {
         hydrate_secret_placeholders(&mut defaults);
         return Ok(defaults);
     }
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| format!("读取配置失败: {}", e))?;
-    let mut value: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("配置文件解析失败: {}", e))?;
+    let content = std::fs::read_to_string(&path).map_err(|e| format!("读取配置失败: {}", e))?;
+    let mut value: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("配置文件解析失败: {}", e))?;
     merge_defaults(&mut value, &defaults);
     let mut persist_migrated = value.clone();
     strip_secrets_for_save(&mut persist_migrated)?;
@@ -326,24 +356,24 @@ pub fn config_load() -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-pub async fn config_save(config: serde_json::Value) -> Result<(), String> {
+pub async fn config_save(config: serde_json::Value, app: tauri::AppHandle) -> Result<(), String> {
     let dir = jarvis_dir();
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("创建配置目录失败: {}", e))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建配置目录失败: {}", e))?;
     let path = config_path();
     let mut sanitized = config;
     strip_secrets_for_save(&mut sanitized)?;
-    let content = serde_json::to_string_pretty(&sanitized)
-        .map_err(|e| format!("配置序列化失败: {}", e))?;
+    let content =
+        serde_json::to_string_pretty(&sanitized).map_err(|e| format!("配置序列化失败: {}", e))?;
     {
         let _guard = crate::settings::CONFIG_WRITE_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        crate::util::write_atomic(&path, &content)
-            .map_err(|e| format!("写入配置失败: {}", e))?;
+        crate::util::write_atomic(&path, &content).map_err(|e| format!("写入配置失败: {}", e))?;
     }
 
-    // 通知守护进程刷新缓存——daemon 已完全下线，pinging 已无意义，留个空 op
+    // 通知所有窗口配置已变更（设置窗口改了宠物/名称等，主窗口需要刷新）
+    use tauri::Emitter;
+    let _ = app.emit("config-changed", ());
     Ok(())
 }
 
@@ -351,7 +381,10 @@ pub async fn config_save(config: serde_json::Value) -> Result<(), String> {
 
 /// 将当前 llm 配置保存为一个新的 profile（或更新已有 profile）
 #[tauri::command]
-pub async fn llm_profile_save(profile_id: String, name: String) -> Result<serde_json::Value, String> {
+pub async fn llm_profile_save(
+    profile_id: String,
+    name: String,
+) -> Result<serde_json::Value, String> {
     let path = config_path();
     let mut cfg: serde_json::Value = if path.exists() {
         let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
@@ -359,7 +392,6 @@ pub async fn llm_profile_save(profile_id: String, name: String) -> Result<serde_
     } else {
         serde_json::json!({})
     };
-
     // 读当前 llm 配置
     let llm = cfg.get("llm").cloned().unwrap_or_default();
     let mut profile = llm.clone();
@@ -375,7 +407,9 @@ pub async fn llm_profile_save(profile_id: String, name: String) -> Result<serde_
 
     // 更新或插入 profile
     if cfg.get("llmProfiles").is_none() {
-        cfg.as_object_mut().ok_or("配置文件顶层不是 JSON 对象")?.insert("llmProfiles".into(), serde_json::json!([]));
+        cfg.as_object_mut()
+            .ok_or("配置文件顶层不是 JSON 对象")?
+            .insert("llmProfiles".into(), serde_json::json!([]));
     }
     let profiles = cfg
         .get_mut("llmProfiles")
@@ -392,7 +426,10 @@ pub async fn llm_profile_save(profile_id: String, name: String) -> Result<serde_
 
     cfg.as_object_mut()
         .ok_or("配置文件顶层不是 JSON 对象")?
-        .insert("activeLlmProfileId".into(), serde_json::Value::String(profile_id));
+        .insert(
+            "activeLlmProfileId".into(),
+            serde_json::Value::String(profile_id),
+        );
 
     strip_secrets_for_save(&mut cfg)?;
     let content = serde_json::to_string_pretty(&cfg).unwrap_or_default();
@@ -422,10 +459,8 @@ pub async fn llm_profile_switch(profile_id: String) -> Result<serde_json::Value,
         .unwrap_or("");
     if !current_id.is_empty() {
         if let Some(key) = crate::settings::secret_get("llm.apiKey") {
-            let _ = crate::settings::secret_set(
-                &format!("llm.profile.{}.apiKey", current_id),
-                &key,
-            );
+            let _ =
+                crate::settings::secret_set(&format!("llm.profile.{}.apiKey", current_id), &key);
         }
     }
 
@@ -453,11 +488,16 @@ pub async fn llm_profile_switch(profile_id: String) -> Result<serde_json::Value,
     let profile_key = format!("llm.profile.{}.apiKey", profile_id);
     if let Some(key) = crate::settings::secret_get(&profile_key) {
         let _ = crate::settings::secret_set("llm.apiKey", &key);
+    } else {
+        let _ = crate::settings::secret_clear("llm.apiKey");
     }
 
     cfg.as_object_mut()
         .ok_or("配置文件顶层不是 JSON 对象")?
-        .insert("activeLlmProfileId".into(), serde_json::Value::String(profile_id));
+        .insert(
+            "activeLlmProfileId".into(),
+            serde_json::Value::String(profile_id),
+        );
 
     strip_secrets_for_save(&mut cfg)?;
     let content = serde_json::to_string_pretty(&cfg).unwrap_or_default();
@@ -483,15 +523,62 @@ pub async fn llm_profile_delete(profile_id: String) -> Result<serde_json::Value,
     if let Some(profiles) = cfg.get_mut("llmProfiles").and_then(|v| v.as_array_mut()) {
         profiles.retain(|p| p.get("id").and_then(|v| v.as_str()) != Some(&profile_id));
     }
+    let _ = crate::settings::secret_clear(&format!("llm.profile.{}.apiKey", profile_id));
 
     let active_id = cfg
         .get("activeLlmProfileId")
         .and_then(|v| v.as_str())
         .unwrap_or("");
     if active_id == profile_id {
-        cfg.as_object_mut()
-            .ok_or("配置文件顶层不是 JSON 对象")?
-            .insert("activeLlmProfileId".into(), serde_json::Value::String(String::new()));
+        let next_profile = cfg
+            .get("llmProfiles")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .cloned();
+        if let Some(next) = next_profile {
+            let next_id = next
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if let Some(llm) = cfg.get_mut("llm").and_then(|v| v.as_object_mut()) {
+                for key in &["provider", "baseUrl", "model", "wireApi"] {
+                    if let Some(val) = next.get(*key) {
+                        llm.insert(key.to_string(), val.clone());
+                    }
+                }
+            }
+            cfg.as_object_mut()
+                .ok_or("配置文件顶层不是 JSON 对象")?
+                .insert(
+                    "activeLlmProfileId".into(),
+                    serde_json::Value::String(next_id.clone()),
+                );
+            let next_key = format!("llm.profile.{}.apiKey", next_id);
+            if let Some(key) = crate::settings::secret_get(&next_key) {
+                let _ = crate::settings::secret_set("llm.apiKey", &key);
+            } else {
+                let _ = crate::settings::secret_clear("llm.apiKey");
+            }
+        } else {
+            cfg.as_object_mut()
+                .ok_or("配置文件顶层不是 JSON 对象")?
+                .insert(
+                    "activeLlmProfileId".into(),
+                    serde_json::Value::String(String::new()),
+                );
+            if let Some(llm) = cfg.get_mut("llm").and_then(|v| v.as_object_mut()) {
+                if let Some(default_llm) = default_config().get("llm").and_then(|v| v.as_object()) {
+                    for key in &["provider", "baseUrl", "model", "wireApi"] {
+                        if let Some(val) = default_llm.get(*key) {
+                            llm.insert(key.to_string(), val.clone());
+                        }
+                    }
+                }
+                llm.insert("apiKey".into(), serde_json::Value::String(String::new()));
+            }
+            let _ = crate::settings::secret_clear("llm.apiKey");
+        }
     }
 
     strip_secrets_for_save(&mut cfg)?;
@@ -522,6 +609,11 @@ pub async fn llm_profile_upsert(
     } else {
         serde_json::json!({})
     };
+    let current_active_id = cfg
+        .get("activeLlmProfileId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
 
     // 构造 profile 对象
     let mut profile = serde_json::json!({
@@ -532,7 +624,10 @@ pub async fn llm_profile_upsert(
         "model": model,
     });
     if let Some(w) = wire_api {
-        profile.as_object_mut().unwrap().insert("wireApi".into(), serde_json::Value::String(w));
+        profile
+            .as_object_mut()
+            .unwrap()
+            .insert("wireApi".into(), serde_json::Value::String(w));
     }
 
     // API Key：非空则写入 keychain；空串表示不变更（编辑时保留原有）
@@ -543,7 +638,9 @@ pub async fn llm_profile_upsert(
 
     // upsert 到 llmProfiles
     if cfg.get("llmProfiles").is_none() {
-        cfg.as_object_mut().ok_or("配置文件顶层不是 JSON 对象")?.insert("llmProfiles".into(), serde_json::json!([]));
+        cfg.as_object_mut()
+            .ok_or("配置文件顶层不是 JSON 对象")?
+            .insert("llmProfiles".into(), serde_json::json!([]));
     }
     let profiles = cfg
         .get_mut("llmProfiles")
@@ -558,29 +655,40 @@ pub async fn llm_profile_upsert(
         profiles.push(profile);
     }
 
-    // 设为 active
-    cfg.as_object_mut()
-        .unwrap()
-        .insert("activeLlmProfileId".into(), serde_json::Value::String(profile_id.clone()));
+    let should_activate = current_active_id.is_empty() || current_active_id == profile_id;
+    if should_activate {
+        cfg.as_object_mut().unwrap().insert(
+            "activeLlmProfileId".into(),
+            serde_json::Value::String(profile_id.clone()),
+        );
+    }
 
     // 把该 profile 的字段同步到 llm
     let target = cfg
         .get("llmProfiles")
         .and_then(|v| v.as_array())
-        .and_then(|arr| arr.iter().find(|p| p.get("id").and_then(|v| v.as_str()) == Some(&profile_id)).cloned())
+        .and_then(|arr| {
+            arr.iter()
+                .find(|p| p.get("id").and_then(|v| v.as_str()) == Some(&profile_id))
+                .cloned()
+        })
         .ok_or("Profile not found after upsert")?;
-    if let Some(llm) = cfg.get_mut("llm").and_then(|v| v.as_object_mut()) {
-        for key in &["provider", "baseUrl", "model", "wireApi"] {
-            if let Some(val) = target.get(*key) {
-                llm.insert(key.to_string(), val.clone());
+    if should_activate {
+        if let Some(llm) = cfg.get_mut("llm").and_then(|v| v.as_object_mut()) {
+            for key in &["provider", "baseUrl", "model", "wireApi"] {
+                if let Some(val) = target.get(*key) {
+                    llm.insert(key.to_string(), val.clone());
+                }
             }
         }
     }
     // 同步 apiKey 到 llm.apiKey keychain
-    if !api_key.is_empty() {
-        let _ = crate::settings::secret_set("llm.apiKey", &api_key);
-    } else if let Some(existing) = crate::settings::secret_get(&keychain_key) {
-        let _ = crate::settings::secret_set("llm.apiKey", &existing);
+    if should_activate {
+        if !api_key.is_empty() {
+            let _ = crate::settings::secret_set("llm.apiKey", &api_key);
+        } else if let Some(existing) = crate::settings::secret_get(&keychain_key) {
+            let _ = crate::settings::secret_set("llm.apiKey", &existing);
+        }
     }
 
     strip_secrets_for_save(&mut cfg)?;
@@ -594,6 +702,79 @@ pub async fn llm_profile_upsert(
 }
 
 // ===== 打开禅道任务页 =====
+
+#[tauri::command]
+pub async fn llm_profile_test(
+    profile_id: Option<String>,
+    provider: String,
+    base_url: String,
+    model: String,
+    api_key: String,
+    allow_saved_key_when_empty: Option<bool>,
+    wire_api: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let base_url = base_url.trim().to_string();
+    let model = model.trim().to_string();
+    if base_url.is_empty() {
+        return Err("LLM baseUrl 未配置".into());
+    }
+    if model.is_empty() {
+        return Err("LLM model 未配置".into());
+    }
+
+    let mut resolved_key = api_key.trim().to_string();
+    if resolved_key.is_empty() && allow_saved_key_when_empty.unwrap_or(false) {
+        if let Some(id) = profile_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            resolved_key = crate::settings::secret_get(&format!("llm.profile.{}.apiKey", id))
+                .unwrap_or_default();
+        }
+    }
+    if resolved_key.is_empty() {
+        return Err("请先填写 API Key，或保存过该模型的 API Key 后再测试".into());
+    }
+
+    let messages = vec![
+        crate::llm::ChatMessage {
+            role: crate::llm::Role::System,
+            content: "只回复一个字：好".to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+        },
+        crate::llm::ChatMessage {
+            role: crate::llm::Role::User,
+            content: "ping".to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+        },
+    ];
+    let mut req = crate::llm::ChatRequest::new(messages);
+    req.max_tokens = Some(8);
+    req.timeout_ms = Some(30_000);
+
+    let cred = crate::settings::LlmCredentials {
+        provider,
+        base_url,
+        model,
+        api_key: resolved_key,
+        wire_api: match wire_api.as_deref() {
+            Some("responses") => "responses".to_string(),
+            _ => "chat".to_string(),
+        },
+    };
+    let resp = crate::llm::chat_with_credentials(req, cred).await?;
+    Ok(serde_json::json!({
+        "text": resp.text,
+        "tokensIn": resp.tokens_in,
+        "tokensOut": resp.tokens_out,
+        "model": resp.model,
+    }))
+}
 
 #[tauri::command]
 pub async fn open_zentao_task(id: String) -> Result<(), String> {
@@ -652,7 +833,7 @@ pub struct TaskAlert {
     pub priority: String,
     pub estimated_hours: f64,
     pub consumed_hours: f64,
-    pub left_hours: f64,           // 团队任务取 team[me].left，单人取 task.left；这是禅道独立维护的字段
+    pub left_hours: f64, // 团队任务取 team[me].left，单人取 task.left；这是禅道独立维护的字段
     pub is_team: bool,
 }
 
@@ -724,9 +905,8 @@ pub async fn fetch_task_alerts(app: tauri::AppHandle) -> Result<Vec<TaskAlert>, 
                     .get("team")
                     .and_then(|v| v.as_array())
                     .map(|arr| {
-                        arr.iter().any(|m| {
-                            m.get("account").and_then(|a| a.as_str()) == Some(me.as_str())
-                        })
+                        arr.iter()
+                            .any(|m| m.get("account").and_then(|a| a.as_str()) == Some(me.as_str()))
                     })
                     .unwrap_or(false);
                 assignee == me || team_has_me
@@ -756,7 +936,12 @@ pub async fn fetch_task_alerts(app: tauri::AppHandle) -> Result<Vec<TaskAlert>, 
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                crate::task_snapshot::TaskRef { id, title, priority, deadline }
+                crate::task_snapshot::TaskRef {
+                    id,
+                    title,
+                    priority,
+                    deadline,
+                }
             })
             .filter(|t| !t.id.is_empty())
             .collect();
@@ -774,7 +959,11 @@ pub async fn fetch_task_alerts(app: tauri::AppHandle) -> Result<Vec<TaskAlert>, 
 
     let mut alerts = vec![];
     for task in &tasks {
-        let status = task.get("status").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let status = task
+            .get("status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         if status == "done" || status == "closed" || status == "cancel" {
             continue;
         }
@@ -784,14 +973,17 @@ pub async fn fetch_task_alerts(app: tauri::AppHandle) -> Result<Vec<TaskAlert>, 
             continue;
         }
 
-        let assignee = task.get("assignee").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let assignee = task
+            .get("assignee")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
 
         // 找出"我"在团队任务中的条目（如果有的话）
         // 团队任务的 team 字段是 [{ account, estimate, consumed, left, status }, ...]
         let my_team_entry = task.get("team").and_then(|v| v.as_array()).and_then(|arr| {
-            arr.iter().find(|m| {
-                m.get("account").and_then(|a| a.as_str()) == Some(&me)
-            })
+            arr.iter()
+                .find(|m| m.get("account").and_then(|a| a.as_str()) == Some(&me))
         });
 
         // 过滤：assignee == 我  或  team 含我
@@ -826,14 +1018,25 @@ pub async fn fetch_task_alerts(app: tauri::AppHandle) -> Result<Vec<TaskAlert>, 
             continue;
         };
 
-        let id = task.get("id").map(|v| {
-            v.as_str().map(|s| s.to_string()).unwrap_or_else(|| v.to_string().trim_matches('"').to_string())
-        }).unwrap_or_default();
-        let title = task.get("title").and_then(|v| v.as_str())
+        let id = task
+            .get("id")
+            .map(|v| {
+                v.as_str()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| v.to_string().trim_matches('"').to_string())
+            })
+            .unwrap_or_default();
+        let title = task
+            .get("title")
+            .and_then(|v| v.as_str())
             .or(task.get("name").and_then(|v| v.as_str()))
             .unwrap_or("")
             .to_string();
-        let priority = task.get("priority").and_then(|v| v.as_str()).unwrap_or("normal").to_string();
+        let priority = task
+            .get("priority")
+            .and_then(|v| v.as_str())
+            .unwrap_or("normal")
+            .to_string();
 
         // 工时数据：团队任务用"我"在 team 中的工时；普通任务用整个任务的工时
         // left 字段是禅道独立维护的剩余工时（用户可以手动调整，不一定 == estimate - consumed）
@@ -843,31 +1046,42 @@ pub async fn fetch_task_alerts(app: tauri::AppHandle) -> Result<Vec<TaskAlert>, 
                 .unwrap_or(0.0)
         };
 
-        let (estimated_hours, consumed_hours, left_hours, my_status) = if let Some(me_entry) = my_team_entry {
-            let est = me_entry.get("estimate").map(parse_num).unwrap_or(0.0);
-            let con = me_entry.get("consumed").map(parse_num).unwrap_or(0.0);
-            // 优先用 left 字段，没有则 fallback 到 est - con
-            let left = me_entry
-                .get("left")
-                .map(parse_num)
-                .unwrap_or_else(|| (est - con).max(0.0));
-            (
-                est,
-                con,
-                left,
-                me_entry.get("status").and_then(|v| v.as_str()).unwrap_or(&status).to_string(),
-            )
-        } else {
-            let est = task.get("estimatedHours").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let con = task.get("consumedHours").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            // 任务对象上的 left 字段（蛇形或驼峰）
-            let left = task
-                .get("left")
-                .or_else(|| task.get("leftHours"))
-                .map(parse_num)
-                .unwrap_or_else(|| (est - con).max(0.0));
-            (est, con, left, status.clone())
-        };
+        let (estimated_hours, consumed_hours, left_hours, my_status) =
+            if let Some(me_entry) = my_team_entry {
+                let est = me_entry.get("estimate").map(parse_num).unwrap_or(0.0);
+                let con = me_entry.get("consumed").map(parse_num).unwrap_or(0.0);
+                // 优先用 left 字段，没有则 fallback 到 est - con
+                let left = me_entry
+                    .get("left")
+                    .map(parse_num)
+                    .unwrap_or_else(|| (est - con).max(0.0));
+                (
+                    est,
+                    con,
+                    left,
+                    me_entry
+                        .get("status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(&status)
+                        .to_string(),
+                )
+            } else {
+                let est = task
+                    .get("estimatedHours")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
+                let con = task
+                    .get("consumedHours")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
+                // 任务对象上的 left 字段（蛇形或驼峰）
+                let left = task
+                    .get("left")
+                    .or_else(|| task.get("leftHours"))
+                    .map(parse_num)
+                    .unwrap_or_else(|| (est - con).max(0.0));
+                (est, con, left, status.clone())
+            };
 
         let is_team = my_team_entry.is_some();
 
@@ -914,12 +1128,19 @@ pub async fn get_proactive_reminders() -> Result<Vec<ProactiveReminder>, String>
         if let Some(arr) = tasks.as_array() {
             for task in arr {
                 let deadline = task.get("deadline").and_then(|d| d.as_str()).unwrap_or("");
-                if deadline.len() < 10 { continue; }
+                if deadline.len() < 10 {
+                    continue;
+                }
                 let status = task.get("status").and_then(|v| v.as_str()).unwrap_or("");
-                if status == "done" || status == "closed" || status == "cancel" { continue; }
+                if status == "done" || status == "closed" || status == "cancel" {
+                    continue;
+                }
                 let dl = &deadline[..10];
-                if dl < today.as_str() { has_overdue = true; }
-                else if dl == today.as_str() { has_today = true; }
+                if dl < today.as_str() {
+                    has_overdue = true;
+                } else if dl == today.as_str() {
+                    has_today = true;
+                }
             }
         }
         if has_overdue {
@@ -950,12 +1171,15 @@ pub async fn chat_open(app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Manager;
     if let Some(chat) = app.get_webview_window("chat") {
         chat.show().map_err(|e| format!("show chat 失败: {}", e))?;
-        chat.set_focus().map_err(|e| format!("focus chat 失败: {}", e))?;
+        chat.set_focus()
+            .map_err(|e| format!("focus chat 失败: {}", e))?;
     } else {
         return Err("chat 窗口未注册".into());
     }
     if let Some(avatar) = app.get_webview_window("avatar") {
-        avatar.hide().map_err(|e| format!("hide avatar 失败: {}", e))?;
+        avatar
+            .hide()
+            .map_err(|e| format!("hide avatar 失败: {}", e))?;
     }
     Ok(())
 }
@@ -967,8 +1191,10 @@ pub async fn chat_close(app: tauri::AppHandle) -> Result<(), String> {
         chat.hide().map_err(|e| format!("hide chat 失败: {}", e))?;
     }
     if let Some(avatar) = app.get_webview_window("avatar") {
-        avatar.show().map_err(|e| format!("show avatar 失败: {}", e))?;
-        avatar.set_focus().ok();  // 失败不影响主流程
+        avatar
+            .show()
+            .map_err(|e| format!("show avatar 失败: {}", e))?;
+        avatar.set_focus().ok(); // 失败不影响主流程
     }
     Ok(())
 }
@@ -986,7 +1212,11 @@ pub async fn settings_open(app: tauri::AppHandle, page: Option<String>) -> Resul
             .chars()
             .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
             .collect();
-        let safe_page = if safe_page.is_empty() { "channels".to_string() } else { safe_page };
+        let safe_page = if safe_page.is_empty() {
+            "channels".to_string()
+        } else {
+            safe_page
+        };
         let script = format!(
             "window.history.replaceState(null, '', 'settings.html?page={}'); window.location.reload();",
             safe_page
@@ -1052,12 +1282,16 @@ pub async fn write_hours_open(
     // loadPayload 从 state 取到刚写入的新数据。同时也顺带清光 textarea。
     {
         let state = app.state::<WriteHoursState>();
-        let mut slot = state.payload.lock().map_err(|e| format!("锁 payload 失败: {}", e))?;
+        let mut slot = state
+            .payload
+            .lock()
+            .map_err(|e| format!("锁 payload 失败: {}", e))?;
         *slot = Some(payload);
     }
     if let Some(w) = app.get_webview_window("writeHours") {
         w.unminimize().ok();
-        w.show().map_err(|e| format!("show writeHours 失败: {}", e))?;
+        w.show()
+            .map_err(|e| format!("show writeHours 失败: {}", e))?;
         w.set_focus().ok();
         // 强制重载：保证 onMounted 必跑，从 state 拉到本次的新 payload
         let _ = w.eval("window.location.reload()");
@@ -1065,7 +1299,9 @@ pub async fn write_hours_open(
         return Err("writeHours 窗口未注册".into());
     }
     if let Some(avatar) = app.get_webview_window("avatar") {
-        avatar.hide().map_err(|e| format!("hide avatar 失败: {}", e))?;
+        avatar
+            .hide()
+            .map_err(|e| format!("hide avatar 失败: {}", e))?;
     }
     Ok(())
 }
@@ -1074,7 +1310,8 @@ pub async fn write_hours_open(
 pub async fn write_hours_close(app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Manager;
     if let Some(w) = app.get_webview_window("writeHours") {
-        w.hide().map_err(|e| format!("hide writeHours 失败: {}", e))?;
+        w.hide()
+            .map_err(|e| format!("hide writeHours 失败: {}", e))?;
     }
     // 顺手清掉残留 payload，避免下次取到旧数据
     {
@@ -1088,7 +1325,9 @@ pub async fn write_hours_close(app: tauri::AppHandle) -> Result<(), String> {
         // transparent + alwaysOnTop 的 avatar 窗在 Windows 上偶发"hide 后 show 不回来"。
         // 多打几道保险：unminimize（万一被最小化了）→ show → set_focus，全部失败也不阻塞主流程。
         avatar.unminimize().ok();
-        avatar.show().map_err(|e| format!("show avatar 失败: {}", e))?;
+        avatar
+            .show()
+            .map_err(|e| format!("show avatar 失败: {}", e))?;
         avatar.set_focus().ok();
     }
     Ok(())
@@ -1101,7 +1340,9 @@ pub async fn avatar_show_fallback(app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Manager;
     if let Some(avatar) = app.get_webview_window("avatar") {
         avatar.unminimize().ok();
-        avatar.show().map_err(|e| format!("show avatar 失败: {}", e))?;
+        avatar
+            .show()
+            .map_err(|e| format!("show avatar 失败: {}", e))?;
         avatar.set_focus().ok();
     }
     Ok(())
@@ -1114,14 +1355,17 @@ pub async fn manual_hours_open(app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Manager;
     if let Some(w) = app.get_webview_window("manualHours") {
         w.unminimize().ok();
-        w.show().map_err(|e| format!("show manualHours 失败: {}", e))?;
+        w.show()
+            .map_err(|e| format!("show manualHours 失败: {}", e))?;
         w.set_focus().ok();
         let _ = w.eval("window.location.reload()");
     } else {
         return Err("manualHours 窗口未注册".into());
     }
     if let Some(avatar) = app.get_webview_window("avatar") {
-        avatar.hide().map_err(|e| format!("hide avatar 失败: {}", e))?;
+        avatar
+            .hide()
+            .map_err(|e| format!("hide avatar 失败: {}", e))?;
     }
     Ok(())
 }
@@ -1130,11 +1374,14 @@ pub async fn manual_hours_open(app: tauri::AppHandle) -> Result<(), String> {
 pub async fn manual_hours_close(app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Manager;
     if let Some(w) = app.get_webview_window("manualHours") {
-        w.hide().map_err(|e| format!("hide manualHours 失败: {}", e))?;
+        w.hide()
+            .map_err(|e| format!("hide manualHours 失败: {}", e))?;
     }
     if let Some(avatar) = app.get_webview_window("avatar") {
         avatar.unminimize().ok();
-        avatar.show().map_err(|e| format!("show avatar 失败: {}", e))?;
+        avatar
+            .show()
+            .map_err(|e| format!("show avatar 失败: {}", e))?;
         avatar.set_focus().ok();
     }
     Ok(())
@@ -1146,7 +1393,10 @@ pub async fn write_hours_take_payload(
 ) -> Result<Option<serde_json::Value>, String> {
     use tauri::Manager;
     let state = app.state::<WriteHoursState>();
-    let slot = state.payload.lock().map_err(|e| format!("锁 payload 失败: {}", e))?;
+    let slot = state
+        .payload
+        .lock()
+        .map_err(|e| format!("锁 payload 失败: {}", e))?;
     // 用 clone 而非 take：onMounted 首次拉 + payload-ready 事件二次拉都能拿到，
     // 不会因为两者抢着 take 导致一方拿到 None。slot 由 write_hours_close 清空。
     Ok(slot.clone())

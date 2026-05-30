@@ -35,6 +35,7 @@ import UpdateWindow from './components/UpdateWindow.vue'
 import BindTaskWindow from './components/BindTaskWindow.vue'
 import WelcomeWizard from './components/WelcomeWizard.vue'
 import PetAvatar from './components/PetAvatar.vue'
+import ErrorBoundary from './components/ErrorBoundary.vue'
 
 const store = useAppStore()
 const configStore = useConfigStore()
@@ -867,6 +868,7 @@ onUnmounted(() => {
 </script>
 
 <template>
+  <ErrorBoundary>
   <div class="jarvis-container" :data-anchor="avatarAnchor" @contextmenu.prevent="toggleMenu">
     <!-- 菜单打开时铺满窗口的透明遮罩，点击任意位置关闭菜单 -->
     <div v-if="showMenu" class="menu-backdrop pointer-target" @click="showMenu = false" @contextmenu.prevent="showMenu = false" />
@@ -962,6 +964,7 @@ onUnmounted(() => {
     <!-- 首启引导：配置不完整时全屏覆盖，写完后消失 -->
     <WelcomeWizard v-if="needsWizard" @done="onWizardDone" />
   </div>
+  </ErrorBoundary>
 </template>
 
 <style scoped>

@@ -193,6 +193,9 @@ export const useConfigStore = defineStore('config', () => {
   const SECRET_PLACEHOLDER = '********'
   const isPlaceholder = (value?: string) => value === SECRET_PLACEHOLDER
 
+  // 机器人写 reminders / 其他窗口写配置后前端从磁盘刷新，此时不要反写回去覆盖
+  let suppressSave = false
+
   async function load() {
     try {
       const remote = await invoke<JarvisConfig>('config_load')
@@ -256,7 +259,11 @@ export const useConfigStore = defineStore('config', () => {
         merged.override.todayMode = 'normal'
         merged.override.todayModeSetOn = ''
       }
+      // load() 替换 config.value 会触发 deep watcher → save → emit config-changed → 死循环。
+      // 用 suppressSave 打断：watcher 检测到 suppressSave 就跳过 save。
+      suppressSave = true
       config.value = merged
+      Promise.resolve().then(() => { suppressSave = false })
     } catch (e) {
       console.error('加载配置失败，使用默认值:', e)
     } finally {
@@ -280,9 +287,6 @@ export const useConfigStore = defineStore('config', () => {
       console.error('保存配置失败:', e)
     }
   }
-
-  // 机器人写 reminders 后前端从磁盘刷新，此时不要反写回去覆盖
-  let suppressSave = false
 
   function applyRemote(remote: Partial<JarvisConfig>, fields: (keyof JarvisConfig)[]) {
     suppressSave = true
@@ -316,6 +320,9 @@ export const useConfigStore = defineStore('config', () => {
 
   // 机器人通过 channels 写入提醒后，Rust 端 emit 此事件
   listen('reminders-changed', () => { refreshReminders() }).catch(() => {})
+
+  // 其他窗口（设置窗口等）修改配置后，Rust 端 emit 此事件，主窗口需要刷新
+  listen('config-changed', () => { load() }).catch(() => {})
 
   // 临时覆盖：今晚加班 / 今天休假
   function setTodayMode(mode: JarvisConfig['override']['todayMode']) {

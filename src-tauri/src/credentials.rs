@@ -21,7 +21,8 @@ pub fn credentials_set(account: String, password: String) -> Result<(), String> 
         return Err("禅道账号不能为空".to_string());
     }
     let e = entry(&account)?;
-    e.set_password(&password).map_err(|err| format!("保存密码到密钥链失败: {}", err))
+    e.set_password(&password)
+        .map_err(|err| format!("保存密码到密钥链失败: {}", err))
 }
 
 #[tauri::command]
@@ -95,9 +96,12 @@ fn normalize_base_url(input: &str) -> String {
 
     let is_entry = |seg: &str| {
         let l = seg.to_lowercase();
-        l.ends_with(".html") || l.ends_with(".htm")
-            || l.ends_with(".php") || l.ends_with(".json")
-            || l.ends_with(".jsp") || l.ends_with(".asp")
+        l.ends_with(".html")
+            || l.ends_with(".htm")
+            || l.ends_with(".php")
+            || l.ends_with(".json")
+            || l.ends_with(".jsp")
+            || l.ends_with(".asp")
             || l.ends_with(".aspx")
     };
 
@@ -121,10 +125,16 @@ fn normalize_base_url(input: &str) -> String {
 pub async fn zentao_test_connection(req: ZentaoTestRequest) -> Result<ZentaoTestResult, String> {
     let base = normalize_base_url(&req.base_url);
     if base.is_empty() {
-        return Ok(ZentaoTestResult { ok: false, message: "禅道地址不能为空".to_string() });
+        return Ok(ZentaoTestResult {
+            ok: false,
+            message: "禅道地址不能为空".to_string(),
+        });
     }
     if req.account.trim().is_empty() {
-        return Ok(ZentaoTestResult { ok: false, message: "账号不能为空".to_string() });
+        return Ok(ZentaoTestResult {
+            ok: false,
+            message: "账号不能为空".to_string(),
+        });
     }
 
     // 密码空 → 回退到 keychain 已存值。Settings 页的密码框不回填 keychain（防泄露），
@@ -143,5 +153,92 @@ pub async fn zentao_test_connection(req: ZentaoTestRequest) -> Result<ZentaoTest
     };
 
     let result = crate::zentao::test_connection(&base, &req.account, &password).await;
-    Ok(ZentaoTestResult { ok: result.ok, message: result.message })
+    Ok(ZentaoTestResult {
+        ok: result.ok,
+        message: result.message,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_base_url_strips_php_entry() {
+        assert_eq!(
+            normalize_base_url("http://example.com/zentao/index.php"),
+            "http://example.com/zentao"
+        );
+    }
+
+    #[test]
+    fn normalize_base_url_preserves_path_segments() {
+        assert_eq!(
+            normalize_base_url("http://example.com/zentao"),
+            "http://example.com/zentao"
+        );
+    }
+
+    #[test]
+    fn normalize_base_url_strips_trailing_slash() {
+        // trailing slash produces empty segment that gets filtered
+        assert_eq!(
+            normalize_base_url("http://example.com/zentao/"),
+            "http://example.com/zentao"
+        );
+    }
+
+    #[test]
+    fn normalize_base_url_adds_scheme_if_missing() {
+        assert_eq!(
+            normalize_base_url("example.com/zentao"),
+            "http://example.com/zentao"
+        );
+    }
+
+    #[test]
+    fn normalize_base_url_preserves_https() {
+        assert_eq!(
+            normalize_base_url("https://example.com/zentao"),
+            "https://example.com/zentao"
+        );
+    }
+
+    #[test]
+    fn normalize_base_url_preserves_custom_port() {
+        assert_eq!(
+            normalize_base_url("http://example.com:9538/zentao"),
+            "http://example.com:9538/zentao"
+        );
+    }
+
+    #[test]
+    fn normalize_base_url_strips_html_entry() {
+        assert_eq!(
+            normalize_base_url("http://example.com/zentao/index.html"),
+            "http://example.com/zentao"
+        );
+    }
+
+    #[test]
+    fn normalize_base_url_strips_json_entry() {
+        assert_eq!(
+            normalize_base_url("http://example.com/api/data.json"),
+            "http://example.com/api"
+        );
+    }
+
+    #[test]
+    fn normalize_base_url_empty_input() {
+        assert_eq!(normalize_base_url(""), "");
+        assert_eq!(normalize_base_url("   "), "");
+    }
+
+    #[test]
+    fn normalize_base_url_bare_host() {
+        assert_eq!(
+            normalize_base_url("http://example.com"),
+            "http://example.com"
+        );
+    }
 }

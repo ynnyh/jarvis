@@ -168,10 +168,23 @@ fn parse_response(
     let (start, end) = (stripped.find('['), stripped.rfind(']'));
     let json_str = match (start, end) {
         (Some(s), Some(e)) if e > s => &stripped[s..=e],
-        _ => return Err(format!("LLM 输出不含 JSON 数组: {}", crate::util::truncate_chars(&text, 200))),
+        _ => {
+            return Err(format!(
+                "LLM 输出不含 JSON 数组: {}",
+                crate::util::truncate_chars(&text, 200)
+            ))
+        }
     };
-    let arr: Vec<serde_json::Value> =
-        serde_json::from_str(json_str).map_err(|e| format!("LLM JSON 解析失败: {}", e))?;
+    // 截断的响应（只有 "[" 或内容被 max_tokens 切断）导致 JSON 解析失败时，
+    // 返回空结果而不是报错——这些 commit 留为"未分类"，下次发版重试即可。
+    let arr: Vec<serde_json::Value> = serde_json::from_str(json_str).unwrap_or_else(|e| {
+        eprintln!(
+            "[classify_commits_to_tasks] JSON 解析失败({}): {}",
+            e,
+            crate::util::truncate_chars(json_str, 200)
+        );
+        Vec::new()
+    });
 
     let mut out = HashMap::new();
     for item in arr {
@@ -183,10 +196,7 @@ fn parse_response(
         if sha.is_empty() {
             continue;
         }
-        let task_index = item
-            .get("taskIndex")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as usize;
+        let task_index = item.get("taskIndex").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
         let confidence = item
             .get("confidence")
             .and_then(|v| v.as_f64())

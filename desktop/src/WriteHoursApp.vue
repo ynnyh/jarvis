@@ -10,6 +10,7 @@
 import { onMounted, onUnmounted, ref, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { emit } from '@tauri-apps/api/event'
+import ErrorBoundary from './components/ErrorBoundary.vue'
 
 interface WriteHoursPayload {
   taskId: string
@@ -126,6 +127,7 @@ onUnmounted(() => {
 </script>
 
 <template>
+  <ErrorBoundary>
   <div class="wh-root">
     <header class="wh-header" data-tauri-drag-region>
       <h1 class="wh-title" data-tauri-drag-region>
@@ -203,6 +205,7 @@ onUnmounted(() => {
       </button>
     </footer>
   </div>
+  </ErrorBoundary>
 </template>
 
 <style scoped>

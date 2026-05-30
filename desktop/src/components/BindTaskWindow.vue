@@ -6,12 +6,10 @@
 // - 用户点任务卡上的"未绑定"图标手动触发（也是往队列里塞一条然后打开窗口）
 //
 // 流程：
-// 1. 拿队首任务 → 调 recommend_repos_for_task → LLM 给出 repo 评分排序
-// 2. 默认勾选 top1（AI 推荐），用户也能切换到其它 repo 或开多选
+// 1. 默认展示项目列表（不调 LLM），用户手动选择归属项目
+// 2. 用户可点击"AI 推荐"按钮主动触发 LLM 分析，获取评分排序
 // 3. 点"确认绑定"→ task_bindings_set 落盘 → 出队
 // 4. 点"暂不绑定" / 关闭按钮 → 不写绑定 → 出队
-//    （存量任务不会被反复弹，task_snapshot 已记录过这个 id 不再触发事件；
-//     用户可通过任务卡上的图标主动重弹）
 // 5. 出队后若 queue 还有任务，继续处理；空则关窗
 
 import { ref, computed, watch, onMounted } from 'vue'
@@ -36,11 +34,48 @@ const error = ref<string | null>(null)
 const selectedRepos = ref<Set<string>>(new Set())
 const multiSelectMode = ref(false)
 const saving = ref(false)
+const aiRequested = ref(false)
 
 const currentTask = computed(() => store.pendingBindTasks[0] || null)
 const queueRest = computed(() => Math.max(0, store.pendingBindTasks.length - 1))
 
 const repoRoots = computed<string[]>(() => configStore.config.repoRoots ?? [])
+
+// 默认项目列表（不调 LLM）：直接用 repoRoots 生成，无评分
+const plainRecommendations = computed<RepoRecommendation[]>(() =>
+  repoRoots.value.map(r => ({ repoRoot: r, score: 0, reason: '', isTop: false })),
+)
+
+// 当前展示的列表：AI 已请求则用 AI 结果，否则用纯列表
+const displayRecommendations = computed(() =>
+  aiRequested.value ? recommendations.value : plainRecommendations.value,
+)
+
+async function requestAiRecommendation() {
+  const task = currentTask.value
+  if (!task) return
+  aiRequested.value = true
+  loading.value = true
+  error.value = null
+  try {
+    const res = await invoke<RepoRecommendation[]>('recommend_repos_for_task', {
+      taskTitle: task.title,
+      taskDescription: '',
+      deadline: task.deadline,
+      repoRoots: repoRoots.value,
+    })
+    recommendations.value = res
+    // AI 推荐出来后默认选中 top1
+    const top = res.find(r => r.isTop) || res[0]
+    selectedRepos.value = new Set(top ? [top.repoRoot] : [])
+    multiSelectMode.value = false
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+    recommendations.value = []
+  } finally {
+    loading.value = false
+  }
+}
 
 async function fetchRecommendations() {
   const task = currentTask.value
@@ -142,9 +177,9 @@ async function handleConfirm() {
   }
   saving.value = true
   try {
-    // confirmedBy 反映这次绑定的来源，后续可以根据它分析 AI 推荐命中率
-    const top = recommendations.value.find(r => r.isTop)
-    const isOneClick = repos.length === 1 && top?.repoRoot === repos[0]
+    // confirmedBy 反映这次绑定的来源
+    const top = aiRequested.value ? recommendations.value.find(r => r.isTop) : null
+    const isOneClick = aiRequested.value && repos.length === 1 && top?.repoRoot === repos[0]
     const confirmedBy = isOneClick
       ? 'llm-1click'
       : (repos.length > 1 ? 'manual-multi' : 'manual')
@@ -176,9 +211,16 @@ function advanceQueue() {
   // 否则 watch(currentTask) 会重新拉推荐
 }
 
-// 任务切换时重新拉推荐
+// 任务切换时重置 AI 状态，默认选中第一个项目
 watch(currentTask, (t) => {
-  if (t) fetchRecommendations()
+  aiRequested.value = false
+  recommendations.value = []
+  error.value = null
+  if (t && repoRoots.value.length > 0) {
+    selectedRepos.value = new Set([repoRoots.value[0]])
+  } else {
+    selectedRepos.value = new Set()
+  }
 }, { immediate: false })
 
 // 绑定窗打开期间把 avatar 窗口撑大到 640×720，关闭恢复 400×560，
@@ -186,7 +228,9 @@ watch(currentTask, (t) => {
 useExpandedAvatarWindow(computed(() => store.showBindTaskWindow))
 
 onMounted(() => {
-  if (currentTask.value) fetchRecommendations()
+  if (currentTask.value && repoRoots.value.length > 0) {
+    selectedRepos.value = new Set([repoRoots.value[0]])
+  }
 })
 
 function shortPath(p: string): string {
@@ -232,12 +276,20 @@ function priorityLabel(p: string): string {
         <div v-if="error" class="phase-text phase-error">{{ error }}</div>
 
         <!-- 推荐列表 -->
-        <div v-if="!loading && recommendations.length > 0" class="rec-list">
+        <div v-if="!loading && displayRecommendations.length > 0" class="rec-list">
           <div class="rec-header">
             <span class="rec-tip">{{ multiSelectMode ? '可多选，跨仓任务关联多个项目' : '选择该任务归属的项目' }}</span>
+            <button
+              v-if="!aiRequested"
+              class="ai-btn"
+              :disabled="loading"
+              @click="requestAiRecommendation"
+            >
+              AI 推荐
+            </button>
           </div>
           <button
-            v-for="r in recommendations"
+            v-for="r in displayRecommendations"
             :key="r.repoRoot"
             class="rec-row"
             :class="{ selected: selectedRepos.has(r.repoRoot), top: r.isTop }"
@@ -250,12 +302,12 @@ function priorityLabel(p: string): string {
                 <span v-if="r.isTop" class="rec-badge">AI 推荐</span>
                 <span v-if="r.reason === '手动选择'" class="rec-badge rec-badge-manual">手动</span>
               </div>
-              <div class="rec-reason">{{ r.reason || '—' }}</div>
+              <div v-if="r.reason" class="rec-reason">{{ r.reason }}</div>
             </div>
-            <span v-if="r.reason !== '手动选择'" class="rec-score">{{ r.score }}</span>
+            <span v-if="aiRequested && r.reason !== '手动选择'" class="rec-score">{{ r.score }}</span>
           </button>
           <div class="rec-actions">
-            <button v-if="!multiSelectMode && recommendations.length > 1" class="action-link" @click="enterMultiMode">
+            <button v-if="!multiSelectMode && displayRecommendations.length > 1" class="action-link" @click="enterMultiMode">
               + 再关联一个项目（跨仓任务）
             </button>
             <button class="action-link browse-link" @click="browseAndPickRepo" title="选择任意目录（非 git 项目也可）">
@@ -391,6 +443,22 @@ function priorityLabel(p: string): string {
   color: rgba(255, 255, 255, 0.55);
   padding: 0 2px;
 }
+.ai-btn {
+  padding: 3px 10px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: rgba(167, 139, 250, 0.95);
+  background: rgba(167, 139, 250, 0.1);
+  border: 1px solid rgba(167, 139, 250, 0.25);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.ai-btn:hover:not(:disabled) {
+  background: rgba(167, 139, 250, 0.2);
+  border-color: rgba(167, 139, 250, 0.5);
+}
+.ai-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .rec-row {
   display: flex; align-items: center; gap: 10px;

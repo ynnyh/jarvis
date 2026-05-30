@@ -4,6 +4,8 @@
   "description": "Jarvis 桌面任务助手（Tauri + Vue）",
   "type": "module",
   "scripts": {
+    "check:text": "node scripts/check-mojibake.mjs --mode=strict",
+    "check:text:full": "node scripts/check-mojibake.mjs --mode=full",
     "desktop:dev": "node scripts/dev.mjs",
     "desktop:build": "tauri build",
     "desktop:build-macos-dev": "tauri build --target universal-apple-darwin",

@@ -5,13 +5,19 @@
 //   2. 在下方 PETS 数组里加一项，引入新 JSON
 //   3. 配置里的 petId 改成新 id 就能切换
 //
-// 暂用 eager import：每个 JSON ~10-30KB，几个内置宠物加起来不到 200KB，
-// 比 lazy import 简单可靠。如果以后内置几十个再改 lazy。
+// 暂用 eager import：全部内置宠物打包进 JS bundle。
+// 如果以后内置太多影响加载速度再改 lazy import。
 
 import roboData from './assets/pets/robo.json'
 import catMoonData from './assets/pets/cat-moon.json'
 import astroLaptopData from './assets/pets/astro-laptop.json'
 import astroHeroData from './assets/pets/astro-hero.json'
+import happySpacemanData from './assets/pets/Happy Spaceman.json'
+import catCryingData from './assets/pets/Cat Crying emojiSticker animation.json'
+import cuteTigerData from './assets/pets/Cute Tiger.json'
+import slothMeditateData from './assets/pets/Sloth meditate.json'
+import cowDrinkMilkData from './assets/pets/Cow Drink Milk.json'
+import dancingLlamaData from './assets/pets/Dancing llama.json'
 
 export type PetCategory = 'mecha' | 'pet' | 'character'
 
@@ -53,6 +59,48 @@ export const PETS: PetInfo[] = [
     category: 'character',
     description: '披风飞行的超级宇航员',
     data: astroHeroData,
+  },
+  {
+    id: 'happy-spaceman',
+    name: '开心太空人',
+    category: 'character',
+    description: '快乐漂浮的太空人',
+    data: happySpacemanData,
+  },
+  {
+    id: 'cat-crying',
+    name: '哭泣小猫',
+    category: 'pet',
+    description: '委屈巴巴的哭泣猫咪',
+    data: catCryingData,
+  },
+  {
+    id: 'cute-tiger',
+    name: '可爱小虎',
+    category: 'pet',
+    description: '呆萌可爱的小老虎',
+    data: cuteTigerData,
+  },
+  {
+    id: 'sloth-meditate',
+    name: '冥想树懒',
+    category: 'pet',
+    description: '闭目冥想的树懒',
+    data: slothMeditateData,
+  },
+  {
+    id: 'cow-drink-milk',
+    name: '喝奶小牛',
+    category: 'pet',
+    description: '憨态可掬喝牛奶的小牛',
+    data: cowDrinkMilkData,
+  },
+  {
+    id: 'dancing-llama',
+    name: '跳舞羊驼',
+    category: 'pet',
+    description: '魔性舞蹈的羊驼',
+    data: dancingLlamaData,
   },
 ]
 

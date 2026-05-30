@@ -2,5 +2,5 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 fn main() {
-  jarvis_lib::run();
+    jarvis_lib::run();
 }

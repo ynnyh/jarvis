@@ -61,9 +61,10 @@ fn read_all() -> BindingMap {
 fn write_all(map: &BindingMap) -> Result<(), String> {
     let dir = jarvis_dir();
     fs::create_dir_all(&dir).map_err(|e| format!("创建配置目录失败: {}", e))?;
-    let content = serde_json::to_string_pretty(map)
-        .map_err(|e| format!("绑定表序列化失败: {}", e))?;
-    crate::util::write_atomic(&bindings_path(), &content).map_err(|e| format!("写入绑定表失败: {}", e))?;
+    let content =
+        serde_json::to_string_pretty(map).map_err(|e| format!("绑定表序列化失败: {}", e))?;
+    crate::util::write_atomic(&bindings_path(), &content)
+        .map_err(|e| format!("写入绑定表失败: {}", e))?;
     Ok(())
 }
 
@@ -116,10 +117,7 @@ pub fn task_ids_for_repo(repo_root: &str) -> Vec<String> {
     read_all()
         .into_iter()
         .filter_map(|(tid, b)| {
-            let hit = b
-                .repo_roots
-                .iter()
-                .any(|r| normalize_path(r) == target);
+            let hit = b.repo_roots.iter().any(|r| normalize_path(r) == target);
             hit.then_some(tid)
         })
         .collect()

@@ -137,6 +137,13 @@ pub struct ChatResponse {
 /// 主入口。读 LLM 凭证，按 wire_api 派发。
 pub async fn chat(req: ChatRequest) -> Result<ChatResponse, String> {
     let cred = get_llm_credentials();
+    chat_with_credentials(req, cred).await
+}
+
+pub async fn chat_with_credentials(
+    req: ChatRequest,
+    cred: LlmCredentials,
+) -> Result<ChatResponse, String> {
     if cred.api_key.is_empty() {
         return Err(
             "LLM apiKey 未配置（检查 ~/.jarvis/config.json 的 llm.apiKey 或 env LLM_API_KEY）"
@@ -252,13 +259,20 @@ async fn chat_via_chat_completions(
         ));
     }
 
-    let data: Value = serde_json::from_str(&text)
-        .map_err(|_| format!("LLM 返回非 JSON: {}", crate::util::truncate_chars(&text, 200)))?;
+    let data: Value = serde_json::from_str(&text).map_err(|_| {
+        format!(
+            "LLM 返回非 JSON: {}",
+            crate::util::truncate_chars(&text, 200)
+        )
+    })?;
 
     let choice = data.get("choices").and_then(|v| v.get(0));
-    let message = choice
-        .and_then(|c| c.get("message"))
-        .ok_or_else(|| format!("LLM 响应缺 choices[0].message: {}", crate::util::truncate_chars(&text, 200)))?;
+    let message = choice.and_then(|c| c.get("message")).ok_or_else(|| {
+        format!(
+            "LLM 响应缺 choices[0].message: {}",
+            crate::util::truncate_chars(&text, 200)
+        )
+    })?;
 
     // content 是常规模型回答的所在；reasoning_content 是 reasoning 系列模型（DeepSeek
     // R1/V4-flash、OpenAI o-series 兼容厂商）的字段，常规 content 在这种情况下会是空串。
@@ -420,8 +434,12 @@ async fn chat_via_responses(
         ));
     }
 
-    let data: Value = serde_json::from_str(&text)
-        .map_err(|_| format!("LLM 返回非 JSON: {}", crate::util::truncate_chars(&text, 200)))?;
+    let data: Value = serde_json::from_str(&text).map_err(|_| {
+        format!(
+            "LLM 返回非 JSON: {}",
+            crate::util::truncate_chars(&text, 200)
+        )
+    })?;
 
     parse_responses_output(&data, &model)
 }
@@ -448,7 +466,12 @@ fn messages_to_responses_input(messages: &[ChatMessage]) -> Result<Vec<Value>, S
                     "output": m.content,
                 }));
             }
-            Role::Assistant if m.tool_calls.as_ref().map(|v| !v.is_empty()).unwrap_or(false) => {
+            Role::Assistant
+                if m.tool_calls
+                    .as_ref()
+                    .map(|v| !v.is_empty())
+                    .unwrap_or(false) =>
+            {
                 if !m.content.trim().is_empty() {
                     out.push(serde_json::json!({
                         "type": "message",

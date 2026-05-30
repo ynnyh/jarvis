@@ -101,7 +101,12 @@ pub fn get_fine_report_credentials() -> FineReportCredentials {
             .unwrap_or_default()
     };
 
-    FineReportCredentials { base_url, account, password, real_name }
+    FineReportCredentials {
+        base_url,
+        account,
+        password,
+        real_name,
+    }
 }
 
 // ============================================================================
@@ -134,7 +139,8 @@ fn save_cached_auth(auth: &CachedAuth) -> Result<(), String> {
     let dir = jarvis_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("创建配置目录失败: {}", e))?;
     let json = serde_json::to_string_pretty(auth).map_err(|e| e.to_string())?;
-    crate::util::write_atomic(&cache_path(), &json).map_err(|e| format!("写入帆软认证缓存失败: {}", e))
+    crate::util::write_atomic(&cache_path(), &json)
+        .map_err(|e| format!("写入帆软认证缓存失败: {}", e))
 }
 
 #[allow(dead_code)]
@@ -200,7 +206,13 @@ impl FineReportClient {
             .connect_timeout(Duration::from_secs(5))
             .build()
             .map_err(|e| format!("帆软 HTTP client 构造失败: {}", e))?;
-        Ok(Self { base_url: base, account, password, client, jar })
+        Ok(Self {
+            base_url: base,
+            account,
+            password,
+            client,
+            jar,
+        })
     }
 
     fn url(&self, path: &str) -> String {
@@ -266,7 +278,11 @@ impl FineReportClient {
                     .unwrap_or("");
                 return Err(format!(
                     "帆软登录未拿到 JWT：{}（原文：{}）",
-                    if err_msg.is_empty() { "未知错误" } else { err_msg },
+                    if err_msg.is_empty() {
+                        "未知错误"
+                    } else {
+                        err_msg
+                    },
                     text
                 ));
             }
@@ -368,9 +384,9 @@ impl FineReportClient {
             return Ok(c[1].to_string());
         }
         // 再兜底：HTML 里任何 UUID 形式都试一下
-        let re_uuid = regex::Regex::new(
-            r#"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"#
-        ).map_err(|e| e.to_string())?;
+        let re_uuid =
+            regex::Regex::new(r#"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"#)
+                .map_err(|e| e.to_string())?;
         if let Some(c) = re_uuid.captures(&html) {
             return Ok(c[1].to_string());
         }
@@ -480,7 +496,10 @@ impl FineReportClient {
             .client
             .post(&url)
             .header("Authorization", format!("Bearer {}", jwt))
-            .header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+            .header(
+                "Content-Type",
+                "application/x-www-form-urlencoded; charset=UTF-8",
+            )
             .header("User-Agent", UA)
             .header("Accept", "*/*")
             .header("X-Requested-With", "XMLHttpRequest")
@@ -492,7 +511,10 @@ impl FineReportClient {
         let body = resp.text().await.unwrap_or_default();
         let preview: String = body.chars().take(500).collect();
         if cfg!(debug_assertions) {
-            eprintln!("[FineReport] submit_filter resp status={} body_preview={}", status, preview);
+            eprintln!(
+                "[FineReport] submit_filter resp status={} body_preview={}",
+                status, preview
+            );
         }
         if !status.is_success() {
             return Err(format!("parameters_d 返回 {}：{}", status, preview));
@@ -545,15 +567,12 @@ impl FineReportClient {
                 text.chars().take(200).collect::<String>()
             )
         })?;
-        let html = v
-            .get("html")
-            .and_then(|x| x.as_str())
-            .ok_or_else(|| {
-                format!(
-                    "报表响应缺 html 字段（原文前 200 字：{}）",
-                    text.chars().take(200).collect::<String>()
-                )
-            })?;
+        let html = v.get("html").and_then(|x| x.as_str()).ok_or_else(|| {
+            format!(
+                "报表响应缺 html 字段（原文前 200 字：{}）",
+                text.chars().take(200).collect::<String>()
+            )
+        })?;
         Ok(html.to_string())
     }
 }
@@ -595,9 +614,8 @@ pub fn parse_detail_html(html: &str) -> Result<Vec<EffortRecord>, String> {
 
     // 第一步：找 frozen-center div 范围。它在 HTML 最后一个 <td valign="top"> 里。
     // 简化处理：直接全文 regex，反正其他区只有表头，row>=4 的数据 td 只在 frozen-center 里。
-    let td_re = regex::Regex::new(
-        r#"<td\b([^>]*?)>\s*<div[^>]*>([\s\S]*?)</div>\s*</td>"#,
-    ).map_err(|e| format!("td regex 编译失败: {}", e))?;
+    let td_re = regex::Regex::new(r#"<td\b([^>]*?)>\s*<div[^>]*>([\s\S]*?)</div>\s*</td>"#)
+        .map_err(|e| format!("td regex 编译失败: {}", e))?;
     let attr_re = regex::Regex::new(r#"(col|row|rowSpan|colSpan|style)="([^"]*)""#)
         .map_err(|e| format!("attr regex 编译失败: {}", e))?;
 
@@ -767,12 +785,25 @@ pub async fn finereport_get_efforts(
 ) -> Result<EffortFetchResult, String> {
     use std::time::Instant;
     let total = Instant::now();
-    eprintln!("[FineReport] === get_efforts begin={} end={} realName_set={} ===", begin, end, real_name.is_some());
+    eprintln!(
+        "[FineReport] === get_efforts begin={} end={} realName_set={} ===",
+        begin,
+        end,
+        real_name.is_some()
+    );
 
     let cred = get_fine_report_credentials();
-    eprintln!("[FineReport] cred: baseUrl_set={} account_set={} realName_set={} pwd={}",
-        !cred.base_url.is_empty(), !cred.account.is_empty(), !cred.real_name.is_empty(),
-        if cred.password.is_empty() { "<空>" } else { "<已读>" });
+    eprintln!(
+        "[FineReport] cred: baseUrl_set={} account_set={} realName_set={} pwd={}",
+        !cred.base_url.is_empty(),
+        !cred.account.is_empty(),
+        !cred.real_name.is_empty(),
+        if cred.password.is_empty() {
+            "<空>"
+        } else {
+            "<已读>"
+        }
+    );
 
     // 显式传入 > config > 空（不过滤）
     let effective_real_name = real_name
@@ -793,17 +824,28 @@ pub async fn finereport_get_efforts(
 
     let t = Instant::now();
     let auth = client.ensure_valid_auth().await?;
-    eprintln!("[FineReport] step1 ensure_valid_auth ok ({}ms) exp={}", t.elapsed().as_millis(), auth.expires_at);
+    eprintln!(
+        "[FineReport] step1 ensure_valid_auth ok ({}ms) exp={}",
+        t.elapsed().as_millis(),
+        auth.expires_at
+    );
 
     let t = Instant::now();
     let session_id = client
         .open_report_and_get_session(&auth.jwt, DEFAULT_VIEWLET)
         .await
         .map_err(|e| {
-            eprintln!("[FineReport] step2 open_report_and_get_session FAILED ({}ms): {}", t.elapsed().as_millis(), e);
+            eprintln!(
+                "[FineReport] step2 open_report_and_get_session FAILED ({}ms): {}",
+                t.elapsed().as_millis(),
+                e
+            );
             e
         })?;
-    eprintln!("[FineReport] step2 sessionID ok ({}ms)", t.elapsed().as_millis());
+    eprintln!(
+        "[FineReport] step2 sessionID ok ({}ms)",
+        t.elapsed().as_millis()
+    );
 
     let cid = FineReportClient::generate_cid(&session_id);
     eprintln!("[FineReport] step2.5 cid generated: {}", cid);
@@ -813,30 +855,57 @@ pub async fn finereport_get_efforts(
         .submit_filter(&auth.jwt, &session_id, &begin, &end, &effective_real_name)
         .await
         .map_err(|e| {
-            eprintln!("[FineReport] step3 submit_filter FAILED ({}ms): {}", t.elapsed().as_millis(), e);
+            eprintln!(
+                "[FineReport] step3 submit_filter FAILED ({}ms): {}",
+                t.elapsed().as_millis(),
+                e
+            );
             e
         })?;
-    eprintln!("[FineReport] step3 submit_filter ok ({}ms)", t.elapsed().as_millis());
+    eprintln!(
+        "[FineReport] step3 submit_filter ok ({}ms)",
+        t.elapsed().as_millis()
+    );
 
     let t = Instant::now();
-    let summary_html = client.fetch_report_html(&auth.jwt, &session_id, &cid, 0).await
+    let summary_html = client
+        .fetch_report_html(&auth.jwt, &session_id, &cid, 0)
+        .await
         .map_err(|e| {
-            eprintln!("[FineReport] step4a fetch summary FAILED ({}ms): {}", t.elapsed().as_millis(), e);
+            eprintln!(
+                "[FineReport] step4a fetch summary FAILED ({}ms): {}",
+                t.elapsed().as_millis(),
+                e
+            );
             e
         })?;
-    eprintln!("[FineReport] step4a summary ok ({}ms) len={}", t.elapsed().as_millis(), summary_html.len());
+    eprintln!(
+        "[FineReport] step4a summary ok ({}ms) len={}",
+        t.elapsed().as_millis(),
+        summary_html.len()
+    );
     if cfg!(debug_assertions) {
         let summary_path = jarvis_dir().join("finereport-summary.html");
         let _ = std::fs::write(&summary_path, &summary_html);
     }
 
     let t = Instant::now();
-    let detail_html = client.fetch_report_html(&auth.jwt, &session_id, &cid, 1).await
+    let detail_html = client
+        .fetch_report_html(&auth.jwt, &session_id, &cid, 1)
+        .await
         .map_err(|e| {
-            eprintln!("[FineReport] step4b fetch detail FAILED ({}ms): {}", t.elapsed().as_millis(), e);
+            eprintln!(
+                "[FineReport] step4b fetch detail FAILED ({}ms): {}",
+                t.elapsed().as_millis(),
+                e
+            );
             e
         })?;
-    eprintln!("[FineReport] step4b detail ok ({}ms) len={}", t.elapsed().as_millis(), detail_html.len());
+    eprintln!(
+        "[FineReport] step4b detail ok ({}ms) len={}",
+        t.elapsed().as_millis(),
+        detail_html.len()
+    );
     if cfg!(debug_assertions) {
         let detail_path = jarvis_dir().join("finereport-detail.html");
         let _ = std::fs::write(&detail_path, &detail_html);
@@ -848,8 +917,17 @@ pub async fn finereport_get_efforts(
     });
     eprintln!("[FineReport] parsed {} records", records.len());
 
-    eprintln!("[FineReport] === get_efforts DONE total {}ms ===", total.elapsed().as_millis());
-    Ok(EffortFetchResult { cid, session_id, records, summary_html, detail_html })
+    eprintln!(
+        "[FineReport] === get_efforts DONE total {}ms ===",
+        total.elapsed().as_millis()
+    );
+    Ok(EffortFetchResult {
+        cid,
+        session_id,
+        records,
+        summary_html,
+        detail_html,
+    })
 }
 
 // ============================================================================
@@ -878,10 +956,16 @@ pub async fn finereport_test_connection(
 ) -> Result<FineReportTestResult, String> {
     let base = req.base_url.trim().to_string();
     if base.is_empty() {
-        return Ok(FineReportTestResult { ok: false, message: "帆软地址不能为空".into() });
+        return Ok(FineReportTestResult {
+            ok: false,
+            message: "帆软地址不能为空".into(),
+        });
     }
     if req.account.trim().is_empty() {
-        return Ok(FineReportTestResult { ok: false, message: "账号不能为空".into() });
+        return Ok(FineReportTestResult {
+            ok: false,
+            message: "账号不能为空".into(),
+        });
     }
 
     let password = if req.password.is_empty() {
@@ -899,7 +983,12 @@ pub async fn finereport_test_connection(
 
     let client = match FineReportClient::new(base, req.account, password) {
         Ok(c) => c,
-        Err(e) => return Ok(FineReportTestResult { ok: false, message: e }),
+        Err(e) => {
+            return Ok(FineReportTestResult {
+                ok: false,
+                message: e,
+            })
+        }
     };
 
     match client.login().await {
@@ -914,11 +1003,17 @@ pub async fn finereport_test_connection(
                 ok: true,
                 message: format!(
                     "登录成功。exp={}, now={}, 剩 {} 天 {} 小时",
-                    auth.expires_at, now, days_left.max(0), hours_left.max(0)
+                    auth.expires_at,
+                    now,
+                    days_left.max(0),
+                    hours_left.max(0)
                 ),
             })
         }
-        Err(e) => Ok(FineReportTestResult { ok: false, message: e }),
+        Err(e) => Ok(FineReportTestResult {
+            ok: false,
+            message: e,
+        }),
     }
 }
 

@@ -128,7 +128,9 @@ fn allocate_hours_by_slots(business_hours: f64, task_count: usize) -> Vec<f64> {
             .map(|i| (base + if i < extra { 1 } else { 0 }) as f64 * 0.5)
             .collect()
     } else {
-        (0..task_count).map(|i| if i < slots { 0.5 } else { 0.0 }).collect()
+        (0..task_count)
+            .map(|i| if i < slots { 0.5 } else { 0.0 })
+            .collect()
     }
 }
 
@@ -137,10 +139,14 @@ pub fn build_daily_review(
     tasks: &[ReviewTaskInfo],
     options: BuildOptions<'_>,
 ) -> DailyReview {
-    let date = options.date.map(|s| s.to_string()).unwrap_or_else(today_str);
+    let date = options
+        .date
+        .map(|s| s.to_string())
+        .unwrap_or_else(today_str);
     let hours_per_work_day = options.hours_per_work_day;
 
-    let task_by_id: HashMap<String, &ReviewTaskInfo> = tasks.iter().map(|t| (t.id.clone(), t)).collect();
+    let task_by_id: HashMap<String, &ReviewTaskInfo> =
+        tasks.iter().map(|t| (t.id.clone(), t)).collect();
 
     // ---- 推进的任务 ----
     let mut advanced_tasks: Vec<AdvancedTask> = link_result
@@ -158,7 +164,13 @@ pub fn build_daily_review(
                 .max_by_key(|(_, n)| *n)
                 .map(|(k, _)| k)
                 .unwrap_or_default();
-            let effort: f64 = t.commits.iter().filter(|c| c.business_line == business_line).map(|c| c.effort).filter(|e| e.is_finite()).sum();
+            let effort: f64 = t
+                .commits
+                .iter()
+                .filter(|c| c.business_line == business_line)
+                .map(|c| c.effort)
+                .filter(|e| e.is_finite())
+                .sum();
             let status = task_by_id
                 .get(&t.task_id)
                 .map(|x| x.status.clone())
@@ -175,41 +187,51 @@ pub fn build_daily_review(
             }
         })
         .collect();
-    advanced_tasks.sort_by(|a, b| b.effort.partial_cmp(&a.effort).unwrap_or(std::cmp::Ordering::Equal));
+    advanced_tasks.sort_by(|a, b| {
+        b.effort
+            .partial_cmp(&a.effort)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     // ---- 按业务线分组 ----
     let mut by_line_map: HashMap<String, BusinessLineGroup> = HashMap::new();
     let ensure_group = |map: &mut HashMap<String, BusinessLineGroup>, bl: &str| {
-        map.entry(bl.to_string()).or_insert_with(|| BusinessLineGroup {
-            business_line: bl.to_string(),
-            commits: Vec::new(),
-            tasks: Vec::new(),
-            effort: 0.0,
-            suggested_hours: None,
-        });
-    };
-    let collect_commit = |map: &mut HashMap<String, BusinessLineGroup>, bl: &str, c: &CommitLink| {
-        ensure_group(map, bl);
-        let g = map.get_mut(bl).unwrap();
-        let dup = g.commits.iter().any(|x| x.sha == c.sha && x.repo_path == c.repo_path);
-        if !dup {
-            g.commits.push(c.clone());
-            // 过滤 NaN/Inf：Inf 能绕过下方 total_effort > 0.0 守卫，导致 Inf/Inf=NaN 污染 suggested_hours。
-            if c.effort.is_finite() {
-                g.effort += c.effort;
-            }
-        }
-    };
-    let collect_task = |map: &mut HashMap<String, BusinessLineGroup>, bl: &str, task_id: &str, task_name: &str| {
-        ensure_group(map, bl);
-        let g = map.get_mut(bl).unwrap();
-        if !g.tasks.iter().any(|t| t.task_id == task_id) {
-            g.tasks.push(TaskRef {
-                task_id: task_id.to_string(),
-                task_name: task_name.to_string(),
+        map.entry(bl.to_string())
+            .or_insert_with(|| BusinessLineGroup {
+                business_line: bl.to_string(),
+                commits: Vec::new(),
+                tasks: Vec::new(),
+                effort: 0.0,
+                suggested_hours: None,
             });
-        }
     };
+    let collect_commit =
+        |map: &mut HashMap<String, BusinessLineGroup>, bl: &str, c: &CommitLink| {
+            ensure_group(map, bl);
+            let g = map.get_mut(bl).unwrap();
+            let dup = g
+                .commits
+                .iter()
+                .any(|x| x.sha == c.sha && x.repo_path == c.repo_path);
+            if !dup {
+                g.commits.push(c.clone());
+                // 过滤 NaN/Inf：Inf 能绕过下方 total_effort > 0.0 守卫，导致 Inf/Inf=NaN 污染 suggested_hours。
+                if c.effort.is_finite() {
+                    g.effort += c.effort;
+                }
+            }
+        };
+    let collect_task =
+        |map: &mut HashMap<String, BusinessLineGroup>, bl: &str, task_id: &str, task_name: &str| {
+            ensure_group(map, bl);
+            let g = map.get_mut(bl).unwrap();
+            if !g.tasks.iter().any(|t| t.task_id == task_id) {
+                g.tasks.push(TaskRef {
+                    task_id: task_id.to_string(),
+                    task_name: task_name.to_string(),
+                });
+            }
+        };
     for t in &link_result.tasks {
         for c in &t.commits {
             collect_commit(&mut by_line_map, &c.business_line, c);
@@ -223,9 +245,14 @@ pub fn build_daily_review(
     }
     let mut by_business_line: Vec<BusinessLineGroup> = by_line_map.into_values().collect();
     for g in &mut by_business_line {
-        g.commits.sort_by(|a, b| b.authored_date.cmp(&a.authored_date));
+        g.commits
+            .sort_by(|a, b| b.authored_date.cmp(&a.authored_date));
     }
-    by_business_line.sort_by(|a, b| b.effort.partial_cmp(&a.effort).unwrap_or(std::cmp::Ordering::Equal));
+    by_business_line.sort_by(|a, b| {
+        b.effort
+            .partial_cmp(&a.effort)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     // ---- 工时分配 ----
     let total_effort: f64 = by_business_line.iter().map(|g| g.effort).sum();
@@ -277,7 +304,10 @@ pub fn build_daily_review(
             task_id: t.task_id.clone(),
             task_name: t.task_name.clone(),
             commit_count: t.commit_count,
-            reason: format!("本地已有 {} 个 commit，但禅道状态仍是\"未开始\"", t.commit_count),
+            reason: format!(
+                "本地已有 {} 个 commit，但禅道状态仍是\"未开始\"",
+                t.commit_count
+            ),
         })
         .collect();
 
@@ -286,7 +316,11 @@ pub fn build_daily_review(
         total_commits: link_result.total_commits,
         business_line_count: by_business_line.len(),
         tasks_advanced_count: advanced_tasks.len(),
-        orphan_commit_count: link_result.orphan_commits.iter().map(|o| o.commits.len()).sum(),
+        orphan_commit_count: link_result
+            .orphan_commits
+            .iter()
+            .map(|o| o.commits.len())
+            .sum(),
     };
 
     // ---- 孤儿 commit 估工时 ----
@@ -294,7 +328,12 @@ pub fn build_daily_review(
         .orphan_commits
         .iter()
         .map(|o| {
-            let effort: f64 = o.commits.iter().map(|c| c.effort).filter(|e| e.is_finite()).sum();
+            let effort: f64 = o
+                .commits
+                .iter()
+                .map(|c| c.effort)
+                .filter(|e| e.is_finite())
+                .sum();
             let suggested_hours = if hours_per_work_day > 0.0 && total_effort > 0.0 {
                 Some(round_half(effort / total_effort * hours_per_work_day))
             } else {
@@ -378,13 +417,20 @@ fn render_plain_text(
         }
         let dup_count = g.commits.len() - unique_by_title.len();
         let count_label = if dup_count > 0 {
-            format!("{} 个主题 / 共 {} 次提交", unique_by_title.len(), g.commits.len())
+            format!(
+                "{} 个主题 / 共 {} 次提交",
+                unique_by_title.len(),
+                g.commits.len()
+            )
         } else {
             format!("{} 个 commit", g.commits.len())
         };
         lines.push(format!("{}（{}）", g.business_line, count_label));
         for (c, cleaned) in &unique_by_title {
-            lines.push(format!("  · {}  ({} · {})", cleaned, c.repo_name, c.short_sha));
+            lines.push(format!(
+                "  · {}  ({} · {})",
+                cleaned, c.repo_name, c.short_sha
+            ));
         }
         if !g.tasks.is_empty() {
             lines.push("  推进任务：".into());
@@ -395,7 +441,10 @@ fn render_plain_text(
                 } else {
                     ""
                 };
-                lines.push(format!("    - #{} {}{}", t.task_id, t.task_name, status_mark));
+                lines.push(format!(
+                    "    - #{} {}{}",
+                    t.task_id, t.task_name, status_mark
+                ));
             }
         }
         lines.push(String::new());
@@ -410,8 +459,14 @@ fn render_plain_text(
         if !lines_with_hours.is_empty() {
             lines.push("【建议工时分配】（最小粒度 0.5h，仅供禅道填报参考）".into());
             for g in &lines_with_hours {
-                let line_tasks: Vec<&AdvancedTask> = advanced_tasks.iter().filter(|t| t.business_line == g.business_line).collect();
-                let tasks_with_hours: Vec<&&AdvancedTask> = line_tasks.iter().filter(|t| t.suggested_hours.unwrap_or(0.0) > 0.0).collect();
+                let line_tasks: Vec<&AdvancedTask> = advanced_tasks
+                    .iter()
+                    .filter(|t| t.business_line == g.business_line)
+                    .collect();
+                let tasks_with_hours: Vec<&&AdvancedTask> = line_tasks
+                    .iter()
+                    .filter(|t| t.suggested_hours.unwrap_or(0.0) > 0.0)
+                    .collect();
                 lines.push(format!(
                     "  · {}：{}h（{}/{} 个主要任务）",
                     g.business_line,
@@ -420,10 +475,16 @@ fn render_plain_text(
                     line_tasks.len()
                 ));
                 for t in tasks_with_hours {
-                    lines.push(format!("    - #{} {}：{}h", t.task_id, t.task_name, t.suggested_hours.unwrap_or(0.0)));
+                    lines.push(format!(
+                        "    - #{} {}：{}h",
+                        t.task_id,
+                        t.task_name,
+                        t.suggested_hours.unwrap_or(0.0)
+                    ));
                 }
             }
-            lines.push("  注：commit 数少的次要任务未分配工时，主要任务工时合计为日总工时。".into());
+            lines
+                .push("  注：commit 数少的次要任务未分配工时，主要任务工时合计为日总工时。".into());
             lines.push(String::new());
         }
     }
@@ -436,7 +497,10 @@ fn render_plain_text(
         lines.push(String::new());
     }
 
-    let non_empty_orphans: Vec<&OrphanCommitGroup> = orphan_groups.iter().filter(|o| !o.commits.is_empty()).collect();
+    let non_empty_orphans: Vec<&OrphanCommitGroup> = orphan_groups
+        .iter()
+        .filter(|o| !o.commits.is_empty())
+        .collect();
     if !non_empty_orphans.is_empty() {
         lines.push("【未关联禅道任务的提交】（建议补任务号或在日报中说明）".into());
         for g in non_empty_orphans {
@@ -454,9 +518,17 @@ fn render_plain_text(
                 Some(h) if h > 0.0 => format!("，建议 ~{}h", h),
                 _ => String::new(),
             };
-            lines.push(format!("  · {}（{} 个主题{}）", g.business_line, unique.len(), hours_label));
+            lines.push(format!(
+                "  · {}（{} 个主题{}）",
+                g.business_line,
+                unique.len(),
+                hours_label
+            ));
             for (c, cleaned) in &unique {
-                lines.push(format!("    - {}  ({} · {})", cleaned, c.repo_name, c.short_sha));
+                lines.push(format!(
+                    "    - {}  ({} · {})",
+                    cleaned, c.repo_name, c.short_sha
+                ));
             }
         }
         lines.push(String::new());

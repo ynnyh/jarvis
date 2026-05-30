@@ -26,7 +26,10 @@ fn validate_id(id: &str) -> Result<(), String> {
     if id.is_empty() || id.len() > 80 {
         return Err("会话 id 长度非法".into());
     }
-    if !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.') {
+    if !id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+    {
         return Err("会话 id 含非法字符".into());
     }
     if id.starts_with('.') || id.contains("..") {
@@ -81,25 +84,45 @@ pub fn conversations_list() -> Result<Vec<ConversationMeta>, String> {
         }
         let raw = match fs::read_to_string(&path) {
             Ok(r) => r,
-            Err(_) => continue,  // 单文件读失败不阻塞整列表
+            Err(_) => continue, // 单文件读失败不阻塞整列表
         };
         let parsed: serde_json::Value = match serde_json::from_str(&raw) {
             Ok(v) => v,
             Err(_) => continue,
         };
-        let id = parsed.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let id = parsed
+            .get("id")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
         if id.is_empty() {
             continue;
         }
-        let title = parsed.get("title").and_then(|x| x.as_str()).unwrap_or("未命名").to_string();
-        let created_at = parsed.get("createdAt").and_then(|x| x.as_i64()).unwrap_or(0);
-        let updated_at = parsed.get("updatedAt").and_then(|x| x.as_i64()).unwrap_or(created_at);
+        let title = parsed
+            .get("title")
+            .and_then(|x| x.as_str())
+            .unwrap_or("未命名")
+            .to_string();
+        let created_at = parsed
+            .get("createdAt")
+            .and_then(|x| x.as_i64())
+            .unwrap_or(0);
+        let updated_at = parsed
+            .get("updatedAt")
+            .and_then(|x| x.as_i64())
+            .unwrap_or(created_at);
         let message_count = parsed
             .get("messages")
             .and_then(|x| x.as_array())
             .map(|a| a.len())
             .unwrap_or(0);
-        metas.push(ConversationMeta { id, title, created_at, updated_at, message_count });
+        metas.push(ConversationMeta {
+            id,
+            title,
+            created_at,
+            updated_at,
+            message_count,
+        });
     }
     // 最近更新的排前面
     metas.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
@@ -113,8 +136,8 @@ pub fn conversations_load(id: String) -> Result<Conversation, String> {
         return Err(format!("会话不存在: {}", id));
     }
     let raw = fs::read_to_string(&path).map_err(|e| format!("读取会话失败: {}", e))?;
-    let conv: Conversation = serde_json::from_str(&raw)
-        .map_err(|e| format!("会话解析失败: {}", e))?;
+    let conv: Conversation =
+        serde_json::from_str(&raw).map_err(|e| format!("会话解析失败: {}", e))?;
     Ok(conv)
 }
 
@@ -124,8 +147,8 @@ pub fn conversations_save(conversation: Conversation) -> Result<(), String> {
     let dir = conversations_dir();
     fs::create_dir_all(&dir).map_err(|e| format!("创建会话目录失败: {}", e))?;
     let path = conversation_path(&conversation.id)?;
-    let content = serde_json::to_string_pretty(&conversation)
-        .map_err(|e| format!("序列化失败: {}", e))?;
+    let content =
+        serde_json::to_string_pretty(&conversation).map_err(|e| format!("序列化失败: {}", e))?;
     crate::util::write_atomic(&path, &content).map_err(|e| format!("写入失败: {}", e))?;
     Ok(())
 }
@@ -137,4 +160,45 @@ pub fn conversations_delete(id: String) -> Result<(), String> {
         fs::remove_file(&path).map_err(|e| format!("删除失败: {}", e))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_id_accepts_normal_ids() {
+        assert!(validate_id("abc-123_def.xyz").is_ok());
+        assert!(validate_id("2024-01-15").is_ok());
+        assert!(validate_id("a").is_ok());
+    }
+
+    #[test]
+    fn validate_id_rejects_empty() {
+        assert!(validate_id("").is_err());
+    }
+
+    #[test]
+    fn validate_id_rejects_too_long() {
+        let long_id: String = "a".repeat(81);
+        assert!(validate_id(&long_id).is_err());
+        let max_id: String = "a".repeat(80);
+        assert!(validate_id(&max_id).is_ok());
+    }
+
+    #[test]
+    fn validate_id_rejects_path_traversal() {
+        assert!(validate_id("..").is_err());
+        assert!(validate_id("a..b").is_err());
+        assert!(validate_id(".hidden").is_err());
+    }
+
+    #[test]
+    fn validate_id_rejects_special_chars() {
+        assert!(validate_id("a/b").is_err());
+        assert!(validate_id("a\\b").is_err());
+        assert!(validate_id("a b").is_err());
+        assert!(validate_id("a@b").is_err());
+        assert!(validate_id("中文").is_err());
+    }
 }

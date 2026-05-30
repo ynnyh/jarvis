@@ -145,7 +145,11 @@ pub fn extract_business_line(repo_path: &str, root_dirs: &[String]) -> String {
 
 pub fn extract_task_ids_from_message(commit: &LocalCommit) -> Vec<String> {
     use regex::Regex;
-    let text = format!("{}\n{}", commit.title, commit.body.clone().unwrap_or_default());
+    let text = format!(
+        "{}\n{}",
+        commit.title,
+        commit.body.clone().unwrap_or_default()
+    );
     let patterns: [&str; 3] = [
         r"#(\d{3,7})\b",
         r"(?i)\btask[-_\s]?#?(\d{3,7})\b",
@@ -247,8 +251,7 @@ pub async fn link_tasks_with_commits(
         }
     }
 
-    let task_by_id: HashMap<String, &TaskInput> =
-        tasks.iter().map(|t| (t.id.clone(), t)).collect();
+    let task_by_id: HashMap<String, &TaskInput> = tasks.iter().map(|t| (t.id.clone(), t)).collect();
 
     let mut task_links: HashMap<String, Vec<CommitLink>> = HashMap::new();
     // 用 (repo_path, sha) 唯一标识一条 commit；走完所有 pass 后剩下的就是孤儿
@@ -267,10 +270,12 @@ pub async fn link_tasks_with_commits(
                 if !task_by_id.contains_key(&id) {
                     continue;
                 }
-                task_links
-                    .entry(id)
-                    .or_default()
-                    .push(make_link(item, MatchType::Exact, None, None));
+                task_links.entry(id).or_default().push(make_link(
+                    item,
+                    MatchType::Exact,
+                    None,
+                    None,
+                ));
                 hit_any = true;
             }
             if hit_any {
@@ -306,12 +311,15 @@ pub async fn link_tasks_with_commits(
             // 唯一候选：直接全归过去（1:1 的典型场景，省 LLM 调用）
             let task_id = bound_task_ids.into_iter().next().unwrap();
             for it in pending_items {
-                task_links.entry(task_id.clone()).or_default().push(make_link(
-                    it,
-                    MatchType::Soft,
-                    Some(0.9),
-                    Some("绑定唯一候选任务".to_string()),
-                ));
+                task_links
+                    .entry(task_id.clone())
+                    .or_default()
+                    .push(make_link(
+                        it,
+                        MatchType::Soft,
+                        Some(0.9),
+                        Some("绑定唯一候选任务".to_string()),
+                    ));
                 used_keys.insert(make_key(it));
             }
             continue;
@@ -330,21 +338,18 @@ pub async fn link_tasks_with_commits(
         let pending_commits: Vec<LocalCommit> =
             pending_items.iter().map(|it| it.commit.clone()).collect();
 
-        let classification = match commit_classifier::classify_commits_to_tasks(
-            &pending_commits,
-            &candidates,
-        )
-        .await
-        {
-            Ok(m) => m,
-            Err(e) => {
-                eprintln!(
-                    "[commit_link] repo={} LLM 分类失败，归零散桶: {}",
-                    repo_path, e
-                );
-                HashMap::new()
-            }
-        };
+        let classification =
+            match commit_classifier::classify_commits_to_tasks(&pending_commits, &candidates).await
+            {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!(
+                        "[commit_link] repo={} LLM 分类失败，归零散桶: {}",
+                        repo_path, e
+                    );
+                    HashMap::new()
+                }
+            };
 
         for it in pending_items {
             let sha = &it.commit.sha;
@@ -357,12 +362,15 @@ pub async fn link_tasks_with_commits(
             if res.confidence < options.min_confidence {
                 continue; // 低置信度也丢
             }
-            task_links.entry(task_id.clone()).or_default().push(make_link(
-                it,
-                MatchType::Soft,
-                Some(res.confidence),
-                Some(res.reason.clone()),
-            ));
+            task_links
+                .entry(task_id.clone())
+                .or_default()
+                .push(make_link(
+                    it,
+                    MatchType::Soft,
+                    Some(res.confidence),
+                    Some(res.reason.clone()),
+                ));
             used_keys.insert(make_key(it));
         }
     }

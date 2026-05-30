@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useConfigStore } from './stores/config'
+import ErrorBoundary from './components/ErrorBoundary.vue'
 import {
   SETTINGS_MENU,
   SETTINGS_PAGE_COMPONENTS,
@@ -50,6 +51,7 @@ onUnmounted(() => {
 </script>
 
 <template>
+  <ErrorBoundary>
   <div class="detail-root">
     <header class="detail-header" data-tauri-drag-region>
       <div>
@@ -67,6 +69,7 @@ onUnmounted(() => {
       />
     </main>
   </div>
+  </ErrorBoundary>
 </template>
 
 <style scoped>
