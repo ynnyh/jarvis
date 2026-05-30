@@ -43,6 +43,8 @@ const rangePresets: { key: RangeKey; label: string }[] = [
 
 const beginDate = ref('')
 const endDate = ref('')
+// 当前选中的预设档（昨天/今日/…）。手改日期后置 null，不再高亮任何档。
+const activePreset = ref<RangeKey | null>(null)
 
 const effortState = ref<'idle' | 'fetching' | 'ok' | 'fail'>('idle')
 const effortMsg = ref('')
@@ -89,6 +91,7 @@ function applyPreset(key: RangeKey) {
   const { begin, end } = dateRange(key)
   beginDate.value = begin
   endDate.value = end
+  activePreset.value = key
 }
 
 // 默认今日
@@ -230,13 +233,14 @@ async function fetchEfforts() {
     </p>
 
     <div class="date-row">
-      <input class="settings-input date-input" type="date" v-model="beginDate" :max="endDate || undefined" />
+      <input class="settings-input date-input" type="date" v-model="beginDate" :max="endDate || undefined" @change="activePreset = null" />
       <span class="date-sep">至</span>
-      <input class="settings-input date-input" type="date" v-model="endDate" :min="beginDate || undefined" />
+      <input class="settings-input date-input" type="date" v-model="endDate" :min="beginDate || undefined" @change="activePreset = null" />
     </div>
     <div class="range-tabs">
       <button v-for="opt in rangePresets" :key="opt.key"
         class="range-tab" type="button"
+        :class="{ active: activePreset === opt.key }"
         @click="applyPreset(opt.key)">
         {{ opt.label }}
       </button>
@@ -325,6 +329,12 @@ async function fetchEfforts() {
   background: rgba(147, 197, 253, 0.18);
   border-color: rgba(147, 197, 253, 0.5);
   color: rgba(191, 219, 254, 1);
+}
+.range-tab.active {
+  background: rgba(59, 130, 246, 0.28);
+  border-color: rgba(147, 197, 253, 0.65);
+  color: rgba(219, 234, 254, 1);
+  font-weight: 600;
 }
 
 .date-row {

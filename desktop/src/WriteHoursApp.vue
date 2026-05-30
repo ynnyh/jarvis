@@ -7,7 +7,7 @@
 // 写入成功后 emit "write-hours-done" 让复盘窗把任务标灰，然后 write_hours_close
 // 隐藏自己并 show avatar。
 
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { emit } from '@tauri-apps/api/event'
 
@@ -26,6 +26,8 @@ const content = ref('')
 const submitting = ref(false)
 const error = ref('')
 const result = ref<'idle' | 'ok' | 'fail'>('idle')
+const taskIdEl = ref<HTMLInputElement | null>(null)
+const hoursEl = ref<HTMLInputElement | null>(null)
 
 async function closeWindow() {
   if (submitting.value) return
@@ -99,14 +101,23 @@ async function loadPayload() {
 }
 
 function onKeydown(ev: KeyboardEvent) {
-  if (ev.key === 'Escape') closeWindow()
+  if (ev.key === 'Escape') { closeWindow(); return }
+  // Ctrl/Cmd+Enter 提交：textarea 里普通 Enter 仍换行，只有带修饰键才提交
+  if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
+    ev.preventDefault()
+    submit()
+  }
 }
 
 onMounted(async () => {
   // Rust 端 write_hours_open 在写入 state 之后立刻 show + reload，所以这里
   // mount 时 state 一定已经有当次 payload，直接拉就行。
-  await loadPayload()
   window.addEventListener('keydown', onKeydown)
+  await loadPayload()
+  await nextTick()
+  // 聚焦到第一个需要填的框：孤儿没 taskId 聚焦 taskId，否则聚焦工时
+  if (!taskIdInput.value) taskIdEl.value?.focus()
+  else hoursEl.value?.focus()
 })
 
 onUnmounted(() => {
@@ -128,6 +139,7 @@ onUnmounted(() => {
         <label class="form-label">任务 ID</label>
         <input
           v-model="taskIdInput"
+          ref="taskIdEl"
           class="form-input"
           type="text"
           inputmode="numeric"
@@ -146,6 +158,7 @@ onUnmounted(() => {
         <label class="form-label">工时（小时）</label>
         <input
           v-model="hours"
+          ref="hoursEl"
           class="form-input"
           type="text"
           inputmode="decimal"

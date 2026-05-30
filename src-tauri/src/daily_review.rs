@@ -294,7 +294,7 @@ pub fn build_daily_review(
         .orphan_commits
         .iter()
         .map(|o| {
-            let effort: f64 = o.commits.iter().map(|c| c.effort).sum();
+            let effort: f64 = o.commits.iter().map(|c| c.effort).filter(|e| e.is_finite()).sum();
             let suggested_hours = if hours_per_work_day > 0.0 && total_effort > 0.0 {
                 Some(round_half(effort / total_effort * hours_per_work_day))
             } else {

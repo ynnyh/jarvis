@@ -2,7 +2,7 @@
 // 手动写工时窗口：单页布局。顶部 Tab 切类别（运维/事务/新增功能/其他），
 // 下方任务搜索下拉（模糊检索）+ 工时 + 内容。运维 Tab 多一层项目筛选。
 
-import { onMounted, onUnmounted, ref, computed } from 'vue'
+import { onMounted, onUnmounted, ref, computed, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { emit } from '@tauri-apps/api/event'
 
@@ -61,6 +61,7 @@ const content = ref('')
 const submitting = ref(false)
 const error = ref('')
 const result = ref<'idle' | 'ok' | 'fail'>('idle')
+const searchEl = ref<HTMLInputElement | null>(null)
 
 const currentTasks = computed(() => {
   if (!classifiedTasks.value) return []
@@ -189,12 +190,21 @@ function onKeydown(ev: KeyboardEvent) {
     } else {
       closeWindow()
     }
+    return
+  }
+  // Ctrl/Cmd+Enter 提交（submit 内部已守卫未选任务）
+  if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
+    ev.preventDefault()
+    submit()
   }
 }
 
-onMounted(() => {
-  loadTasks()
+onMounted(async () => {
   window.addEventListener('keydown', onKeydown)
+  await loadTasks()
+  await nextTick()
+  // 加载完默认聚焦任务搜索框，省一次点击
+  searchEl.value?.focus()
 })
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeydown)
@@ -258,6 +268,7 @@ onUnmounted(() => {
           <div v-else class="task-combo">
             <input
               v-model="taskQuery"
+              ref="searchEl"
               class="form-input"
               :placeholder="`从 ${currentTasks.length} 个任务中搜索…`"
               :disabled="submitting || result === 'ok'"

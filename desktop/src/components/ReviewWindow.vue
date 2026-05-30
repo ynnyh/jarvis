@@ -148,6 +148,17 @@ function formatTime(iso: string): string {
 /** 本会话写入过的任务集合（taskId）。刷新窗口不丢，重启 app 会清空。 */
 const writtenTasks = ref<Set<string>>(new Set())
 
+// 全局只有一个写工时窗口；打开期间置真，task/orphan 两个按钮都禁用，防连点开多个。
+const openingWrite = ref(false)
+// 打开写工时窗口失败时的可见反馈（之前只 console.error，用户看不到）。几秒自动消失。
+const writeOpenError = ref('')
+let writeOpenErrorTimer: ReturnType<typeof setTimeout> | null = null
+function showWriteOpenError(e: unknown) {
+  writeOpenError.value = `打开写工时窗口失败：${e instanceof Error ? e.message : String(e)}`
+  if (writeOpenErrorTimer) clearTimeout(writeOpenErrorTimer)
+  writeOpenErrorTimer = setTimeout(() => { writeOpenError.value = '' }, 4000)
+}
+
 let unlistenWriteDone: UnlistenFn | null = null
 onMounted(async () => {
   unlistenWriteDone = await listen<{ taskId: string }>('write-hours-done', (e) => {
@@ -155,7 +166,10 @@ onMounted(async () => {
     if (tid) writtenTasks.value = new Set([...writtenTasks.value, tid])
   })
 })
-onUnmounted(() => { unlistenWriteDone?.() })
+onUnmounted(() => {
+  unlistenWriteDone?.()
+  if (writeOpenErrorTimer) clearTimeout(writeOpenErrorTimer)
+})
 
 function buildWorkContent(commits: Array<{ title: string }>): string {
   const seen = new Set<string>()
@@ -176,7 +190,8 @@ async function openWriteModalForTask(t: {
   suggestedHours?: number
   commits: Array<{ title: string }>
 }) {
-  if (writtenTasks.value.has(t.taskId)) return
+  if (writtenTasks.value.has(t.taskId) || openingWrite.value) return
+  openingWrite.value = true
   const content = buildWorkContent(t.commits)
   try {
     await invoke('write_hours_open', {
@@ -189,7 +204,9 @@ async function openWriteModalForTask(t: {
       },
     })
   } catch (e) {
-    console.error('write_hours_open 失败:', e)
+    showWriteOpenError(e)
+  } finally {
+    setTimeout(() => { openingWrite.value = false }, 500)
   }
 }
 
@@ -199,6 +216,8 @@ async function openWriteModalForOrphan(g: {
   suggestedHours?: number
   commits: Array<{ title: string }>
 }) {
+  if (openingWrite.value) return
+  openingWrite.value = true
   const content = buildWorkContent(g.commits)
   try {
     await invoke('write_hours_open', {
@@ -211,7 +230,9 @@ async function openWriteModalForOrphan(g: {
       },
     })
   } catch (e) {
-    console.error('write_hours_open 失败:', e)
+    showWriteOpenError(e)
+  } finally {
+    setTimeout(() => { openingWrite.value = false }, 500)
   }
 }
 
@@ -325,7 +346,7 @@ function isTaskWritten(taskId: string): boolean {
                 <button
                   class="write-mini"
                   :class="{ written: isTaskWritten(t.taskId) }"
-                  :disabled="isTaskWritten(t.taskId)"
+                  :disabled="isTaskWritten(t.taskId) || openingWrite"
                   @click="openWriteModalForTask(t)"
                   :title="isTaskWritten(t.taskId) ? '本会话已写入（去禅道可继续修改）' : `写入工时到禅道 #${t.taskId}`"
                 >
@@ -405,6 +426,7 @@ function isTaskWritten(taskId: string): boolean {
                 <span v-if="g.suggestedHours" class="hours-pill">~{{ g.suggestedHours }}h</span>
                 <button
                   class="write-mini"
+                  :disabled="openingWrite"
                   @click="openWriteModalForOrphan(g)"
                   title="手动填任务 ID 后写入工时"
                 >
@@ -448,6 +470,9 @@ function isTaskWritten(taskId: string): boolean {
           <pre v-if="showRaw" class="markdown-pre">{{ store.reviewData.plainText }}</pre>
         </section>
       </div>
+
+      <!-- 打开写工时窗口失败的可见反馈 -->
+      <p v-if="writeOpenError" class="write-open-error">{{ writeOpenError }}</p>
 
       <!-- 底部操作 -->
       <footer v-if="store.reviewData" class="panel-footer">
@@ -798,6 +823,16 @@ details[open] > .commits-summary::before { transform: rotate(90deg); }
   padding: 8px 10px;
   background: rgba(0, 0, 0, 0.2);
   border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.write-open-error {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: rgba(252, 165, 165, 0.95);
+  background: rgba(239, 68, 68, 0.12);
+  border-top: 1px solid rgba(239, 68, 68, 0.3);
+  word-break: break-word;
 }
 .copy-btn {
   width: 100%;
