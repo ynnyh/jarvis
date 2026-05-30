@@ -60,12 +60,25 @@ pub async fn classify_commits_to_tasks(
                 }
             }
             Err(e) => {
+                if is_llm_auth_error(&e) {
+                    eprintln!(
+                        "[classify_commits_to_tasks] LLM auth failed, skip commit classification: {}",
+                        e
+                    );
+                    break;
+                }
                 eprintln!("[classify_commits_to_tasks] 批次失败，跳过: {}", e);
                 // 失败的批次保留为"未分类"，调用方按需处理
             }
         }
     }
     Ok(result)
+}
+
+fn is_llm_auth_error(err: &str) -> bool {
+    err.contains("LLM HTTP 401")
+        || err.to_ascii_lowercase().contains("authentication")
+        || err.to_ascii_lowercase().contains("invalid api key")
 }
 
 async fn classify_batch(

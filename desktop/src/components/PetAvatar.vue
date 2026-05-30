@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount, shallowRef } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, shallowRef, type CSSProperties } from 'vue'
 import lottie, { type AnimationItem } from 'lottie-web'
 import { getPetById } from '../petManifest'
 
@@ -23,6 +23,12 @@ const containerEl = ref<HTMLDivElement | null>(null)
 const animation = shallowRef<AnimationItem | null>(null)
 
 const pet = computed(() => getPetById(props.petId))
+const renderConfig = computed(() => pet.value.render ?? {})
+const lottieStyle = computed<CSSProperties>(() => ({
+  '--pet-scale': String(renderConfig.value.scale ?? 1),
+  '--pet-offset-x': `${renderConfig.value.offsetX ?? 0}px`,
+  '--pet-offset-y': `${renderConfig.value.offsetY ?? 0}px`,
+}))
 
 function mountAnimation() {
   if (!containerEl.value) return
@@ -61,7 +67,7 @@ watch(() => props.petId, () => {
       class="pet-glow"
       :style="{ background: glowColor, boxShadow: `0 0 18px ${color}55, 0 0 36px ${color}33` }"
     />
-    <div ref="containerEl" class="pet-lottie" />
+    <div ref="containerEl" class="pet-lottie" :style="lottieStyle" />
     <div class="pet-dot" :style="{ background: color }" />
   </div>
 </template>
@@ -97,6 +103,8 @@ watch(() => props.petId, () => {
   display: flex;
   align-items: center;
   justify-content: center;
+  transform: translate(var(--pet-offset-x, 0), var(--pet-offset-y, 0)) scale(var(--pet-scale, 1));
+  transform-origin: center center;
 }
 .pet-lottie :deep(svg) {
   width: 100% !important;

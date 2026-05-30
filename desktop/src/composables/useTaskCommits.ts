@@ -66,7 +66,7 @@ export function useTaskCommits(options: { autoLoad?: boolean } = { autoLoad: fal
     try {
       const raw = await invoke<ToolResult>('tool_execute', {
         name: 'get_task_commits',
-        input: { range: effectiveRange, includeBody: true },
+        input: { range: effectiveRange, includeBody: true, useLlm: false },
       })
       const payload = unpack(raw)
       if (!payload) {

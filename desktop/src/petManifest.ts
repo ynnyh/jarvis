@@ -20,6 +20,11 @@ import cowDrinkMilkData from './assets/pets/Cow Drink Milk.json'
 import dancingLlamaData from './assets/pets/Dancing llama.json'
 
 export type PetCategory = 'mecha' | 'pet' | 'character'
+export interface PetRenderConfig {
+  scale?: number
+  offsetX?: number
+  offsetY?: number
+}
 
 export interface PetInfo {
   id: string
@@ -29,6 +34,7 @@ export interface PetInfo {
   description: string
   /** Lottie 动画 JSON 数据，直接喂给 lottie.loadAnimation({ animationData }) */
   data: unknown
+  render?: PetRenderConfig
 }
 
 export const PETS: PetInfo[] = [
@@ -94,6 +100,7 @@ export const PETS: PetInfo[] = [
     category: 'pet',
     description: '憨态可掬喝牛奶的小牛',
     data: cowDrinkMilkData,
+    render: { scale: 3, offsetY: 1 },
   },
   {
     id: 'dancing-llama',

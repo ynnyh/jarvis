@@ -109,9 +109,36 @@ pub struct LlmCredentials {
 pub fn get_llm_credentials() -> LlmCredentials {
     let cfg = load_raw_config();
     let llm = cfg.as_ref().and_then(|v| v.get("llm"));
+    let mut active_profile_id = String::new();
+    let mut active_profile: Option<&serde_json::Value> = None;
 
-    let s = |key: &str| -> Option<String> {
+    if let Some(root) = cfg.as_ref() {
+        if let Some(id) = root
+            .get("activeLlmProfileId")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+        {
+            active_profile_id = id.to_string();
+            active_profile = root
+                .get("llmProfiles")
+                .and_then(|v| v.as_array())
+                .and_then(|arr| {
+                    arr.iter()
+                        .find(|p| p.get("id").and_then(|v| v.as_str()) == Some(id))
+                });
+        }
+    }
+
+    let llm_s = |key: &str| -> Option<String> {
         llm.and_then(|v| v.get(key))
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+    let profile_s = |key: &str| -> Option<String> {
+        active_profile
+            .and_then(|v| v.get(key))
             .and_then(|v| v.as_str())
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
@@ -123,19 +150,31 @@ pub fn get_llm_credentials() -> LlmCredentials {
             .find(|v| !v.trim().is_empty())
     };
 
+    let profile_keychain = if active_profile_id.is_empty() {
+        None
+    } else {
+        secret_get(&format!("llm.profile.{}.apiKey", active_profile_id))
+    };
+
     LlmCredentials {
-        provider: s("provider").unwrap_or_else(|| "deepseek".to_string()),
-        base_url: s("baseUrl")
+        provider: profile_s("provider")
+            .or_else(|| llm_s("provider"))
+            .unwrap_or_else(|| "deepseek".to_string()),
+        base_url: profile_s("baseUrl")
+            .or_else(|| llm_s("baseUrl"))
             .or_else(|| env_first(&["LLM_BASE_URL"]))
             .unwrap_or_else(|| "https://api.deepseek.com".to_string()),
-        model: s("model")
+        model: profile_s("model")
+            .or_else(|| llm_s("model"))
             .or_else(|| env_first(&["LLM_MODEL"]))
             .unwrap_or_else(|| "deepseek-chat".to_string()),
-        api_key: secret_get("llm.apiKey")
-            .or_else(|| s("apiKey").filter(|v| v != SECRET_PLACEHOLDER))
+        api_key: profile_keychain
+            .or_else(|| profile_s("apiKey").filter(|v| v != SECRET_PLACEHOLDER))
+            .or_else(|| secret_get("llm.apiKey"))
+            .or_else(|| llm_s("apiKey").filter(|v| v != SECRET_PLACEHOLDER))
             .or_else(|| env_first(&["LLM_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY"]))
             .unwrap_or_default(),
-        wire_api: match s("wireApi").as_deref() {
+        wire_api: match profile_s("wireApi").or_else(|| llm_s("wireApi")).as_deref() {
             Some("responses") => "responses".to_string(),
             _ => "chat".to_string(),
         },
