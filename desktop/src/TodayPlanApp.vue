@@ -30,6 +30,19 @@ const workStyle = ref('balanced')
 const candidateTasks = ref<CandidateTask[]>([])
 let cleanupClose: (() => void) | null = null
 
+const workStyleLabel = computed(() => {
+  switch (workStyle.value) {
+    case 'focused':
+      return '专注模式'
+    case 'multi':
+      return '并行模式'
+    case 'transactional':
+      return '事务模式'
+    default:
+      return '平衡模式'
+  }
+})
+
 const filteredTasks = computed(() => {
   const q = query.value.trim().toLowerCase()
   if (!q) return candidateTasks.value
@@ -96,7 +109,7 @@ async function closeWindow() {
 onMounted(async () => {
   await loadPlan()
   const win = getCurrentWindow()
-  cleanupClose = await win.onCloseRequested(async (event) => {
+  cleanupClose = await win.onCloseRequested(async event => {
     event.preventDefault()
     await closeWindow()
   })
@@ -122,7 +135,7 @@ onUnmounted(() => {
       <div v-else-if="loadError" class="tp-empty error">{{ loadError }}</div>
       <template v-else>
         <section class="tp-summary">
-          <span>工作模式：{{ workStyle }}</span>
+          <span>工作模式：{{ workStyleLabel }}</span>
           <span>已选：{{ taskIds.length }}</span>
         </section>
 

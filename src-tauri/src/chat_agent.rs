@@ -26,6 +26,7 @@ pub const DEFAULT_AGENT_TOOLS: &[&str] = &[
     "analyze_risk",
     "get_daily_review",
     "get_efforts",
+    "get_effort_report",
     "prepare-log-task-effort",
 ];
 
@@ -39,7 +40,7 @@ pub fn default_system_prompt(assistant_name: &str, user_title: &str) -> String {
 2. 工具不可用或失败时，明确告诉用户失败原因，不要装作有数据。\n\
 3. 回答要简洁直接。日报、风险类的输出去技术化——不要出现 commit/sha/repo 这种词，用项目名 + 任务名组织。\n\
 4. 写工时时需要用户提供任务 ID、工时数和工作内容。如果信息不全，主动追问；信息完整后调用 prepare-log-task-effort 生成待确认写入建议，不要直接写入。\n\
-5. 查工时时使用 get_efforts 工具，按日期范围查询。用户说今天、本周、本月等模糊范围时，自行计算具体日期。",
+5. 查短周期工时时使用 get_efforts；查本月、本季度、近半年、本年等长周期时，优先使用 get_effort_report，输出完整工作汇报正文和数据附录。",
         assistant_name, user_title, user_title
     )
 }
@@ -356,6 +357,19 @@ fn tool_schema(name: &str) -> Option<(String, Value)> {
                     "begin": { "type": "string", "description": "开始日期，格式 YYYY-MM-DD" },
                     "end": { "type": "string", "description": "结束日期，格式 YYYY-MM-DD" },
                     "realName": { "type": "string", "description": "中文姓名，用于过滤本人数据。不传则使用配置中的默认值" }
+                },
+                "additionalProperties": false
+            }),
+        )),
+        "get_effort_report" => Some((
+            "生成长周期工作汇报，输出完整文字正文和数据附录。适用于本月、本季度、近半年、本年以及自定义较长范围。".into(),
+            json!({
+                "type": "object",
+                "properties": {
+                    "range": { "type": "string", "enum": ["thisMonth","thisQuarter","last6Months","thisYear"], "description": "长周期范围" },
+                    "begin": { "type": "string", "description": "开始日期，格式 YYYY-MM-DD" },
+                    "end": { "type": "string", "description": "结束日期，格式 YYYY-MM-DD" },
+                    "realName": { "type": "string", "description": "中文姓名，用于过滤本人数据" }
                 },
                 "additionalProperties": false
             }),

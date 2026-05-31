@@ -37,10 +37,10 @@ let cleanupClose: (() => void) | null = null
 onMounted(async () => {
   await store.load()
   await loadPageFromUrl()
-  document.title = `${activeMeta.value.title} · 设置`
+  document.title = `${activeMeta.value.title} - 设置`
   const win = getCurrentWindow()
-  cleanupClose = await win.onCloseRequested(async (e) => {
-    e.preventDefault()
+  cleanupClose = await win.onCloseRequested(async event => {
+    event.preventDefault()
     await closeWindow()
   })
 })
@@ -52,23 +52,23 @@ onUnmounted(() => {
 
 <template>
   <ErrorBoundary>
-  <div class="detail-root">
-    <header class="detail-header" data-tauri-drag-region>
-      <div>
-        <h1>{{ activeMeta.title }}</h1>
-        <p>{{ activeMeta.desc }}</p>
-      </div>
-      <button class="close-btn" title="关闭" @click="closeWindow">×</button>
-    </header>
+    <div class="detail-root">
+      <header class="detail-header" data-tauri-drag-region>
+        <div>
+          <h1>{{ activeMeta.title }}</h1>
+          <p>{{ activeMeta.desc }}</p>
+        </div>
+        <button class="close-btn" title="关闭" @click="closeWindow">×</button>
+      </header>
 
-    <main class="detail-body">
-      <component
-        :is="section"
-        v-for="(section, index) in components"
-        :key="index"
-      />
-    </main>
-  </div>
+      <main class="detail-body">
+        <component
+          :is="section"
+          v-for="(section, index) in components"
+          :key="index"
+        />
+      </main>
+    </div>
   </ErrorBoundary>
 </template>
 

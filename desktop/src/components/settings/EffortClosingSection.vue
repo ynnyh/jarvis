@@ -6,7 +6,7 @@ const store = useConfigStore()
 
 const lastWorkEnd = computed(() => {
   const ends = store.config.workSchedule.periods
-    .map(p => p.end)
+    .map(period => period.end)
     .filter(Boolean)
     .sort()
   return ends[ends.length - 1] || '18:00'
@@ -68,7 +68,7 @@ function splitLines(value: string): string[] {
         v-model="store.config.notifications.effortClosingChannelNotify"
         :disabled="!store.config.notifications.effortClosingCheck"
       />
-      <span>不足时同步推送到已启动的 Telegram / QQ</span>
+      <span>工时不足时同步推送到已启用的 Telegram / QQ</span>
     </label>
 
     <div class="settings-grid">

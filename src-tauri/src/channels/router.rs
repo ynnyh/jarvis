@@ -374,6 +374,18 @@ mod tests {
     }
 
     #[test]
+    fn effort_query_range_detects_quarter() {
+        let (range, _) = effort_query_range("本季度工时汇总");
+        assert_eq!(range, "thisQuarter");
+    }
+
+    #[test]
+    fn effort_query_range_detects_half_year() {
+        let (range, _) = effort_query_range("近半年工时统计");
+        assert_eq!(range, "last6Months");
+    }
+
+    #[test]
     fn effort_query_range_detects_year() {
         let (range, _) = effort_query_range("今年工时统计");
         assert_eq!(range, "thisYear");
@@ -553,16 +565,19 @@ async fn maybe_handle_effort_query(text: &str) -> Result<Option<AgentReply>, Str
     }
 
     let (range, label) = effort_query_range(text);
-    let response = tools::dispatch(
-        "get_efforts",
-        json!({
-            "range": range,
-        }),
-    )
-    .await?;
+    let tool_name = if matches!(range, "thisMonth" | "thisQuarter" | "last6Months" | "thisYear") {
+        "get_effort_report"
+    } else {
+        "get_efforts"
+    };
+    let response = tools::dispatch(tool_name, json!({ "range": range })).await?;
 
     Ok(Some(AgentReply {
-        text: format_effort_reply(&label, &response),
+        text: if tool_name == "get_effort_report" {
+            format_effort_report_reply(&label, &response)
+        } else {
+            format_effort_reply(&label, &response)
+        },
     }))
 }
 
@@ -581,7 +596,7 @@ fn is_effort_query(text: &str) -> bool {
         return false;
     }
     [
-        "查", "查询", "看", "统计", "汇总", "多少", "明细", "本周", "今天", "昨天", "本月", "今年",
+        "查", "查询", "看", "统计", "汇总", "多少", "明细", "本周", "今天", "昨天", "本月", "本季度", "季度", "半年", "近半年", "今年",
     ]
     .iter()
     .any(|w| lower.contains(w))
@@ -595,6 +610,10 @@ fn effort_query_range(text: &str) -> (&'static str, String) {
         ("today", "今天".to_string())
     } else if lower.contains("本月") || lower.contains("这个月") {
         ("thisMonth", "本月".to_string())
+    } else if lower.contains("本季度") || lower.contains("这个季度") || lower.contains("季度") {
+        ("thisQuarter", "本季度".to_string())
+    } else if lower.contains("近半年") || lower.contains("半年") || lower.contains("半年度") {
+        ("last6Months", "近半年".to_string())
     } else if lower.contains("今年") || lower.contains("本年") {
         ("thisYear", "今年".to_string())
     } else {
@@ -652,6 +671,25 @@ fn format_effort_reply(label: &str, response: &Value) -> String {
     lines.join("\n")
 }
 
+fn format_effort_report_reply(label: &str, response: &Value) -> String {
+    let summary = response
+        .get("summaryText")
+        .and_then(|v| v.as_str())
+        .unwrap_or("未生成阶段汇报内容。");
+
+    let appendix = response.get("appendix").cloned().unwrap_or_else(|| json!({}));
+    let total_hours = appendix.get("total_hours").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let task_count = appendix.get("task_count").and_then(|v| v.as_u64()).unwrap_or(0);
+    let project_count = appendix.get("project_count").and_then(|v| v.as_u64()).unwrap_or(0);
+    let begin = response.get("begin").and_then(|v| v.as_str()).unwrap_or("");
+    let end = response.get("end").and_then(|v| v.as_str()).unwrap_or("");
+
+    format!(
+        "{}工作汇报（{} ~ {}）\n\n{}\n\n数据附录：总工时 {:.1}h，任务数 {}，项目数 {}。",
+        label, begin, end, summary, total_hours, task_count, project_count
+    )
+}
+
 fn allowed_channel_tools() -> Vec<&'static str> {
     vec![
         "get_tasks",
@@ -661,6 +699,7 @@ fn allowed_channel_tools() -> Vec<&'static str> {
         "analyze_risk",
         "get_daily_review",
         "get_efforts",
+        "get_effort_report",
     ]
 }
 

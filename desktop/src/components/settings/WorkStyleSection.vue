@@ -1,16 +1,19 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { useConfigStore, type WorkStyle } from '../../stores/config'
+
 const store = useConfigStore()
+
 const OPTIONS: Array<{ value: WorkStyle; title: string; desc: string }> = [
-  { value: 'focused', title: '????', desc: '??????????????????' },
-  { value: 'multi', title: '????', desc: '????????????????' },
-  { value: 'transactional', title: '????', desc: '????????????????????' },
-  { value: 'balanced', title: '????', desc: '??????????' },
+  { value: 'focused', title: '专注模式', desc: '任务比较集中，主要围绕少量固定项目持续推进。' },
+  { value: 'multi', title: '并行模式', desc: '手上的项目和任务比较多，需要频繁切换上下文。' },
+  { value: 'transactional', title: '事务模式', desc: '沟通、排障、部署、巡检这类工作占比更高。' },
+  { value: 'balanced', title: '平衡模式', desc: '代码推进和事务处理都会有，整体比较均衡。' },
 ]
 </script>
+
 <template>
   <section class="settings-section">
-    <h3 class="settings-section-title">????</h3>
+    <h3 class="settings-section-title">工作模式</h3>
     <div class="ws-list">
       <button
         v-for="opt in OPTIONS"
@@ -27,9 +30,12 @@ const OPTIONS: Array<{ value: WorkStyle; title: string; desc: string }> = [
         </span>
       </button>
     </div>
-    <p class="settings-section-hint">?????????????????????????????????</p>
+    <p class="settings-section-hint">
+      这个设置会影响今日计划的候选收敛、复盘时的任务推荐，以及没有提交时如何引导你补工时。
+    </p>
   </section>
 </template>
+
 <style scoped>
 .ws-list { display: flex; flex-direction: column; gap: 8px; }
 .ws-card {

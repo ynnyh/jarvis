@@ -626,7 +626,8 @@ function isTaskWritten(taskId: string): boolean {
 /* 概况 */
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
   gap: 6px;
   padding: 8px 0;
 }

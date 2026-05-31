@@ -70,12 +70,12 @@ function closeSettingsPanel() {
 
 function openSettingsDetail(page: SettingsPageKey) {
   store.showSettingsWindow = false
-  invoke('settings_open', { page }).catch(e => console.error('settings_open failed:', e))
+  invoke('settings_open', { page }).catch(error => console.error('settings_open failed:', error))
 }
 
 function openChatWindow() {
   closeSettingsPanel()
-  invoke('chat_open').catch(e => console.error('chat_open failed:', e))
+  invoke('chat_open').catch(error => console.error('chat_open failed:', error))
 }
 </script>
 
@@ -164,19 +164,23 @@ function openChatWindow() {
   background: rgba(0, 0, 0, 0.18);
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
+
 .panel-title {
   display: flex;
   align-items: baseline;
   gap: 7px;
 }
+
 .title-text {
   font-size: 13px;
   font-weight: 650;
 }
+
 .title-sub {
   font-size: 10px;
   color: rgba(255, 255, 255, 0.42);
 }
+
 .icon-btn {
   width: 24px;
   height: 24px;
@@ -191,6 +195,7 @@ function openChatWindow() {
   border-radius: 6px;
   cursor: pointer;
 }
+
 .icon-btn:hover {
   color: rgba(255, 255, 255, 0.95);
   background: rgba(255, 255, 255, 0.08);
@@ -206,17 +211,20 @@ function openChatWindow() {
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
   color: rgba(255, 255, 255, 0.64);
 }
+
 .phase-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: rgba(16, 185, 129, 0.95);
 }
+
 .phase-lunch .phase-dot { background: rgba(14, 165, 233, 0.95); }
 .phase-after-work .phase-dot,
 .phase-before-work .phase-dot { background: rgba(148, 163, 184, 0.75); }
 .phase-weekend .phase-dot,
 .phase-dayoff .phase-dot { background: rgba(245, 158, 11, 0.95); }
+
 .phase-meta {
   margin-left: auto;
   color: rgba(245, 158, 11, 0.9);
@@ -231,11 +239,13 @@ function openChatWindow() {
   flex-direction: column;
   gap: 12px;
 }
+
 .menu-group {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
+
 .menu-group h3 {
   margin: 0;
   font-size: 10px;
@@ -243,6 +253,7 @@ function openChatWindow() {
   font-weight: 700;
   color: rgba(14, 165, 233, 0.88);
 }
+
 .menu-item {
   display: grid;
   box-sizing: border-box;
@@ -261,21 +272,25 @@ function openChatWindow() {
   user-select: none;
   outline: none;
 }
+
 .menu-item:hover,
 .menu-item:focus-visible {
   background-color: rgba(14, 165, 233, 0.14);
   border-color: rgba(14, 165, 233, 0.28);
 }
+
 .menu-item-primary {
   background-color: rgba(14, 165, 233, 0.16);
   border-color: rgba(14, 165, 233, 0.34);
 }
+
 .menu-main {
   min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
+
 .menu-main strong {
   display: block;
   font-size: 13px;
@@ -284,6 +299,7 @@ function openChatWindow() {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
 .menu-main small {
   display: block;
   min-width: 0;
@@ -293,6 +309,7 @@ function openChatWindow() {
   font-size: 10px;
   color: rgba(255, 255, 255, 0.42);
 }
+
 .menu-status {
   justify-self: end;
   max-width: 82px;
@@ -304,6 +321,7 @@ function openChatWindow() {
   padding: 4px 0;
   color: rgba(134, 239, 172, 0.95);
 }
+
 .menu-arrow {
   justify-self: end;
   font-size: 20px;
@@ -315,6 +333,7 @@ function openChatWindow() {
 .panel-leave-active {
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
+
 .panel-enter-from,
 .panel-leave-to {
   opacity: 0;

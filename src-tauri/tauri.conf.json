@@ -34,7 +34,7 @@
       },
       {
         "label": "chat",
-        "title": "Chat",
+        "title": "聊天",
         "url": "chat.html",
         "width": 900,
         "height": 650,
@@ -56,7 +56,7 @@
       },
       {
         "label": "settings",
-        "title": "Settings",
+        "title": "设置",
         "url": "settings.html",
         "width": 900,
         "height": 650,
@@ -78,7 +78,7 @@
       },
       {
         "label": "writeHours",
-        "title": "Write Hours",
+        "title": "写工时",
         "url": "writeHours.html",
         "width": 520,
         "height": 640,
@@ -100,7 +100,7 @@
       },
       {
         "label": "manualHours",
-        "title": "Manual Hours",
+        "title": "手动工时",
         "url": "manualHours.html",
         "width": 520,
         "height": 640,
@@ -122,7 +122,7 @@
       },
       {
         "label": "todayPlan",
-        "title": "Today Plan",
+        "title": "今日计划",
         "url": "todayPlan.html",
         "width": 760,
         "height": 620,

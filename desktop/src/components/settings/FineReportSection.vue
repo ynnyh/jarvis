@@ -1,8 +1,4 @@
 <script setup lang="ts">
-// 工时统计 section：地址 / 账号 / 密码 + 测试连接 + 查询工时明细。
-//
-// 同禅道：密码不入磁盘，存 OS keychain；密码框留空提交时，test 走 keychain 已存值。
-
 import { computed, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useConfigStore } from '../../stores/config'
@@ -24,66 +20,115 @@ interface EffortRecord {
   taskName: string
   workContent: string
 }
-interface EffortFetchResult {
-  cid: string
-  sessionId: string
-  records: EffortRecord[]
-  summaryHtml: string
-  detailHtml: string
+
+interface EffortTheme {
+  name: string
+  hours: number
+  task_count: number
+  project_count: number
+  systems: string[]
+  tasks: string[]
+  work_items: string[]
 }
 
-type RangeKey = 'yesterday' | 'today' | 'week' | 'month' | 'year'
-const rangePresets: { key: RangeKey; label: string }[] = [
+interface EffortAppendixItem {
+  [key: string]: string | number
+}
+
+interface EffortReportResponse {
+  mode: 'effort' | 'report'
+  begin: string
+  end: string
+  range: string
+  summaryText: string
+  themes: EffortTheme[]
+  appendix: {
+    begin: string
+    end: string
+    total_hours: number
+    task_count: number
+    project_count: number
+    system_count: number
+    task_hours: EffortAppendixItem[]
+    project_hours: EffortAppendixItem[]
+    daily_hours: EffortAppendixItem[]
+  }
+  records: EffortRecord[]
+}
+
+interface ToolResult<T> {
+  success: boolean
+  data?: T
+  error?: string
+}
+
+type RangeKey =
+  | 'yesterday'
+  | 'today'
+  | 'thisWeek'
+  | 'thisMonth'
+  | 'thisQuarter'
+  | 'last6Months'
+  | 'thisYear'
+
+const rangePresets: Array<{ key: RangeKey; label: string }> = [
   { key: 'yesterday', label: '昨天' },
-  { key: 'today', label: '今日' },
-  { key: 'week', label: '本周' },
-  { key: 'month', label: '本月' },
-  { key: 'year', label: '本年' },
+  { key: 'today', label: '今天' },
+  { key: 'thisWeek', label: '本周' },
+  { key: 'thisMonth', label: '本月' },
+  { key: 'thisQuarter', label: '本季度' },
+  { key: 'last6Months', label: '近半年' },
+  { key: 'thisYear', label: '本年' },
 ]
 
 const beginDate = ref('')
 const endDate = ref('')
-// 当前选中的预设档（昨天/今日/…）。手改日期后置 null，不再高亮任何档。
 const activePreset = ref<RangeKey | null>(null)
 
-const effortState = ref<'idle' | 'fetching' | 'ok' | 'fail'>('idle')
-const effortMsg = ref('')
-const effortResult = ref<EffortFetchResult | null>(null)
+const queryState = ref<'idle' | 'fetching' | 'ok' | 'fail'>('idle')
+const queryMessage = ref('')
+const queryMode = ref<'effort' | 'report' | null>(null)
+const effortRecords = ref<EffortRecord[]>([])
+const reportResult = ref<EffortReportResponse | null>(null)
 
-function fmtDate(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+function fmtDate(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
 
-/** 按 RangeKey 计算 [begin, end]。 */
 function dateRange(key: RangeKey): { begin: string; end: string } {
   const today = new Date()
-  let begin: Date
-  let end: Date = today
+  let begin = new Date(today)
+  let end = new Date(today)
+
   switch (key) {
-    case 'yesterday': {
-      const y = new Date(today)
-      y.setDate(today.getDate() - 1)
-      begin = y
-      end = y
+    case 'yesterday':
+      begin.setDate(today.getDate() - 1)
+      end = new Date(begin)
       break
-    }
     case 'today':
-      begin = today
       break
-    case 'week': {
+    case 'thisWeek': {
       const day = today.getDay()
       const diff = day === 0 ? 6 : day - 1
-      begin = new Date(today)
       begin.setDate(today.getDate() - diff)
       break
     }
-    case 'month':
+    case 'thisMonth':
       begin = new Date(today.getFullYear(), today.getMonth(), 1)
       break
-    case 'year':
+    case 'thisQuarter': {
+      const quarterStartMonth = Math.floor(today.getMonth() / 3) * 3
+      begin = new Date(today.getFullYear(), quarterStartMonth, 1)
+      break
+    }
+    case 'last6Months':
+      begin.setDate(today.getDate() - 182)
+      break
+    case 'thisYear':
       begin = new Date(today.getFullYear(), 0, 1)
       break
   }
+
   return { begin: fmtDate(begin), end: fmtDate(end) }
 }
 
@@ -94,43 +139,82 @@ function applyPreset(key: RangeKey) {
   activePreset.value = key
 }
 
-// 默认今日
 applyPreset('today')
 
-const hasRealName = computed(() => !!store.config.fineReport.realName?.trim())
-
+const hasRealName = computed(() => !!store.config.fineReport.realName.trim())
 const totalItemHours = computed(() =>
-  effortResult.value?.records.reduce((sum, x) => sum + (x.itemHours || 0), 0) ?? 0
+  effortRecords.value.reduce((sum, item) => sum + (item.itemHours || 0), 0),
 )
+
+const topProjects = computed(() => reportResult.value?.appendix.project_hours ?? [])
+const topTasks = computed(() => reportResult.value?.appendix.task_hours ?? [])
+const dailyHours = computed(() => reportResult.value?.appendix.daily_hours ?? [])
+
+function parseDate(value: string): Date | null {
+  if (!value) return null
+  const date = new Date(`${value}T00:00:00`)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function rangeDays(begin: string, end: string): number | null {
+  const beginTime = parseDate(begin)
+  const endTime = parseDate(end)
+  if (!beginTime || !endTime) return null
+  const diff = endTime.getTime() - beginTime.getTime()
+  return Math.floor(diff / 86400000) + 1
+}
+
+function shouldUseReportMode(): boolean {
+  if (activePreset.value && ['thisMonth', 'thisQuarter', 'last6Months', 'thisYear'].includes(activePreset.value)) {
+    return true
+  }
+  const days = rangeDays(beginDate.value, endDate.value)
+  return days !== null && days > 7
+}
+
+function currentModeLabel(): string {
+  return shouldUseReportMode() ? '工作汇报' : '工时明细'
+}
+
+async function copyText(text: string, successText: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    queryMessage.value = successText
+    queryState.value = 'ok'
+  } catch (error) {
+    queryMessage.value = `复制失败：${error instanceof Error ? error.message : String(error)}`
+    queryState.value = 'fail'
+  }
+}
 
 async function testConnection() {
   state.value = 'testing'
   message.value = ''
   try {
-    const r = await invoke<{ ok: boolean; message: string }>('finereport_test_connection', {
+    const result = await invoke<{ ok: boolean; message: string }>('finereport_test_connection', {
       req: {
         baseUrl: store.config.fineReport.baseUrl,
         account: store.config.fineReport.account,
         password: password.value,
       },
     })
-    state.value = r.ok ? 'ok' : 'fail'
-    message.value = r.message
-  } catch (e: any) {
+    state.value = result.ok ? 'ok' : 'fail'
+    message.value = result.message
+  } catch (error) {
     state.value = 'fail'
-    message.value = String(e?.message ?? e)
+    message.value = error instanceof Error ? error.message : String(error)
   }
 }
 
 async function savePassword() {
   if (!store.config.fineReport.account.trim()) {
-    message.value = '请先填写帆软账号'
     state.value = 'fail'
+    message.value = '请先填写帆软账号'
     return
   }
   if (!password.value) {
-    message.value = '请输入密码'
     state.value = 'fail'
+    message.value = '请输入密码'
     return
   }
   try {
@@ -141,49 +225,73 @@ async function savePassword() {
     state.value = 'ok'
     message.value = '密码已加密保存到系统密钥链'
     password.value = ''
-  } catch (e: any) {
+  } catch (error) {
     state.value = 'fail'
-    message.value = '保存密码失败：' + String(e?.message ?? e)
+    message.value = `保存密码失败：${error instanceof Error ? error.message : String(error)}`
   }
 }
 
 async function fetchEfforts() {
-  const realName = store.config.fineReport.realName?.trim() ?? ''
+  const realName = store.config.fineReport.realName.trim()
   if (!realName) {
-    effortState.value = 'fail'
-    effortMsg.value = '请先在上方填写"中文姓名"。未填姓名时不查询，避免拉到他人数据。'
-    effortResult.value = null
+    queryState.value = 'fail'
+    queryMessage.value = '请先填写“中文姓名”，避免查到他人工时。'
+    effortRecords.value = []
+    reportResult.value = null
+    queryMode.value = null
     return
   }
-  const begin = beginDate.value
-  const end = endDate.value
-  if (!begin || !end) {
-    effortState.value = 'fail'
-    effortMsg.value = '请选择开始与结束日期。'
+  if (!beginDate.value || !endDate.value) {
+    queryState.value = 'fail'
+    queryMessage.value = '请选择开始与结束日期。'
     return
   }
-  if (begin > end) {
-    effortState.value = 'fail'
-    effortMsg.value = '开始日期不能晚于结束日期。'
+  if (beginDate.value > endDate.value) {
+    queryState.value = 'fail'
+    queryMessage.value = '开始日期不能晚于结束日期。'
     return
   }
-  effortState.value = 'fetching'
-  effortMsg.value = ''
-  effortResult.value = null
+
+  queryState.value = 'fetching'
+  queryMessage.value = ''
+  effortRecords.value = []
+  reportResult.value = null
+  queryMode.value = null
+
+  const useReport = shouldUseReportMode()
+  const toolName = useReport ? 'get_effort_report' : 'get_efforts'
+
   try {
-    const r = await invoke<EffortFetchResult>('finereport_get_efforts', {
-      begin,
-      end,
-      realName,
+    const result = await invoke<ToolResult<EffortReportResponse | { begin: string; end: string; count: number; totalHours: number; records: EffortRecord[] }>>('tool_execute', {
+      name: toolName,
+      input: {
+        begin: beginDate.value,
+        end: endDate.value,
+        realName,
+      },
     })
-    effortResult.value = r
-    effortState.value = 'ok'
-    effortMsg.value = `${begin} ~ ${end}：${realName} 共 ${r.records.length} 条明细，合计 ${
-      r.records.reduce((s, x) => s + (x.itemHours || 0), 0)
-    } 工时`
-  } catch (e: any) {
-    effortState.value = 'fail'
-    effortMsg.value = String(e?.message ?? e)
+
+    if (!result.success || !result.data) {
+      throw new Error(result.error || '查询失败')
+    }
+
+    if (useReport) {
+      const data = result.data as EffortReportResponse
+      reportResult.value = data
+      effortRecords.value = data.records ?? []
+      queryMode.value = 'report'
+      queryState.value = 'ok'
+      queryMessage.value = `${data.begin} ~ ${data.end} 已生成工作汇报，累计 ${data.appendix.total_hours.toFixed(1)}h。`
+    } else {
+      const data = result.data as { begin: string; end: string; count: number; totalHours: number; records: EffortRecord[] }
+      effortRecords.value = data.records ?? []
+      queryMode.value = 'effort'
+      queryState.value = 'ok'
+      queryMessage.value = `${data.begin} ~ ${data.end} 共 ${data.count} 条工时，合计 ${data.totalHours.toFixed(1)}h。`
+    }
+  } catch (error) {
+    queryState.value = 'fail'
+    queryMessage.value = error instanceof Error ? error.message : String(error)
   }
 }
 </script>
@@ -192,73 +300,194 @@ async function fetchEfforts() {
   <section class="settings-section">
     <h3 class="settings-section-title">工时统计</h3>
     <p class="settings-section-hint">
-      通过帆软报表查询禅道工时。地址和账号一般同禅道，首次使用请先测试连接并保存密码。
+      通过帆软报表查询禅道工时。短周期默认展示工时明细，长周期自动切到工作汇报，桌面端和机器人端保持同一套规则。
     </p>
+
     <label class="settings-field">
       <span class="settings-field-label">地址</span>
-      <input class="settings-input" type="url" placeholder="http://REDACTED_DOMAIN"
-        v-model="store.config.fineReport.baseUrl" />
+      <input
+        v-model="store.config.fineReport.baseUrl"
+        class="settings-input"
+        type="url"
+        placeholder="http://REDACTED_DOMAIN"
+      />
     </label>
+
     <label class="settings-field">
       <span class="settings-field-label">账号</span>
-      <input class="settings-input" type="text" placeholder="你的帆软用户名"
-        v-model="store.config.fineReport.account" />
+      <input
+        v-model="store.config.fineReport.account"
+        class="settings-input"
+        type="text"
+        placeholder="你的帆软用户名"
+      />
     </label>
+
     <label class="settings-field">
       <span class="settings-field-label">密码</span>
-      <input class="settings-input" type="password" placeholder="留空表示不修改密钥链中的密码"
-        v-model="password" />
+      <input
+        v-model="password"
+        class="settings-input"
+        type="password"
+        placeholder="留空表示不修改密钥链中的密码"
+      />
     </label>
+
     <label class="settings-field">
       <span class="settings-field-label">中文姓名</span>
-      <input class="settings-input" type="text" placeholder="例如 张三，必填——用于按本人过滤工时"
-        v-model="store.config.fineReport.realName" />
+      <input
+        v-model="store.config.fineReport.realName"
+        class="settings-input"
+        type="text"
+        placeholder="例如 张三，用于按本人过滤工时"
+      />
     </label>
+
     <div class="settings-actions">
       <button class="settings-btn" :disabled="state === 'testing'" @click="testConnection">
-        {{ state === 'testing' ? '测试中…' : '测试连接' }}
+        {{ state === 'testing' ? '测试中...' : '测试连接' }}
       </button>
-      <button class="settings-btn settings-btn-primary" @click="savePassword">
-        保存密码到密钥链
-      </button>
+      <button class="settings-btn settings-btn-primary" @click="savePassword">保存密码到密钥链</button>
     </div>
+
     <p v-if="message" class="settings-msg" :class="`settings-msg-${state}`">{{ message }}</p>
-    <p class="settings-section-hint">密码不会写入任何文件，仅保存在系统密钥链中</p>
+    <p class="settings-section-hint">密码不会写入任何文件，仅保存在系统密钥链中。</p>
 
     <div class="settings-divider"></div>
 
-    <h4 class="settings-subsection-title">工时查询</h4>
+    <h4 class="settings-subsection-title">查询与汇报</h4>
     <p class="settings-section-hint">
-      未填中文姓名时不会发起查询，避免拉到他人数据。
+      今天、昨天、本周默认看明细；本月、本季度、近半年、本年，以及自定义超过 7 天的区间，自动生成完整工作汇报。
     </p>
 
     <div class="date-row">
-      <input class="settings-input date-input" type="date" v-model="beginDate" :max="endDate || undefined" @change="activePreset = null" />
+      <input
+        v-model="beginDate"
+        class="settings-input date-input"
+        type="date"
+        :max="endDate || undefined"
+        @change="activePreset = null"
+      />
       <span class="date-sep">至</span>
-      <input class="settings-input date-input" type="date" v-model="endDate" :min="beginDate || undefined" @change="activePreset = null" />
+      <input
+        v-model="endDate"
+        class="settings-input date-input"
+        type="date"
+        :min="beginDate || undefined"
+        @change="activePreset = null"
+      />
     </div>
+
     <div class="range-tabs">
-      <button v-for="opt in rangePresets" :key="opt.key"
-        class="range-tab" type="button"
+      <button
+        v-for="opt in rangePresets"
+        :key="opt.key"
+        type="button"
+        class="range-tab"
         :class="{ active: activePreset === opt.key }"
-        @click="applyPreset(opt.key)">
+        @click="applyPreset(opt.key)"
+      >
         {{ opt.label }}
       </button>
     </div>
 
+    <div class="mode-hint">
+      <span class="mode-badge" :class="shouldUseReportMode() ? 'report' : 'effort'">{{ currentModeLabel() }}</span>
+      <span class="mode-text">
+        {{ shouldUseReportMode() ? '会生成完整文字版工作汇报和数据附录。' : '会返回逐条工时明细，方便核对当天或当周记录。' }}
+      </span>
+    </div>
+
     <div class="settings-actions">
-      <button class="settings-btn settings-btn-primary"
-        :disabled="effortState === 'fetching' || !hasRealName"
-        @click="fetchEfforts">
-        {{ effortState === 'fetching' ? '拉取中…' : '查询' }}
+      <button
+        class="settings-btn settings-btn-primary"
+        :disabled="queryState === 'fetching' || !hasRealName"
+        @click="fetchEfforts"
+      >
+        {{ queryState === 'fetching' ? '查询中...' : '开始查询' }}
+      </button>
+      <button
+        v-if="queryMode === 'report' && reportResult?.summaryText"
+        class="settings-btn"
+        @click="copyText(reportResult.summaryText, '工作汇报正文已复制')"
+      >
+        复制正文
+      </button>
+      <button
+        v-if="queryMode === 'report' && reportResult"
+        class="settings-btn"
+        @click="copyText(JSON.stringify(reportResult.appendix, null, 2), '数据附录已复制')"
+      >
+        复制附录
       </button>
     </div>
-    <p v-if="!hasRealName" class="settings-msg settings-msg-fail">
-      请先填写"中文姓名"再查询。
-    </p>
-    <p v-if="effortMsg" class="settings-msg" :class="`settings-msg-${effortState}`">{{ effortMsg }}</p>
 
-    <div v-if="effortResult && effortResult.records.length" class="effort-table-wrap">
+    <p v-if="!hasRealName" class="settings-msg settings-msg-fail">请先填写“中文姓名”再查询。</p>
+    <p v-if="queryMessage" class="settings-msg" :class="`settings-msg-${queryState}`">{{ queryMessage }}</p>
+
+    <div v-if="queryMode === 'report' && reportResult" class="report-wrap">
+      <section class="report-card">
+        <div class="report-head">
+          <div>
+            <h5 class="report-title">工作汇报</h5>
+            <p class="report-range">{{ reportResult.begin }} ~ {{ reportResult.end }}</p>
+          </div>
+          <div class="report-summary">
+            <span>{{ reportResult.appendix.total_hours.toFixed(1) }}h</span>
+            <small>总工时</small>
+          </div>
+        </div>
+        <pre class="report-text">{{ reportResult.summaryText }}</pre>
+      </section>
+
+      <section class="report-card">
+        <h5 class="report-title">重点主题</h5>
+        <ul class="theme-list">
+          <li v-for="theme in reportResult.themes" :key="theme.name" class="theme-item">
+            <div class="theme-row">
+              <strong>{{ theme.name }}</strong>
+              <span>{{ theme.hours.toFixed(1) }}h</span>
+            </div>
+            <div v-if="theme.tasks.length" class="theme-meta">任务：{{ theme.tasks.join('；') }}</div>
+            <div v-if="theme.work_items.length" class="theme-meta">事项：{{ theme.work_items.join('；') }}</div>
+          </li>
+        </ul>
+      </section>
+
+      <section class="report-grid">
+        <div class="report-card compact">
+          <h5 class="report-title">项目分布</h5>
+          <ul class="appendix-list">
+            <li v-for="item in topProjects" :key="`${item.projectName}-${item.hours}`">
+              <span>{{ item.projectName || '未命名项目' }}</span>
+              <strong>{{ Number(item.hours || 0).toFixed(1) }}h</strong>
+            </li>
+          </ul>
+        </div>
+
+        <div class="report-card compact">
+          <h5 class="report-title">任务分布</h5>
+          <ul class="appendix-list">
+            <li v-for="item in topTasks" :key="`${item.projectName}-${item.taskName}-${item.hours}`">
+              <span>{{ item.taskName || '未命名任务' }}</span>
+              <strong>{{ Number(item.hours || 0).toFixed(1) }}h</strong>
+            </li>
+          </ul>
+        </div>
+
+        <div class="report-card compact">
+          <h5 class="report-title">每日工时</h5>
+          <ul class="appendix-list">
+            <li v-for="item in dailyHours" :key="`${item.date}-${item.hours}`">
+              <span>{{ item.date }}</span>
+              <strong>{{ Number(item.hours || 0).toFixed(1) }}h</strong>
+            </li>
+          </ul>
+        </div>
+      </section>
+    </div>
+
+    <div v-else-if="queryMode === 'effort' && effortRecords.length" class="effort-table-wrap">
       <table class="effort-table">
         <colgroup>
           <col class="col-date" />
@@ -277,24 +506,23 @@ async function fetchEfforts() {
           </tr>
         </thead>
         <tbody>
-          <tr v-for="(r, i) in effortResult.records" :key="i">
-            <td>{{ r.date }}</td>
-            <td class="num">{{ r.itemHours }}</td>
-            <td>{{ r.projectName }}</td>
-            <td>{{ r.taskName }}</td>
-            <td class="content-cell">{{ r.workContent }}</td>
+          <tr v-for="(record, index) in effortRecords" :key="`${record.date}-${record.taskName}-${index}`">
+            <td>{{ record.date }}</td>
+            <td class="num">{{ record.itemHours }}</td>
+            <td>{{ record.projectName }}</td>
+            <td>{{ record.taskName }}</td>
+            <td class="content-cell">{{ record.workContent }}</td>
           </tr>
         </tbody>
-        <tfoot v-if="effortResult.records.length > 1">
+        <tfoot v-if="effortRecords.length > 1">
           <tr class="total-row">
             <td>合计</td>
-            <td class="num">{{ totalItemHours }}</td>
+            <td class="num">{{ totalItemHours.toFixed(1) }}</td>
             <td colspan="3"></td>
           </tr>
         </tfoot>
       </table>
     </div>
-
   </section>
 </template>
 
@@ -303,10 +531,28 @@ async function fetchEfforts() {
   margin: 18px 0 12px;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
+
 .settings-subsection-title {
   margin: 0 0 6px;
   font-size: 13px;
   color: rgba(255, 255, 255, 0.85);
+}
+
+.date-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 4px;
+}
+
+.date-input {
+  width: 160px;
+  flex: 0 0 auto;
+}
+
+.date-sep {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 12px;
 }
 
 .range-tabs {
@@ -315,6 +561,7 @@ async function fetchEfforts() {
   gap: 6px;
   margin: 8px 0 12px;
 }
+
 .range-tab {
   padding: 3px 10px;
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -325,11 +572,13 @@ async function fetchEfforts() {
   cursor: pointer;
   transition: all 0.15s;
 }
+
 .range-tab:hover {
   background: rgba(147, 197, 253, 0.18);
   border-color: rgba(147, 197, 253, 0.5);
   color: rgba(191, 219, 254, 1);
 }
+
 .range-tab.active {
   background: rgba(59, 130, 246, 0.28);
   border-color: rgba(147, 197, 253, 0.65);
@@ -337,25 +586,184 @@ async function fetchEfforts() {
   font-weight: 600;
 }
 
-.date-row {
+.mode-hint {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 10px 0 4px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
 }
-.date-input {
-  width: 160px;
-  flex: 0 0 auto;
+
+.mode-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 68px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
 }
-.date-sep {
+
+.mode-badge.effort {
+  background: rgba(59, 130, 246, 0.18);
+  color: rgba(191, 219, 254, 0.96);
+}
+
+.mode-badge.report {
+  background: rgba(168, 85, 247, 0.18);
+  color: rgba(233, 213, 255, 0.96);
+}
+
+.mode-text {
+  font-size: 11px;
   color: rgba(255, 255, 255, 0.6);
+  line-height: 1.5;
+}
+
+.report-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.report-card {
+  padding: 14px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.report-card.compact {
+  padding: 12px;
+}
+
+.report-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.report-title {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.report-range {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.report-summary {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.report-summary span {
+  font-size: 22px;
+  font-weight: 700;
+  color: rgba(191, 219, 254, 0.96);
+  line-height: 1;
+}
+
+.report-summary small {
+  margin-top: 4px;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.report-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
   font-size: 12px;
+  line-height: 1.7;
+  color: rgba(255, 255, 255, 0.84);
+  font-family: inherit;
+}
+
+.theme-list,
+.appendix-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.theme-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.theme-item {
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.theme-item:first-child {
+  padding-top: 0;
+  border-top: none;
+}
+
+.theme-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.theme-meta {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.58);
+}
+
+.report-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.appendix-list li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.appendix-list li:first-child {
+  padding-top: 0;
+  border-top: none;
+}
+
+.appendix-list strong {
+  color: rgba(255, 255, 255, 0.92);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .effort-table-wrap {
   margin-top: 12px;
   overflow-x: auto;
 }
+
 .effort-table {
   width: 100%;
   min-width: 720px;
@@ -364,6 +772,7 @@ async function fetchEfforts() {
   color: rgba(255, 255, 255, 0.85);
   table-layout: fixed;
 }
+
 .effort-table .col-date { width: 96px; }
 .effort-table .col-hours { width: 56px; }
 .effort-table .col-project { width: 22%; }
@@ -380,18 +789,21 @@ async function fetchEfforts() {
   overflow-wrap: anywhere;
   line-height: 1.5;
 }
+
 .effort-table th {
   font-weight: 600;
   color: rgba(147, 197, 253, 0.9);
   background: rgba(255, 255, 255, 0.03);
   white-space: nowrap;
 }
+
 .effort-table td.num,
 .effort-table th.num {
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+
 .effort-table .content-cell {
   color: rgba(255, 255, 255, 0.75);
 }
@@ -401,5 +813,11 @@ async function fetchEfforts() {
   color: rgba(147, 197, 253, 0.9);
   background: rgba(255, 255, 255, 0.04);
   border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+@media (max-width: 1100px) {
+  .report-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

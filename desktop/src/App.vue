@@ -465,6 +465,7 @@ async function recomputeAnchor() {
 //  - 用户在 dock 状态下手动拖小人 → 自动退出 dock（拖拽优先）
 const DOCK_AUTO_THRESHOLD = 30
 const DOCK_SHOW_PX = 18
+const DOCK_PEEK_PX = AVATAR_HALF + DOCK_SHOW_PX
 const DOCK_RECOIL_MS = 5000
 const DOCK_ANIM_MS = 200
 
@@ -597,6 +598,31 @@ async function dockTo(edge: DockEdge) {
   await animateWindowToLogical(t.winX, t.winY, DOCK_ANIM_MS)
 }
 
+function computePeekTarget(
+  edge: DockEdge,
+  mon: { x: number; y: number; w: number; h: number },
+): { winX: number; winY: number } | null {
+  if (!dockedWinPos) return null
+  const maxPeek = WINDOW_LOGICAL_W - DOCK_SHOW_PX
+  const peek = Math.max(0, Math.min(DOCK_PEEK_PX, maxPeek))
+  const relCenterX = dockedWinPos.x + ANCHOR_AVATAR_CENTER[dockedWinPos.anchor].x - mon.x
+  const relCenterY = dockedWinPos.y + ANCHOR_AVATAR_CENTER[dockedWinPos.anchor].y - mon.y
+  let winX = dockedWinPos.x
+  let winY = dockedWinPos.y
+  if (edge === 'right') {
+    winX = dockedWinPos.x - peek
+  } else if (edge === 'left') {
+    winX = dockedWinPos.x + peek
+  } else if (edge === 'top') {
+    winY = dockedWinPos.y + peek
+  } else {
+    winY = dockedWinPos.y - peek
+  }
+  const clampedX = Math.min(Math.max(winX, mon.x - relCenterX), mon.x + mon.w - relCenterX)
+  const clampedY = Math.min(Math.max(winY, mon.y - relCenterY), mon.y + mon.h - relCenterY)
+  return { winX: clampedX, winY: clampedY }
+}
+
 /**
  * 临时弹出露完整 avatar。
  * - recoil:true（默认） → 弹出后挂 5s 计时自动 retract，适合 showAlert/menu 等"一次性露脸"
@@ -608,8 +634,12 @@ async function pokeOut(opts: { recoil?: boolean } = {}) {
   if (dockUndockTimer) { clearTimeout(dockUndockTimer); dockUndockTimer = null }
   if (!isPoked.value) {
     isPoked.value = true
-    if (undockedWinPos) {
-      await animateWindowToLogical(undockedWinPos.x, undockedWinPos.y, DOCK_ANIM_MS)
+    if (dockEdge.value) {
+      const mon = await getMonitorBounds()
+      const peekTarget = computePeekTarget(dockEdge.value, mon)
+      if (peekTarget) {
+        await animateWindowToLogical(peekTarget.winX, peekTarget.winY, DOCK_ANIM_MS)
+      }
     }
   }
   if (wantRecoil) {
