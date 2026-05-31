@@ -1,6 +1,6 @@
 {
   "name": "jarvis-desktop",
-  "version": "1.0.0",
+  "version": "0.7.4",
   "description": "Jarvis 桌面任务助手（Tauri + Vue）",
   "type": "module",
   "scripts": {

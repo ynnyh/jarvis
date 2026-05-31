@@ -34,9 +34,10 @@ npm run desktop:portable           # 本地便携版（不需要签名 key）
 推 tag `vX.Y.Z` 触发 GitHub Actions 自动构建 + 发布到 Gitee。
 
 ```bash
-# 1. 同步版本号（必须两处一致）
+# 1. 同步版本号（建议三处一致）
 #    src-tauri/tauri.conf.json  "version": "X.Y.Z"
 #    src-tauri/Cargo.toml        version = "X.Y.Z"
+#    package.json                "version": "X.Y.Z"
 
 # 2. 提交 + 推送
 git commit -m "release: bump version to X.Y.Z"
@@ -73,5 +74,5 @@ scripts/                # CI / 构建脚本
 未签名应用首次打开会被 Gatekeeper 拦截，用安装脚本自动处理：
 
 ```bash
-curl -fsSL https://gitee.com/ynnyh/jarvis/releases/download/v0.7.3/install-macos-dev.sh | bash
+curl -fsSL https://gitee.com/ynnyh/jarvis/releases/download/v0.7.4/install-macos-dev.sh | bash
 ```
