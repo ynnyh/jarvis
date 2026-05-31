@@ -28,8 +28,8 @@ import { Agent, setGlobalDispatcher } from 'undici'
 // Gitee 上传大文件（macOS .app.tar.gz + .dmg 加起来 ~70MB）从 GH Actions
 // 上行 + 服务端处理可能超过 5 分钟，需把超时拉长
 setGlobalDispatcher(new Agent({
-  headersTimeout: 5 * 60 * 1000,
-  bodyTimeout: 5 * 60 * 1000,
+  headersTimeout: 15 * 60 * 1000,
+  bodyTimeout: 15 * 60 * 1000,
   connectTimeout: 30 * 1000,
 }))
 
@@ -180,7 +180,14 @@ async function createOrFindRelease() {
   }
 
   const text = await res.text()
-  if (res.status === 422 || text.includes('已存在') || text.includes('exist')) {
+  if (
+    res.status === 422 ||
+    text.includes('已存在') ||
+    text.includes('exist') ||
+    text.includes('标签已经存在发行版') ||
+    text.includes('tag_name has already been taken') ||
+    text.includes('验证错误')
+  ) {
     const r2 = await fetch(
       `${API}/repos/${GITEE_OWNER}/${GITEE_REPO}/releases/tags/${tag}?access_token=${TOKEN}`,
     )
@@ -199,7 +206,8 @@ async function uploadAsset(filePath, name, { optional = false } = {}) {
   const stat = await fs.stat(filePath)
   const fileSizeMB = stat.size / (1024 * 1024)
   const data = await fs.readFile(filePath)
-  const maxAttempts = 5
+  const isLargeAsset = fileSizeMB > 8
+  const maxAttempts = isLargeAsset ? 8 : 5
   let lastErr
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -238,7 +246,7 @@ async function uploadAsset(filePath, name, { optional = false } = {}) {
         /HTTP 5\d\d/.test(String(e?.message)) ||
         /HTTP 429/.test(String(e?.message))
       if (attempt < maxAttempts && isRetryable) {
-        const baseBackoff = fileSizeMB > 30 ? 8000 : 3000
+        const baseBackoff = isLargeAsset ? 10000 : fileSizeMB > 30 ? 8000 : 3000
         const backoff = baseBackoff * attempt
         console.warn(`  ⚠ ${name} (${fileSizeMB.toFixed(1)}MB) 第 ${attempt}/${maxAttempts} 次失败（${errCode || e?.message}），${(backoff / 1000).toFixed(0)}s 后重试`)
         await new Promise(r => setTimeout(r, backoff))
