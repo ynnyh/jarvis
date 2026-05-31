@@ -17,6 +17,7 @@ import TodayOverrideSection from './components/settings/TodayOverrideSection.vue
 import WorkDaysSection from './components/settings/WorkDaysSection.vue'
 import WorkPeriodsSection from './components/settings/WorkPeriodsSection.vue'
 import WorkdayNudgesSection from './components/settings/WorkdayNudgesSection.vue'
+import WorkStyleSection from './components/settings/WorkStyleSection.vue'
 import ZentaoSection from './components/settings/ZentaoSection.vue'
 
 export type SettingsPageKey = 'zentao' | 'finereport' | 'ai' | 'channels' | 'code' | 'schedule' | 'effortClosing' | 'nudges' | 'appearance' | 'about'
@@ -37,7 +38,7 @@ export const SETTINGS_MENU: SettingsMenuItem[] = [
   { key: 'schedule', title: '作息规则', desc: '工作日、时段、静默', group: '提醒' },
   { key: 'effortClosing', title: '工时提醒', desc: '下班后检查今日工时', group: '提醒' },
   { key: 'nudges', title: '主动提醒', desc: '仪式、小提示、今日覆盖', group: '提醒' },
-  { key: 'appearance', title: '外观与行为', desc: '称呼、形象、点击动作', group: '个性化' },
+  { key: 'appearance', title: '外观与行为', desc: '称呼、形象、工作定位', group: '个性化' },
   { key: 'about', title: '关于与更新', desc: '版本信息与历史更新日志', group: '关于' },
 ]
 
@@ -50,6 +51,6 @@ export const SETTINGS_PAGE_COMPONENTS: Record<SettingsPageKey, Component[]> = {
   schedule: [WorkDaysSection, WorkPeriodsSection, QuietRulesSection],
   effortClosing: [EffortClosingSection],
   nudges: [RitualsSection, WorkdayNudgesSection, TodayOverrideSection, RemindersSection],
-  appearance: [AutoStartSection, AssistantNameSection, PetSection, LeftClickActionSection],
+  appearance: [AutoStartSection, AssistantNameSection, WorkStyleSection, PetSection, LeftClickActionSection],
   about: [ChangelogSection],
 }

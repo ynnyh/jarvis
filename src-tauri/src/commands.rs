@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+﻿use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -1248,6 +1248,44 @@ pub async fn settings_close(app: tauri::AppHandle) -> Result<(), String> {
     }
     app.emit_to("avatar", "settings-detail-closed", ())
         .map_err(|e| format!("emit settings-detail-closed 失败: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn today_plan_open(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    if let Some(w) = app.get_webview_window("todayPlan") {
+        w.unminimize().ok();
+        w.show()
+            .map_err(|e| format!("show todayPlan 失败: {}", e))?;
+        w.set_focus().ok();
+        let _ = w.eval("window.location.reload()");
+    } else {
+        return Err("todayPlan 窗口未注册".into());
+    }
+    if let Some(avatar) = app.get_webview_window("avatar") {
+        avatar
+            .hide()
+            .map_err(|e| format!("hide avatar 失败: {}", e))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn today_plan_close(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::{Emitter, Manager};
+    if let Some(w) = app.get_webview_window("todayPlan") {
+        w.hide()
+            .map_err(|e| format!("hide todayPlan 失败: {}", e))?;
+    }
+    if let Some(avatar) = app.get_webview_window("avatar") {
+        avatar.unminimize().ok();
+        avatar
+            .show()
+            .map_err(|e| format!("show avatar 失败: {}", e))?;
+        avatar.set_focus().ok();
+    }
+    let _ = app.emit_to("avatar", "today-plan-window-closed", ());
     Ok(())
 }
 

@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
@@ -95,6 +95,14 @@ async function openTask(id: string) {
     await invoke('open_zentao_task', { id })
   } catch (e) {
     console.error('打开禅道任务失败:', e)
+  }
+}
+
+async function openTransactionHours() {
+  try {
+    await invoke('manual_hours_open')
+  } catch (e) {
+    console.error('打开手动工时窗口失败:', e)
   }
 }
 
@@ -306,6 +314,10 @@ function isTaskWritten(taskId: string): boolean {
             </div>
           </div>
           <p class="section-hint">范围：{{ store.reviewData.range.label }}</p>
+          <div v-if="range === 'today'" class="transaction-entry">
+            <button class="transaction-btn" @click="openTransactionHours">✍️ 事务类工作</button>
+            <span class="transaction-hint">没有 commit 的沟通、排障、部署、巡检，也可以从这里补工时。</span>
+          </div>
         </section>
 
         <!-- 空状态 -->
@@ -586,6 +598,30 @@ function isTaskWritten(taskId: string): boolean {
   font-weight: 600;
 }
 .section-hint { margin: 0; font-size: 9.5px; color: rgba(255, 255, 255, 0.35); }
+.transaction-entry {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.transaction-btn {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(168, 85, 247, 0.45);
+  background: rgba(168, 85, 247, 0.18);
+  color: rgba(233, 213, 255, 0.96);
+  font-size: 11px;
+  cursor: pointer;
+}
+.transaction-btn:hover {
+  background: rgba(168, 85, 247, 0.28);
+}
+.transaction-hint {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.48);
+}
 
 /* 概况 */
 .summary-grid {

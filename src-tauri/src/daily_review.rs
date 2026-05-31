@@ -33,6 +33,9 @@ pub struct AdvancedTask {
     pub commits: Vec<CommitLink>,
     pub business_line: String,
     pub effort: f64,
+    pub binding_confidence: f64,
+    pub binding_reason: String,
+    pub default_work_content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suggested_hours: Option<f64>,
 }
@@ -114,6 +117,20 @@ fn round_half(x: f64) -> f64 {
     (x * 2.0).round() / 2.0
 }
 
+fn build_default_work_content(commits: &[CommitLink]) -> String {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut lines: Vec<String> = Vec::new();
+    for c in commits {
+        let cleaned = clean_commit_title(&c.title, 80);
+        if cleaned.is_empty() || seen.contains(&cleaned) {
+            continue;
+        }
+        seen.insert(cleaned.clone());
+        lines.push(format!("- {}", cleaned));
+    }
+    lines.join("\n")
+}
+
 /// 业务线工时按 0.5h 量化分配给任务（commit 数倒序）
 fn allocate_hours_by_slots(business_hours: f64, task_count: usize) -> Vec<f64> {
     let slots = (business_hours * 2.0).round() as i64;
@@ -175,6 +192,45 @@ pub fn build_daily_review(
                 .get(&t.task_id)
                 .map(|x| x.status.clone())
                 .unwrap_or_else(|| "unknown".to_string());
+
+            let mut conf_sum = 0.0f64;
+            let mut conf_count = 0usize;
+            let mut reasons: Vec<String> = Vec::new();
+            for c in &t.commits {
+                let conf = match c.match_type {
+                    crate::commit_link::MatchType::Exact => 1.0,
+                    crate::commit_link::MatchType::Soft => c.confidence.unwrap_or(0.9),
+                }
+                .clamp(0.0, 1.0);
+                conf_sum += conf;
+                conf_count += 1;
+
+                let reason = match c.match_type {
+                    crate::commit_link::MatchType::Exact => "提交信息包含任务ID".to_string(),
+                    crate::commit_link::MatchType::Soft => c
+                        .reason
+                        .clone()
+                        .unwrap_or_else(|| "基于仓库绑定与提交语义归类".to_string()),
+                };
+                if !reasons.iter().any(|r| r == &reason) {
+                    reasons.push(reason);
+                }
+            }
+            let binding_confidence = if conf_count > 0 {
+                (conf_sum / conf_count as f64).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let binding_reason = if reasons.is_empty() {
+                "无可用归类依据".to_string()
+            } else {
+                reasons
+                    .into_iter()
+                    .take(2)
+                    .collect::<Vec<String>>()
+                    .join("；")
+            };
+
             AdvancedTask {
                 task_id: t.task_id.clone(),
                 task_name: t.task_name.clone(),
@@ -183,6 +239,9 @@ pub fn build_daily_review(
                 commits: t.commits.clone(),
                 business_line,
                 effort,
+                binding_confidence,
+                binding_reason,
+                default_work_content: build_default_work_content(&t.commits),
                 suggested_hours: None,
             }
         })

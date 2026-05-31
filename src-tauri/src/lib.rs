@@ -16,10 +16,12 @@ mod task_bindings;
 mod task_snapshot;
 mod tools;
 mod util;
+mod worklog;
 mod zentao;
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::Emitter;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -200,6 +202,23 @@ pub fn run() {
                 });
             }
 
+            if let Some(tp) = app.get_webview_window("todayPlan") {
+                let app_handle = app.handle().clone();
+                let tp_clone = tp.clone();
+                tp.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = tp_clone.hide();
+                        let _ = app_handle.emit_to("avatar", "today-plan-window-closed", ());
+                        if let Some(avatar) = app_handle.get_webview_window("avatar") {
+                            avatar.unminimize().ok();
+                            let _ = avatar.show();
+                            avatar.set_focus().ok();
+                        }
+                    }
+                });
+            }
+
             if channels::should_auto_start() {
                 let app_handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
@@ -230,6 +249,8 @@ pub fn run() {
             commands::chat_close,
             commands::settings_open,
             commands::settings_close,
+            commands::today_plan_open,
+            commands::today_plan_close,
             commands::write_hours_open,
             commands::write_hours_close,
             commands::write_hours_take_payload,
@@ -262,6 +283,15 @@ pub fn run() {
             task_bindings::task_bindings_get,
             task_bindings::task_bindings_set,
             task_bindings::task_bindings_delete,
+            worklog::today_plan_load,
+            worklog::today_plan_save,
+            worklog::today_plan_clear,
+            worklog::worklog_session_get,
+            worklog::worklog_card_update,
+            worklog::worklog_manual_card_add,
+            worklog::worklog_card_remove,
+            worklog::worklog_card_write,
+            worklog::worklog_session_write_confirmed,
             repo_recommender::recommend_repos_for_task,
         ])
         .build(tauri::generate_context!())

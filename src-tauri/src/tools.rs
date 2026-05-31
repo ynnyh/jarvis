@@ -89,6 +89,30 @@ struct LogEffortInput {
     hours: f64,
     work: String,
     date: Option<String>,
+    #[serde(default, rename = "clientRequestId")]
+    client_request_id: Option<String>,
+}
+
+/// 扫审计日志找同 clientRequestId 的成功写入，返回其 effortId（幂等去重用）。
+/// 取最后一条匹配（最近一次成功）。文件不存在 / 无匹配返回 None。
+fn find_prior_successful_effort(client_request_id: &str) -> Option<String> {
+    let path = crate::settings::jarvis_dir().join("write-back.log");
+    let raw = std::fs::read_to_string(path).ok()?;
+    let mut found: Option<String> = None;
+    for line in raw.lines() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if v.get("ok").and_then(|x| x.as_bool()) != Some(true) {
+            continue;
+        }
+        if v.get("clientRequestId").and_then(|x| x.as_str()) == Some(client_request_id) {
+            found = v
+                .get("effortId")
+                .map(|x| x.to_string().trim_matches('"').to_string());
+        }
+    }
+    found
 }
 
 pub async fn log_task_effort(input: Value) -> Result<Value, String> {
@@ -102,6 +126,18 @@ pub async fn log_task_effort(input: Value) -> Result<Value, String> {
     }
     if parsed.work.is_empty() {
         return Err("work 不能为空".into());
+    }
+
+    // 幂等去重：clientRequestId 命中历史成功写入，直接返回原 effortId，不再写禅道。
+    // 防 session 丢失 / 重复点击 / 重试导致同一张卡在禅道写出多条工时（不可逆）。
+    if let Some(req_id) = parsed.client_request_id.as_deref().filter(|s| !s.is_empty()) {
+        if let Some(effort_id) = find_prior_successful_effort(req_id) {
+            return Ok(json!({
+                "ok": true,
+                "effortId": effort_id,
+                "deduped": true,
+            }));
+        }
     }
 
     let client = ZentaoClient::from_settings()?;
@@ -121,6 +157,7 @@ pub async fn log_task_effort(input: Value) -> Result<Value, String> {
             "hours": parsed.hours,
             "work": parsed.work,
             "date": parsed.date,
+            "clientRequestId": parsed.client_request_id,
             "account": account,
             "effortId": r.id,
             "endpoint": r.endpoint,
@@ -136,6 +173,7 @@ pub async fn log_task_effort(input: Value) -> Result<Value, String> {
             "hours": parsed.hours,
             "work": parsed.work,
             "date": parsed.date,
+            "clientRequestId": parsed.client_request_id,
             "account": account,
             "error": e,
         }),

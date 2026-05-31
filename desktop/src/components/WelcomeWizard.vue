@@ -11,7 +11,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow, LogicalSize, LogicalPosition, currentMonitor } from '@tauri-apps/api/window'
-import { useConfigStore } from '../stores/config'
+import { useConfigStore, type WorkStyle } from '../stores/config'
 import { normalizeZentaoBaseUrl } from '../composables/zentaoUrl'
 
 const emit = defineEmits<{
@@ -73,7 +73,7 @@ onMounted(enterWizardMode)
 onUnmounted(exitWizardMode)
 
 const step = ref(1)
-const totalSteps = 5
+const totalSteps = 6
 
 // 暂存输入，最后一步才写 store/keychain
 const baseUrl = ref(store.config.zentao.baseUrl || '')
@@ -81,6 +81,18 @@ const account = ref(store.config.zentao.account || '')
 const password = ref('')
 
 const repoRoots = ref<string[]>([...store.config.repoRoots])
+
+// 工作定位（方案A：大白话描述，不贴职位标签）。驱动复盘候选任务条数 + 是否侧重事务录入。
+const workStyle = ref<WorkStyle>(store.config.workStyle ?? 'balanced')
+const WORK_STYLE_OPTIONS: Array<{ value: WorkStyle; title: string; desc: string }> = [
+  { value: 'focused', title: '专注写码', desc: '盯着几个固定项目，大部分时间在写代码' },
+  { value: 'multi', title: '多线开发', desc: '代码摊在很多项目上，到处都有提交' },
+  { value: 'transactional', title: '事务为主', desc: '很多活是部署、值班、开会、排障，代码不多' },
+  { value: 'balanced', title: '比较均衡', desc: '说不准 / 各占一些' },
+]
+const workStyleTitle = computed(
+  () => WORK_STYLE_OPTIONS.find(o => o.value === workStyle.value)?.title ?? '比较均衡',
+)
 
 const testState = ref<'idle' | 'testing' | 'ok' | 'fail'>('idle')
 const testMessage = ref('')
@@ -134,6 +146,7 @@ async function finish() {
     store.config.zentao.baseUrl = normalizeZentaoBaseUrl(baseUrl.value)
     store.config.zentao.account = account.value.trim()
     store.config.repoRoots = [...repoRoots.value]
+    store.config.workStyle = workStyle.value
     // 3. 显式 await 一次 store.save() 落盘，绝不依赖 watch 的 250ms 防抖
     await store.save()
     // daemon 已下线，密码下次调用禅道时由 Rust 端从 keychain 实时读，无需重启。
@@ -223,8 +236,30 @@ function prev() { if (step.value > 1) step.value-- }
           <p class="hint">目录的第一层子文件夹会被识别为"业务线"。常见结构如 D:/coding/&lt;业务&gt;/&lt;仓库&gt;。</p>
         </section>
 
-        <!-- Step 5：完成 -->
+        <!-- Step 5：工作定位 -->
         <section v-if="step === 5" class="step">
+          <h2>你平时怎么干活？</h2>
+          <p>选一个最像你的，{{ store.config.assistantName }} 会照着调整复盘时怎么帮你凑工时。以后能在设置里改。</p>
+          <div class="style-list">
+            <button
+              v-for="opt in WORK_STYLE_OPTIONS"
+              :key="opt.value"
+              type="button"
+              class="style-card"
+              :class="{ active: workStyle === opt.value }"
+              @click="workStyle = opt.value"
+            >
+              <span class="style-radio" />
+              <span class="style-main">
+                <strong>{{ opt.title }}</strong>
+                <small>{{ opt.desc }}</small>
+              </span>
+            </button>
+          </div>
+        </section>
+
+        <!-- Step 6：完成 -->
+        <section v-if="step === 6" class="step">
           <h2>准备就绪</h2>
           <p>即将完成以下操作：</p>
           <ul class="confirm-list">
@@ -232,6 +267,7 @@ function prev() { if (step.value > 1) step.value-- }
             <li>· 禅道账号：<b>{{ account }}</b></li>
             <li>· 密码：<b>保存到系统密钥链</b></li>
             <li>· 代码文件夹（{{ repoRoots.length }} 个）：<b>{{ repoRoots.join('  ·  ') }}</b></li>
+            <li>· 工作定位：<b>{{ workStyleTitle }}</b></li>
           </ul>
           <p class="hint">这些都可以以后在"设置"里随时修改。</p>
         </section>
@@ -439,6 +475,51 @@ function prev() { if (step.value > 1) step.value-- }
   color: rgba(255, 255, 255, 0.35);
   text-align: center;
 }
+
+.style-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+.style-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.style-card:hover { background: rgba(0, 212, 255, 0.06); }
+.style-card.active {
+  border-color: rgba(0, 212, 255, 0.55);
+  background: rgba(0, 212, 255, 0.1);
+}
+.style-radio {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+}
+.style-card.active .style-radio {
+  border-color: rgba(0, 212, 255, 0.9);
+  background: radial-gradient(circle, rgba(0, 212, 255, 0.95) 0 4px, transparent 5px);
+}
+.style-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.style-main strong { font-size: 13px; color: rgba(255, 255, 255, 0.96); }
+.style-main small { font-size: 11.5px; line-height: 1.4; color: rgba(255, 255, 255, 0.6); }
 
 .wizard-footer {
   padding: 12px 18px;

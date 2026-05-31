@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
@@ -21,6 +21,7 @@ import { useTaskAlerts } from './composables/useTaskAlerts'
 import { useTaskCommits } from './composables/useTaskCommits'
 import { useDailyReview } from './composables/useDailyReview'
 import { useEveningReminder } from './composables/useEveningReminder'
+import { useTodayPlanPrompt } from './composables/useTodayPlanPrompt'
 import { ignoreTodayEffortClosing, useEffortClosingCheck } from './composables/useEffortClosingCheck'
 import { useWorkdayNudges } from './composables/useWorkdayNudges'
 import { useTimeGreetings } from './composables/useTimeGreetings'
@@ -48,6 +49,14 @@ useEveningReminder({
     // 复盘窗口已经自动打开了，气泡只是个提示动作，15s 足够注意到。
     showAlert(`${configStore.config.userTitle}，今天的复盘看一下？`, '📋', 'thinking', 15000)
     store.showReviewWindow = true
+  },
+})
+useTodayPlanPrompt({
+  onTrigger: () => {
+    showAlert(`${configStore.config.userTitle}，先定个今日计划？`, '📝', 'thinking', 0, [
+      { label: '定今日计划', action: menuOpenTodayPlan },
+      { label: '待会儿', action: () => {} },
+    ])
   },
 })
 useEffortClosingCheck({
@@ -331,6 +340,12 @@ function menuShowRisk() {
 function menuShowReview() {
   closeAllPanels()
   openReview('today')
+}
+
+function menuOpenTodayPlan() {
+  closeAllPanels()
+  showMenu.value = false
+  invoke('today_plan_open').catch(e => console.error('today_plan_open 失败:', e))
 }
 
 async function menuQuit() {
@@ -881,6 +896,7 @@ onUnmounted(() => {
       </button>
       <button class="menu-item" @click="menuShowRisk"><span>⚠️</span><span>风险分析</span></button>
       <button class="menu-item" @click="menuShowReview"><span>📋</span><span>今日复盘</span></button>
+      <button class="menu-item" @click="menuOpenTodayPlan"><span>📝</span><span>今日计划</span></button>
       <button class="menu-item" @click="menuOpenManualHours"><span>✍️</span><span>写工时</span></button>
       <button class="menu-item" @click="menuOpenChat"><span>💬</span><span>聊天（大窗）</span></button>
       <button class="menu-item" @click="menuShowSettings"><span>⚙️</span><span>设置</span></button>

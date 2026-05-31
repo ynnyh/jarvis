@@ -297,6 +297,23 @@ export const useAppStore = defineStore('app', () => {
       // ignore
     }
   })
+  /** 当天是否已弹过"定今日计划"提示（避免重复弹） */
+  const PLAN_PROMPTED_KEY = 'jarvis.planPrompted.v1'
+  const loadPlanPromptedOn = (): string => {
+    try {
+      return localStorage.getItem(PLAN_PROMPTED_KEY) ?? ''
+    } catch {
+      return ''
+    }
+  }
+  const todayPlanPromptedOn = ref<string>(loadPlanPromptedOn())
+  watch(todayPlanPromptedOn, (v) => {
+    try {
+      localStorage.setItem(PLAN_PROMPTED_KEY, v)
+    } catch {
+      // ignore
+    }
+  })
   const reviewData = ref<DailyReviewData | null>(null)
   const reviewLoaded = ref(false)
   const reviewLoading = ref(false)
@@ -362,6 +379,7 @@ export const useAppStore = defineStore('app', () => {
     visibleCommitsForTask,
     showReviewWindow,
     reviewTriggeredOn,
+    todayPlanPromptedOn,
     reviewData,
     reviewLoaded,
     reviewLoading,
@@ -406,6 +424,9 @@ export interface DailyReviewData {
     commits: CommitLink[]
     businessLine: string
     effort: number
+    bindingConfidence: number
+    bindingReason: string
+    defaultWorkContent: string
     suggestedHours?: number
   }>
   byBusinessLine: Array<{

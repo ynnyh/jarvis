@@ -21,6 +21,7 @@ export default defineConfig({
         settings: resolve(__dirname, 'desktop/settings.html'),
         writeHours: resolve(__dirname, 'desktop/writeHours.html'),
         manualHours: resolve(__dirname, 'desktop/manualHours.html'),
+        todayPlan: resolve(__dirname, 'desktop/todayPlan.html'),
       },
     },
   },

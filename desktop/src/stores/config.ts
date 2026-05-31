@@ -15,6 +15,12 @@ export type CommitsRange =
 
 /** 左键单击小人时弹出的内容。默认任务列表；可改成今日复盘等 */
 export type LeftClickAction = 'tasks' | 'review'
+export type WorkStyle = 'focused' | 'multi' | 'transactional' | 'balanced'
+
+export interface TodayPlan {
+  date: string
+  taskIds: string[]
+}
 
 export interface JarvisConfig {
   /** 助手显示名（用户可改）。默认 "Jarvis"；只影响 UI 文案、问候、写工时审计文本 */
@@ -30,6 +36,8 @@ export interface JarvisConfig {
     quietAfterWork: boolean
     quietOnWeekends: boolean
     morningGreeting: boolean
+    todayPlanPromptEnabled: boolean
+    todayPlanPromptTime: string
     eveningSummary: boolean
     eveningSummaryMinutesBefore: number
     effortClosingCheck: boolean
@@ -103,6 +111,8 @@ export interface JarvisConfig {
   autoStartOnBoot: boolean
   /** 定时提醒列表 */
   reminders: ScheduledReminder[]
+  workStyle: WorkStyle
+  todayPlan: TodayPlan
 }
 
 export interface ScheduledReminder {
@@ -141,6 +151,8 @@ const defaultConfig = (): JarvisConfig => ({
     quietAfterWork: true,
     quietOnWeekends: true,
     morningGreeting: true,
+    todayPlanPromptEnabled: true,
+    todayPlanPromptTime: '09:10',
     eveningSummary: true,
     eveningSummaryMinutesBefore: 30,
     effortClosingCheck: true,
@@ -178,6 +190,8 @@ const defaultConfig = (): JarvisConfig => ({
   reminders: [],
   llmProfiles: [],
   activeLlmProfileId: '',
+  workStyle: 'balanced',
+  todayPlan: { date: '', taskIds: [] },
 })
 
 function todayStr(): string {
@@ -253,6 +267,15 @@ export const useConfigStore = defineStore('config', () => {
         reminders: Array.isArray(remote.reminders) ? remote.reminders : defaults.reminders,
         llmProfiles: Array.isArray(remote.llmProfiles) ? remote.llmProfiles : defaults.llmProfiles,
         activeLlmProfileId: remote.activeLlmProfileId ?? defaults.activeLlmProfileId,
+        workStyle: ['focused', 'multi', 'transactional', 'balanced'].includes(remote.workStyle)
+          ? remote.workStyle
+          : defaults.workStyle,
+        todayPlan: {
+          date: remote.todayPlan?.date ?? defaults.todayPlan.date,
+          taskIds: Array.isArray(remote.todayPlan?.taskIds)
+            ? remote.todayPlan.taskIds
+            : defaults.todayPlan.taskIds,
+        },
       }
       // 临时覆盖只在当日有效
       if (merged.override.todayModeSetOn !== todayStr()) {
