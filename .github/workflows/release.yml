@@ -131,6 +131,7 @@ jobs:
       - name: Build Tauri (NSIS / DMG + updater artifacts)
         if: matrix.os != 'macos-latest' || env.HAS_APPLE_CERTIFICATE != 'true'
         env:
+          TAURI_SIGNING_PRIVATE_KEY: .tauri-ci/updater-private.key
           TAURI_SIGNING_PRIVATE_KEY_PATH: .tauri-ci/updater-private.key
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npx tauri build ${{ matrix.tauri_args }}
@@ -139,6 +140,7 @@ jobs:
       - name: Build Tauri with Apple notarization
         if: matrix.os == 'macos-latest' && env.HAS_APPLE_CERTIFICATE == 'true'
         env:
+          TAURI_SIGNING_PRIVATE_KEY: .tauri-ci/updater-private.key
           TAURI_SIGNING_PRIVATE_KEY_PATH: .tauri-ci/updater-private.key
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
