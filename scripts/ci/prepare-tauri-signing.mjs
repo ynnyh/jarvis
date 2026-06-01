@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, appendFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
@@ -26,9 +26,6 @@ if (!privateKey) {
   fail('Missing updater signing key. Set TAURI_SIGNING_PRIVATE_KEY_B64 or TAURI_SIGNING_PRIVATE_KEY in CI environment variables.')
 }
 
-process.env.TAURI_SIGNING_PRIVATE_KEY = privateKey
-delete process.env.TAURI_SIGNING_PRIVATE_KEY_B64
-
 const ciDir = join(process.cwd(), '.tauri-ci')
 const keyPath = join(ciDir, 'updater-private.key')
 const probeFile = join(ciDir, 'probe.txt')
@@ -36,8 +33,11 @@ const probeFile = join(ciDir, 'probe.txt')
 mkdirSync(ciDir, { recursive: true })
 writeFileSync(keyPath, privateKey, { encoding: 'utf8', mode: 0o600 })
 writeFileSync(probeFile, 'tauri updater signing probe\n', 'utf8')
-delete process.env.TAURI_SIGNING_PRIVATE_KEY
+
+// signer 子命令用 _PATH 指向文件
+process.env.TAURI_SIGNING_PRIVATE_KEY = privateKey
 process.env.TAURI_SIGNING_PRIVATE_KEY_PATH = keyPath
+delete process.env.TAURI_SIGNING_PRIVATE_KEY_B64
 
 const result = process.platform === 'win32'
   ? spawnSync('npx', ['tauri', 'signer', 'sign', probeFile], {
@@ -56,5 +56,11 @@ if (result.status !== 0) {
   fail(`Updater signing key check failed. Verify that ${keySource} and TAURI_SIGNING_PRIVATE_KEY_PASSWORD match the public key in src-tauri/tauri.conf.json. ${output}`)
 }
 
+// 写入 GITHUB_ENV，让后续 Build 步骤通过环境变量拿到密钥原文
+// tauri build 只认 TAURI_SIGNING_PRIVATE_KEY（密钥内容，非文件路径）
+const githubEnv = process.env.GITHUB_ENV
+if (githubEnv) {
+  appendFileSync(githubEnv, `TAURI_SIGNING_PRIVATE_KEY<<EOF\n${privateKey}\nEOF\n`, 'utf8')
+}
+
 console.log(`Updater signing key check passed (${keySource}, ${privateKey.length} chars, password ${password ? 'set' : 'empty'}).`)
-console.log(`TAURI_SIGNING_PRIVATE_KEY_PATH=${keyPath}`)
