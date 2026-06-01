@@ -1,0 +1,8 @@
+# Lottie 动画 JSON - 4MB 纯数据，无代码逻辑，日常开发不需要读
+desktop/src/assets/pets/*.json
+
+# 发版/CI 脚本 - 只在改 CI 流水线时相关
+scripts/
+
+# GitHub Actions CI 配置 - 同上
+.github/

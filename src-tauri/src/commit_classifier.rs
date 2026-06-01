@@ -236,3 +236,103 @@ fn parse_response(
     }
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_candidates() -> Vec<TaskInput> {
+        vec![
+            TaskInput { id: "100".into(), name: "优化登录页".into() },
+            TaskInput { id: "101".into(), name: "修复报表导出".into() },
+        ]
+    }
+
+    #[test]
+    fn parse_response_returns_normal_classification() {
+        let json = r#"[{"sha":"abc123","taskIndex":2,"confidence":0.78,"reason":"修改了导出逻辑"}]"#;
+        let result = parse_response(json, &make_candidates()).unwrap();
+        assert_eq!(result.len(), 1);
+        let entry = result.get("abc123").unwrap();
+        assert_eq!(entry.task_id.as_deref(), Some("101"));
+        assert!((entry.confidence - 0.78).abs() < 0.01);
+        assert_eq!(entry.reason, "修改了导出逻辑");
+    }
+
+    #[test]
+    fn parse_response_strips_markdown_fences() {
+        let json = "```json\n[{\"sha\":\"abc123\",\"taskIndex\":1,\"confidence\":0.9,\"reason\":\"登录页\"}]\n```";
+        let result = parse_response(json, &make_candidates()).unwrap();
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn parse_response_task_index_zero_means_none() {
+        let json = r#"[{"sha":"abc123","taskIndex":0,"confidence":0.5,"reason":"不相关"}]"#;
+        let result = parse_response(json, &make_candidates()).unwrap();
+        assert_eq!(result.get("abc123").unwrap().task_id, None);
+    }
+
+    #[test]
+    fn parse_response_task_index_out_of_range_is_none() {
+        let json = r#"[{"sha":"abc123","taskIndex":99,"confidence":0.5,"reason":"超出范围"}]"#;
+        let result = parse_response(json, &make_candidates()).unwrap();
+        assert_eq!(result.get("abc123").unwrap().task_id, None);
+    }
+
+    #[test]
+    fn parse_response_empty_array_returns_empty_map() {
+        let result = parse_response("[]", &make_candidates()).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn parse_response_truncated_json_returns_err() {
+        let text = r#"[{"sha":"abc","taskIndex":1,"confidence":0.9,"reason":"ok"},{"sha":"def""#;
+        assert!(parse_response(text, &make_candidates()).is_err());
+    }
+
+    #[test]
+    fn parse_response_no_json_array_returns_err() {
+        let result = parse_response("hello world", &make_candidates());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_response_malformed_inner_json_falls_back_to_empty() {
+        // valid outer [...] with unparseable content inside
+        let text = r#"[{invalid json here}]"#;
+        let result = parse_response(text, &make_candidates()).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn parse_response_missing_sha_field_skipped() {
+        let json = r#"[{"taskIndex":1,"confidence":0.5,"reason":"no sha"}]"#;
+        let result = parse_response(json, &make_candidates()).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn parse_response_clamps_confidence() {
+        let json = r#"[{"sha":"abc123","taskIndex":1,"confidence":2.5,"reason":"过高"}]"#;
+        let result = parse_response(json, &make_candidates()).unwrap();
+        assert!((result.get("abc123").unwrap().confidence - 1.0).abs() < 0.01);
+
+        let json = r#"[{"sha":"abc123","taskIndex":1,"confidence":-0.5,"reason":"过低"}]"#;
+        let result = parse_response(json, &make_candidates()).unwrap();
+        assert!((result.get("abc123").unwrap().confidence - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn parse_response_multiple_items() {
+        let json = r#"[
+            {"sha":"sha1","taskIndex":1,"confidence":0.9,"reason":"登录页"},
+            {"sha":"sha2","taskIndex":2,"confidence":0.8,"reason":"导出"}
+        ]"#;
+        let result = parse_response(json, &make_candidates()).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result.get("sha1").unwrap().task_id.as_deref(), Some("100"));
+        assert_eq!(result.get("sha2").unwrap().task_id.as_deref(), Some("101"));
+    }
+}

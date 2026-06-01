@@ -158,6 +158,34 @@ function walkFiles(root) {
   return out
 }
 
+// --- 2b. 从 CHANGELOG.md 提取中文更新说明 ---
+// notes 优先级：CHANGELOG.md 当前版本节 > RELEASE_NOTES env > 兜底
+function extractChangelogNotes(targetTag) {
+  const changelogPath = path.join(repoRoot, 'CHANGELOG.md')
+  if (!existsSync(changelogPath)) return null
+  const text = readFileSync(changelogPath, 'utf8')
+  const header = `## ${targetTag}`
+  const lines = text.split('\n')
+  let i = lines.findIndex(l => l.trim() === header || l.trim().startsWith(header + ' '))
+  if (i < 0) return null
+  i++
+  const body = []
+  while (i < lines.length) {
+    if (lines[i].startsWith('## ')) break
+    body.push(lines[i])
+    i++
+  }
+  while (body.length && !body[0].trim()) body.shift()
+  while (body.length && !body[body.length - 1].trim()) body.pop()
+  return body.length ? body.join('\n') : null
+}
+const releaseNotes = extractChangelogNotes(tag)
+if (releaseNotes) {
+  console.log(`✓ 已从 CHANGELOG.md 抽到 ${tag} 的中文更新说明（${releaseNotes.length} 字符）`)
+} else {
+  console.log(`⚠ CHANGELOG.md 没找到 "## ${tag}" 节，回退到 RELEASE_NOTES env`)
+}
+
 // --- 3. 创建（或复用）Release ---
 async function createOrFindRelease() {
   const res = await fetch(`${API}/repos/${GITEE_OWNER}/${GITEE_REPO}/releases`, {
@@ -167,7 +195,7 @@ async function createOrFindRelease() {
       access_token: TOKEN,
       tag_name: tag,
       name: tag,
-      body: process.env.RELEASE_NOTES || `Jarvis ${tag}`,
+      body: releaseNotes || process.env.RELEASE_NOTES || `Jarvis ${tag}`,
       prerelease: false,
       target_commitish: 'main',
     }),
@@ -419,7 +447,7 @@ if (GITHUB_TOKEN && GITHUB_REPO && dmgFiles.length > 0) {
           body: JSON.stringify({
             tag_name: tag,
             name: tag,
-            body: process.env.RELEASE_NOTES || `Jarvis ${tag}`,
+            body: releaseNotes || process.env.RELEASE_NOTES || `Jarvis ${tag}`,
             prerelease: false,
             target_commitish: 'main',
           }),
@@ -464,37 +492,9 @@ if (GITHUB_TOKEN && GITHUB_REPO && dmgFiles.length > 0) {
 }
 
 // --- 5. 写 latest.json ---
-// notes 优先级：CHANGELOG.md 当前版本节 > RELEASE_NOTES env > 兜底占位。
-// CHANGELOG 节锚点是 "## ${tag}"（如 "## v0.6.3"），body 直到下一个 "## " 或文末。
-function extractChangelogNotes(targetTag) {
-  const changelogPath = path.join(repoRoot, 'CHANGELOG.md')
-  if (!existsSync(changelogPath)) return null
-  const text = readFileSync(changelogPath, 'utf8')
-  const header = `## ${targetTag}`
-  const lines = text.split('\n')
-  let i = lines.findIndex(l => l.trim() === header || l.trim().startsWith(header + ' '))
-  if (i < 0) return null
-  i++
-  const body = []
-  while (i < lines.length) {
-    if (lines[i].startsWith('## ')) break
-    body.push(lines[i])
-    i++
-  }
-  while (body.length && !body[0].trim()) body.shift()
-  while (body.length && !body[body.length - 1].trim()) body.pop()
-  return body.length ? body.join('\n') : null
-}
-const changelogNotes = extractChangelogNotes(tag)
-if (changelogNotes) {
-  console.log(`✓ 已从 CHANGELOG.md 抽到 ${tag} 的更新说明（${changelogNotes.length} 字符）`)
-} else {
-  console.log(`⚠ CHANGELOG.md 没找到 "## ${tag}" 节，回退到 RELEASE_NOTES env`)
-}
-
 const latest = {
   version,
-  notes: changelogNotes || process.env.RELEASE_NOTES || `Jarvis ${tag}`,
+  notes: releaseNotes || process.env.RELEASE_NOTES || `Jarvis ${tag}`,
   pub_date: new Date().toISOString(),
   platforms: platformEntries,
 }

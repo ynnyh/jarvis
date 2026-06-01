@@ -1,20 +1,9 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { getCurrentWindow, LogicalPosition, currentMonitor } from '@tauri-apps/api/window'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 
-/** 获取当前窗口所在屏幕的逻辑像素全局边界（支持多屏幕） */
-async function getMonitorBounds(): Promise<{ x: number; y: number; w: number; h: number }> {
-  const mon = await currentMonitor()
-  if (!mon) return { x: 0, y: 0, w: window.screen.width, h: window.screen.height }
-  return {
-    x: mon.position.x / mon.scaleFactor,
-    y: mon.position.y / mon.scaleFactor,
-    w: mon.size.width / mon.scaleFactor,
-    h: mon.size.height / mon.scaleFactor,
-  }
-}
 import { useAppStore } from './stores/app'
 import { useConfigStore } from './stores/config'
 import { useTaskAlerts } from './composables/useTaskAlerts'
@@ -28,6 +17,8 @@ import { useTimeGreetings } from './composables/useTimeGreetings'
 import { useCursorPassthrough } from './composables/useCursorPassthrough'
 import { useUpdater } from './composables/useUpdater'
 import { useScheduledReminders } from './composables/useScheduledReminders'
+import { useAvatarDock, type AvatarAnchor } from './composables/useAvatarDock'
+import { useAvatarDrag } from './composables/useAvatarDrag'
 import TaskWindow from './components/TaskWindow.vue'
 import SettingsWindow from './components/SettingsWindow.vue'
 import RiskWindow from './components/RiskWindow.vue'
@@ -43,67 +34,8 @@ const configStore = useConfigStore()
 const { refresh: refreshAlerts } = useTaskAlerts()
 const { fetchCommits } = useTaskCommits({ autoLoad: true })
 const { openReview } = useDailyReview()
-useEveningReminder({
-  onTrigger: () => {
-    // 不传 duration=0 — 那会让气泡永久挂着、状态卡在 thinking 直到用户手动 ×。
-    // 复盘窗口已经自动打开了，气泡只是个提示动作，15s 足够注意到。
-    showAlert(`${configStore.config.userTitle}，今天的复盘看一下？`, '📋', 'thinking', 15000)
-    store.showReviewWindow = true
-  },
-})
-useTodayPlanPrompt({
-  onTrigger: () => {
-    showAlert(`${configStore.config.userTitle}，先定个今日计划？`, '📝', 'thinking', 0, [
-      { label: '定今日计划', action: menuOpenTodayPlan },
-      { label: '待会儿', action: () => {} },
-    ])
-  },
-})
-useEffortClosingCheck({
-  onReminder: (text, emoji) => {
-    showAlert(text, emoji, 'warning', 0, [
-      { label: '去写工时', action: menuOpenManualHours },
-      { label: '今天忽略', action: ignoreEffortClosingToday },
-    ])
-  },
-  onError: (text, emoji) => {
-    showAlert(text, emoji, 'warning', 12000)
-  },
-})
-useWorkdayNudges({
-  onTrigger: (text, emoji) => {
-    // 上班时段的小提示走 happy 表情、12s 自动消失，不打断工作
-    showAlert(text, emoji, 'happy', 12000)
-  },
-})
-useTimeGreetings({
-  onTrigger: (text, emoji, s) => {
-    // 早晨/咖啡/夜晚问候：15s，状态切到对应色调
-    showAlert(text, emoji, s, 15000)
-  },
-})
-// passthrough：让小人窗口的空白区域穿透到桌面，详见 composable 内部说明
-useCursorPassthrough()
-useScheduledReminders({
-  onFire: (message) => {
-    showAlert(message, '⏰', 'happy', 15000)
-  },
-})
 
-const updater = useUpdater({
-  onAvailable: (version) => {
-    // 新版本到位：直接弹更新窗口让用户看到本次更新内容（含 CHANGELOG 节选），
-    // 同时挂常驻气泡作为残留提示——窗口被关掉之后用户还能看到提醒。
-    showAlert(`新版本 v${version} 可用`, '✨', 'happy', 0)
-    store.showUpdateWindow = true
-  },
-})
-updater.start()
-
-function openUpdateWindow() {
-  closeAllPanels()
-  store.showUpdateWindow = true
-}
+// ===== Alert state (forward-declared before composable consumers that call showAlert) =====
 
 type JarvisState = 'idle' | 'thinking' | 'working' | 'warning' | 'happy' | 'morning' | 'coffee' | 'late'
 
@@ -117,8 +49,87 @@ const alertActions = ref<Array<{ label: string; action: () => void | Promise<voi
 // rb=右下(默认) / rt=右上 / lb=左下 / lt=左上。
 // 由 data-anchor 驱动 CSS：面板 inset 翻转、avatar-group 角位翻转，
 // 始终让面板向"小人朝向屏幕中心的那一侧"展开，避免面板飞出屏幕。
-type AvatarAnchor = 'rb' | 'rt' | 'lb' | 'lt'
 const avatarAnchor = ref<AvatarAnchor>('rb')
+
+// ===== Menu helpers (forward-declared for composable consumers) =====
+
+/** 关闭所有面板和菜单。打开任意 panel/menu 前调用，确保左右键互斥 */
+function closeAllPanels() {
+  showMenu.value = false
+  store.showTaskWindow = false
+  store.showRiskWindow = false
+  store.showReviewWindow = false
+  store.showUpdateWindow = false
+  store.showBindTaskWindow = false
+  configStore.showSettingsWindow = false
+}
+
+function menuOpenTodayPlan() {
+  closeAllPanels()
+  showMenu.value = false
+  invoke('today_plan_open').catch(e => console.error('today_plan_open 失败:', e))
+}
+
+function menuOpenManualHours() {
+  closeAllPanels()
+  showMenu.value = false
+  invoke('manual_hours_open').catch(e => console.error('manual_hours_open 失败:', e))
+}
+
+// ===== Dock + Drag composables =====
+
+const {
+  dockEdge,
+  isPoked,
+  undockedWinPos,
+  setUndockedWinPos,
+  animateWindowToLogical,
+  getMonitorBounds,
+  maybeAutoDock,
+  pokeOut,
+  onAvatarHover,
+  onAvatarLeave,
+  exitDock,
+  menuToggleDock,
+  breakoutFromDock,
+} = useAvatarDock({ avatarAnchor, closeAllPanels, showMenu })
+
+function handleAvatarLeftClick() {
+  // dock 状态点击 → 退出 dock 再开面板。否则窗口大部分在屏幕外，面板也跟着藏，
+  // 用户点完看不到反馈。exitDock 把窗口缓动回 undock 位置，面板随窗口一起入场。
+  if (dockEdge.value) {
+    exitDock()
+  }
+  const action = configStore.config.leftClickAction
+  if (action === 'review') {
+    if (store.showReviewWindow) {
+      store.showReviewWindow = false
+    } else {
+      closeAllPanels()
+      openReview('today')
+    }
+    return
+  }
+  // 默认（含未识别值）走任务列表
+  if (store.showTaskWindow) {
+    store.showTaskWindow = false
+  } else {
+    closeAllPanels()
+    store.showTaskWindow = true
+  }
+}
+
+const {
+  onMouseDown,
+} = useAvatarDrag({
+  avatarAnchor,
+  dockEdge,
+  onDragStart: breakoutFromDock,
+  onDragEnd: maybeAutoDock,
+  onClick: handleAvatarLeftClick,
+})
+
+// ===== State map + UI helpers =====
 
 interface StateConfig {
   text: string
@@ -252,9 +263,12 @@ async function ensureBubbleVisible() {
   // 重要：矫正完得同步更新 undockedWinPos，否则下次 retract/exitDock 又跑回原位
   const newX = Math.round(winX + dx)
   const newY = Math.round(winY + dy)
-  if (undockedWinPos) undockedWinPos = { ...undockedWinPos, x: newX, y: newY }
+  const curUndocked = undockedWinPos()
+  if (curUndocked) setUndockedWinPos({ ...curUndocked, x: newX, y: newY })
   await animateWindowToLogical(newX, newY, 220)
 }
+
+// ===== Alert system =====
 
 function showAlert(
   text: string,
@@ -304,15 +318,70 @@ function ignoreEffortClosingToday() {
   ignoreTodayEffortClosing()
 }
 
-/** 关闭所有面板和菜单。打开任意 panel/menu 前调用，确保左右键互斥 */
-function closeAllPanels() {
-  showMenu.value = false
-  store.showTaskWindow = false
-  store.showRiskWindow = false
-  store.showReviewWindow = false
-  store.showUpdateWindow = false
-  store.showBindTaskWindow = false
-  configStore.showSettingsWindow = false
+// ===== Composable consumers (need showAlert defined above) =====
+
+useEveningReminder({
+  onTrigger: () => {
+    // 不传 duration=0 — 那会让气泡永久挂着、状态卡在 thinking 直到用户手动 ×。
+    // 复盘窗口已经自动打开了，气泡只是个提示动作，15s 足够注意到。
+    showAlert(`${configStore.config.userTitle}，今天的复盘看一下？`, '📋', 'thinking', 15000)
+    store.showReviewWindow = true
+  },
+})
+useTodayPlanPrompt({
+  onTrigger: () => {
+    showAlert(`${configStore.config.userTitle}，先定个今日计划？`, '📝', 'thinking', 0, [
+      { label: '定今日计划', action: menuOpenTodayPlan },
+      { label: '待会儿', action: () => {} },
+    ])
+  },
+})
+useEffortClosingCheck({
+  onReminder: (text, emoji) => {
+    showAlert(text, emoji, 'warning', 0, [
+      { label: '去写工时', action: menuOpenManualHours },
+      { label: '今天忽略', action: ignoreEffortClosingToday },
+    ])
+  },
+  onError: (text, emoji) => {
+    showAlert(text, emoji, 'warning', 12000)
+  },
+})
+useWorkdayNudges({
+  onTrigger: (text, emoji) => {
+    // 上班时段的小提示走 happy 表情、12s 自动消失，不打断工作
+    showAlert(text, emoji, 'happy', 12000)
+  },
+})
+useTimeGreetings({
+  onTrigger: (text, emoji, s) => {
+    // 早晨/咖啡/夜晚问候：15s，状态切到对应色调
+    showAlert(text, emoji, s, 15000)
+  },
+})
+// passthrough：让小人窗口的空白区域穿透到桌面，详见 composable 内部说明
+useCursorPassthrough()
+useScheduledReminders({
+  onFire: (message) => {
+    showAlert(message, '⏰', 'happy', 15000)
+  },
+})
+
+const updater = useUpdater({
+  onAvailable: (version) => {
+    // 新版本到位：直接弹更新窗口让用户看到本次更新内容（含 CHANGELOG 节选），
+    // 同时挂常驻气泡作为残留提示——窗口被关掉之后用户还能看到提醒。
+    showAlert(`新版本 v${version} 可用`, '✨', 'happy', 0)
+    store.showUpdateWindow = true
+  },
+})
+updater.start()
+
+// ===== Menu actions =====
+
+function openUpdateWindow() {
+  closeAllPanels()
+  store.showUpdateWindow = true
 }
 
 function toggleMenu(e: Event) {
@@ -342,12 +411,6 @@ function menuShowReview() {
   openReview('today')
 }
 
-function menuOpenTodayPlan() {
-  closeAllPanels()
-  showMenu.value = false
-  invoke('today_plan_open').catch(e => console.error('today_plan_open 失败:', e))
-}
-
 async function menuQuit() {
   showMenu.value = false
   await invoke('quit_app')
@@ -365,452 +428,9 @@ function menuOpenChat() {
   invoke('chat_open').catch(e => console.error('chat_open 失败:', e))
 }
 
-function menuOpenManualHours() {
-  closeAllPanels()
-  showMenu.value = false
-  invoke('manual_hours_open').catch(e => console.error('manual_hours_open 失败:', e))
-}
-
 function menuCheckUpdate() {
   showMenu.value = false
   openUpdateWindow()
-}
-
-// --- 拖拽 + 点击 ---
-// 历史教训：原本走 invoke('drag_window') → Rust 端 start_dragging 让 OS 接管拖拽。
-// 但 OS 拖拽会保持"鼠标在窗口内的相对位置不变"，而小人在 400×560 透明窗口的
-// 右下角（约 (320, 480) 偏移）。OS 限制鼠标不能离开屏幕 → 鼠标最高到屏幕 y=0
-// 时小人最高也只能到 y=480 → 小人永远卡在屏幕下半部分。
-//
-// 改成手动 JS 拖拽：mousedown 记录窗口起点 + 鼠标起点，window 级 mousemove
-// 用 setPosition 直接把窗口移到 (起点 + 鼠标位移)。这样窗口可以完全飞出屏幕
-// 之外，小人能跟到屏幕任何位置。requestAnimationFrame 节流，60fps 内最多一次
-// setPosition，避免 IPC 堆积。
-//
-// 拖拽结束后调 recomputeAnchor() 自动选择 4 个角之一，让面板向"小人朝向屏幕
-// 中心的那一侧"展开，避免面板被屏幕边界裁掉。
-const WINDOW_LOGICAL_W = 400
-const WINDOW_LOGICAL_H = 560
-const AVATAR_HALF = 36
-const AVATAR_MARGIN = 10
-const ANCHOR_AVATAR_CENTER: Record<AvatarAnchor, { x: number; y: number }> = {
-  rb: { x: WINDOW_LOGICAL_W - AVATAR_MARGIN - AVATAR_HALF, y: WINDOW_LOGICAL_H - AVATAR_MARGIN - AVATAR_HALF },
-  rt: { x: WINDOW_LOGICAL_W - AVATAR_MARGIN - AVATAR_HALF, y: AVATAR_MARGIN + AVATAR_HALF },
-  lb: { x: AVATAR_MARGIN + AVATAR_HALF, y: WINDOW_LOGICAL_H - AVATAR_MARGIN - AVATAR_HALF },
-  lt: { x: AVATAR_MARGIN + AVATAR_HALF, y: AVATAR_MARGIN + AVATAR_HALF },
-}
-
-let mouseDownTime = 0
-let mouseDownX = 0
-let mouseDownY = 0
-let isDragging = false
-
-let dragStartWinLogicalX = 0
-let dragStartWinLogicalY = 0
-let pendingDragX: number | null = null
-let pendingDragY: number | null = null
-let dragRafId: number | null = null
-
-function flushDragPosition() {
-  dragRafId = null
-  if (pendingDragX === null || pendingDragY === null) return
-  const x = pendingDragX
-  const y = pendingDragY
-  pendingDragX = null
-  pendingDragY = null
-  getCurrentWindow().setPosition(new LogicalPosition(x, y)).catch(() => {})
-}
-
-async function recomputeAnchor() {
-  const win = getCurrentWindow()
-  let winLogicalX: number
-  let winLogicalY: number
-  try {
-    const pos = await win.outerPosition()
-    const scale = await win.scaleFactor()
-    winLogicalX = pos.x / scale
-    winLogicalY = pos.y / scale
-  } catch {
-    return
-  }
-  const oldOffset = ANCHOR_AVATAR_CENTER[avatarAnchor.value]
-  const avatarScreenX = winLogicalX + oldOffset.x
-  const avatarScreenY = winLogicalY + oldOffset.y
-  // 用当前屏幕的全局边界判断象限，支持多屏幕
-  const mon = await getMonitorBounds()
-  const relX = avatarScreenX - mon.x
-  const relY = avatarScreenY - mon.y
-  const horiz = relX >= mon.w / 2 ? 'r' : 'l'
-  const vert = relY >= mon.h / 2 ? 'b' : 't'
-  const newAnchor = (horiz + vert) as AvatarAnchor
-  if (newAnchor === avatarAnchor.value) return
-
-  // 切 anchor 时调窗口位置，让 avatar 视觉上保持在屏幕原位（CSS 改 anchor 角
-  // 后，avatar 在窗口里的偏移变了，必须反向移窗口补偿才不会"小人突然跳"）。
-  const newOffset = ANCHOR_AVATAR_CENTER[newAnchor]
-  const newWinX = avatarScreenX - newOffset.x
-  const newWinY = avatarScreenY - newOffset.y
-  try {
-    await win.setPosition(new LogicalPosition(Math.round(newWinX), Math.round(newWinY)))
-  } catch {}
-  avatarAnchor.value = newAnchor
-}
-
-// ===== Avatar dock (QQ 宠物贴边收纳) =====
-// 行为：
-//  - 拖到距屏幕某条边 < DOCK_AUTO_THRESHOLD 自动 dock（也可菜单手动）
-//  - dock 后窗口缓动到只露 DOCK_SHOW_PX 在屏幕内，主体藏屏幕外
-//  - hover dock 区域 或 showAlert 触发 → pokeOut 临时露出完整 avatar
-//  - 鼠标离开 / 气泡消失后 DOCK_RECOIL_MS 后缓动回 dock 位置
-//  - 用户在 dock 状态下手动拖小人 → 自动退出 dock（拖拽优先）
-const DOCK_AUTO_THRESHOLD = 30
-const DOCK_SHOW_PX = 18
-const DOCK_PEEK_PX = AVATAR_HALF + DOCK_SHOW_PX
-const DOCK_RECOIL_MS = 5000
-const DOCK_ANIM_MS = 200
-
-type DockEdge = 'top' | 'right' | 'bottom' | 'left'
-
-const dockEdge = ref<DockEdge | null>(null)
-const isPoked = ref(false)
-let dockUndockTimer: number | null = null
-let dockAnimFrame: number | null = null
-let dockedWinPos: { x: number; y: number; anchor: AvatarAnchor } | null = null
-let undockedWinPos: { x: number; y: number; anchor: AvatarAnchor } | null = null
-
-function cancelDockAnim() {
-  if (dockAnimFrame !== null) {
-    cancelAnimationFrame(dockAnimFrame)
-    dockAnimFrame = null
-  }
-}
-
-/** RAF 缓动窗口到目标 logical 位置。重入会先 cancel 上一帧。 */
-async function animateWindowToLogical(targetX: number, targetY: number, durationMs: number): Promise<void> {
-  cancelDockAnim()
-  const win = getCurrentWindow()
-  let fromX = 0, fromY = 0
-  try {
-    const pos = await win.outerPosition()
-    const scale = await win.scaleFactor()
-    fromX = pos.x / scale
-    fromY = pos.y / scale
-  } catch {
-    return
-  }
-  await new Promise<void>((resolve) => {
-    const startT = performance.now()
-    function step(now: number) {
-      const elapsed = now - startT
-      const t = Math.min(1, elapsed / durationMs)
-      const e = t * (2 - t)  // easeOutQuad
-      const x = fromX + (targetX - fromX) * e
-      const y = fromY + (targetY - fromY) * e
-      win.setPosition(new LogicalPosition(Math.round(x), Math.round(y))).catch(() => {})
-      if (t < 1) {
-        dockAnimFrame = requestAnimationFrame(step)
-      } else {
-        dockAnimFrame = null
-        resolve()
-      }
-    }
-    dockAnimFrame = requestAnimationFrame(step)
-  })
-}
-
-function computeDockTarget(
-  edge: DockEdge,
-  avatarScreenX: number, avatarScreenY: number,
-  mon: { x: number; y: number; w: number; h: number },
-): { winX: number; winY: number; newAnchor: AvatarAnchor } {
-  // 选 dock 时的 anchor：avatar 必须在窗口靠屏幕一侧的角，否则窗口推出去
-  // 小人就跟着到屏幕外了 —— 这是 dock 算法的核心约束。
-  // 用当前屏幕的全局边界计算，支持多屏幕。
-  let newAnchor: AvatarAnchor
-  let targetCenterX = avatarScreenX
-  let targetCenterY = avatarScreenY
-  const relX = avatarScreenX - mon.x
-  const relY = avatarScreenY - mon.y
-  if (edge === 'right') {
-    newAnchor = relY >= mon.h / 2 ? 'rb' : 'rt'
-    targetCenterX = mon.x + mon.w - DOCK_SHOW_PX + AVATAR_HALF
-  } else if (edge === 'left') {
-    newAnchor = relY >= mon.h / 2 ? 'lb' : 'lt'
-    targetCenterX = mon.x + DOCK_SHOW_PX - AVATAR_HALF
-  } else if (edge === 'top') {
-    newAnchor = relX >= mon.w / 2 ? 'rt' : 'lt'
-    targetCenterY = mon.y + DOCK_SHOW_PX - AVATAR_HALF
-  } else {
-    newAnchor = relX >= mon.w / 2 ? 'rb' : 'lb'
-    targetCenterY = mon.y + mon.h - DOCK_SHOW_PX + AVATAR_HALF
-  }
-  const offset = ANCHOR_AVATAR_CENTER[newAnchor]
-  return { winX: targetCenterX - offset.x, winY: targetCenterY - offset.y, newAnchor }
-}
-
-async function currentAvatarScreenCenter(): Promise<{ x: number; y: number } | null> {
-  const win = getCurrentWindow()
-  try {
-    const pos = await win.outerPosition()
-    const scale = await win.scaleFactor()
-    const off = ANCHOR_AVATAR_CENTER[avatarAnchor.value]
-    return { x: pos.x / scale + off.x, y: pos.y / scale + off.y }
-  } catch { return null }
-}
-
-/** 拖拽结束触发：avatar 离屏幕某边 < 阈值就 dock 到那边 */
-async function maybeAutoDock() {
-  if (dockEdge.value) return
-  const c = await currentAvatarScreenCenter()
-  if (!c) return
-  const mon = await getMonitorBounds()
-  const dTop = c.y - mon.y - AVATAR_HALF
-  const dBottom = mon.y + mon.h - (c.y + AVATAR_HALF)
-  const dLeft = c.x - mon.x - AVATAR_HALF
-  const dRight = mon.x + mon.w - (c.x + AVATAR_HALF)
-  const min = Math.min(dTop, dBottom, dLeft, dRight)
-  if (min > DOCK_AUTO_THRESHOLD) return
-  let edge: DockEdge
-  if (min === dRight) edge = 'right'
-  else if (min === dLeft) edge = 'left'
-  else if (min === dBottom) edge = 'bottom'
-  else edge = 'top'
-  await dockTo(edge)
-}
-
-async function dockTo(edge: DockEdge) {
-  const c = await currentAvatarScreenCenter()
-  if (!c) return
-  // 记下 dock 前的窗口位置，用于退出 dock 时回弹
-  const win = getCurrentWindow()
-  try {
-    const pos = await win.outerPosition()
-    const scale = await win.scaleFactor()
-    undockedWinPos = { x: pos.x / scale, y: pos.y / scale, anchor: avatarAnchor.value }
-  } catch { return }
-  const mon = await getMonitorBounds()
-  const t = computeDockTarget(edge, c.x, c.y, mon)
-  // 切 anchor → CSS 立刻应用（avatar DOM 跳到新角）→ 缓动到 dock 位置
-  // 中间几十毫秒小人位置略漂，但 200ms 缓动很快盖过去，体感是"嗖一下贴上去"
-  avatarAnchor.value = t.newAnchor
-  dockEdge.value = edge
-  dockedWinPos = { x: t.winX, y: t.winY, anchor: t.newAnchor }
-  await animateWindowToLogical(t.winX, t.winY, DOCK_ANIM_MS)
-}
-
-function computePeekTarget(
-  edge: DockEdge,
-  mon: { x: number; y: number; w: number; h: number },
-): { winX: number; winY: number } | null {
-  if (!dockedWinPos) return null
-  const maxPeek = WINDOW_LOGICAL_W - DOCK_SHOW_PX
-  const peek = Math.max(0, Math.min(DOCK_PEEK_PX, maxPeek))
-  let winX = dockedWinPos.x
-  let winY = dockedWinPos.y
-  if (edge === 'right') {
-    winX = dockedWinPos.x - peek
-  } else if (edge === 'left') {
-    winX = dockedWinPos.x + peek
-  } else if (edge === 'top') {
-    winY = dockedWinPos.y + peek
-  } else {
-    winY = dockedWinPos.y - peek
-  }
-  // 约束：avatar 中心必须在显示器范围内
-  // avatar 中心 = winPos + offset，所以 winPos ∈ [mon.start - offset, mon.end - offset]
-  const off = ANCHOR_AVATAR_CENTER[dockedWinPos.anchor]
-  const clampedX = Math.min(Math.max(winX, mon.x - off.x), mon.x + mon.w - off.x)
-  const clampedY = Math.min(Math.max(winY, mon.y - off.y), mon.y + mon.h - off.y)
-  return { winX: clampedX, winY: clampedY }
-}
-
-/**
- * 临时弹出露完整 avatar。
- * - recoil:true（默认） → 弹出后挂 5s 计时自动 retract，适合 showAlert/menu 等"一次性露脸"
- * - recoil:false → 不启动计时，由调用者（hover）自己控制何时回收，避免 hover 中突然缩回
- */
-async function pokeOut(opts: { recoil?: boolean } = {}) {
-  if (!dockEdge.value) return
-  const wantRecoil = opts.recoil !== false
-  if (dockUndockTimer) { clearTimeout(dockUndockTimer); dockUndockTimer = null }
-  if (!isPoked.value) {
-    isPoked.value = true
-    if (dockEdge.value) {
-      const mon = await getMonitorBounds()
-      const peekTarget = computePeekTarget(dockEdge.value, mon)
-      if (peekTarget) {
-        await animateWindowToLogical(peekTarget.winX, peekTarget.winY, DOCK_ANIM_MS)
-      }
-    }
-  }
-  if (wantRecoil) {
-    dockUndockTimer = window.setTimeout(retract, DOCK_RECOIL_MS)
-  }
-}
-
-function onAvatarHover() {
-  if (!dockEdge.value) return
-  // hover 不带 recoil — 用户主动看小人，没必要倒计时缩回去
-  pokeOut({ recoil: false })
-}
-
-function onAvatarLeave() {
-  if (!dockEdge.value || !isPoked.value) return
-  // 离开 hover 区 5s 后缩回，给用户一点缓冲（防止误触发滑过就缩回）
-  if (dockUndockTimer) clearTimeout(dockUndockTimer)
-  dockUndockTimer = window.setTimeout(retract, DOCK_RECOIL_MS)
-}
-
-async function retract() {
-  dockUndockTimer = null
-  if (!dockEdge.value || !isPoked.value) return
-  isPoked.value = false
-  if (dockedWinPos) {
-    avatarAnchor.value = dockedWinPos.anchor
-    await animateWindowToLogical(dockedWinPos.x, dockedWinPos.y, DOCK_ANIM_MS)
-  }
-}
-
-/** 用户手动取消 dock（菜单项 / 拖拽 break out） */
-async function exitDock() {
-  if (!dockEdge.value) return
-  dockEdge.value = null
-  isPoked.value = false
-  if (dockUndockTimer) { clearTimeout(dockUndockTimer); dockUndockTimer = null }
-  if (undockedWinPos) {
-    avatarAnchor.value = undockedWinPos.anchor
-    await animateWindowToLogical(undockedWinPos.x, undockedWinPos.y, DOCK_ANIM_MS)
-  }
-  dockedWinPos = null
-  undockedWinPos = null
-}
-
-async function menuToggleDock() {
-  showMenu.value = false
-  if (dockEdge.value) {
-    await exitDock()
-  } else {
-    // 手动 dock：根据小人当前位置最近的边
-    const c = await currentAvatarScreenCenter()
-    if (!c) return
-    const mon = await getMonitorBounds()
-    const dRight = mon.x + mon.w - c.x
-    const dLeft = c.x - mon.x
-    const dBottom = mon.y + mon.h - c.y
-    const dTop = c.y - mon.y
-    const min = Math.min(dRight, dLeft, dBottom, dTop)
-    let edge: DockEdge = 'right'
-    if (min === dLeft) edge = 'left'
-    else if (min === dBottom) edge = 'bottom'
-    else if (min === dTop) edge = 'top'
-    await dockTo(edge)
-  }
-}
-
-async function onMouseDown(e: MouseEvent) {
-  if (e.button !== 0) return
-  isDragging = false
-  mouseDownTime = Date.now()
-  mouseDownX = e.screenX
-  mouseDownY = e.screenY
-  try {
-    const win = getCurrentWindow()
-    const pos = await win.outerPosition()
-    const scale = await win.scaleFactor()
-    // outerPosition 是 physical，转 logical 以匹配 e.screenX/Y（CSS px / logical）
-    dragStartWinLogicalX = pos.x / scale
-    dragStartWinLogicalY = pos.y / scale
-  } catch {
-    return
-  }
-  // 挂 window 级监听 —— 万一拖到边角鼠标短暂离开 .avatar 元素也不丢事件
-  window.addEventListener('mousemove', onWindowMouseMove)
-  window.addEventListener('mouseup', onWindowMouseUp)
-}
-
-function onWindowMouseMove(e: MouseEvent) {
-  // 鼠标按键已释放但 mouseup 没派发（例如鼠标焦点被 OS 拿走）→ 主动清理
-  if (!(e.buttons & 1)) {
-    onWindowMouseUp(e)
-    return
-  }
-  if (!isDragging) {
-    const dx = Math.abs(e.screenX - mouseDownX)
-    const dy = Math.abs(e.screenY - mouseDownY)
-    if (dx <= 5 && dy <= 5) return
-    isDragging = true
-    // 真的开始拖拽了，dock 状态立刻让位——不缓动、不留 recoil timer，让窗口
-    // 完全跟着手指走。否则 pokeOut 的动画会和拖拽 setPosition 抢窗口位置。
-    if (dockEdge.value) {
-      dockEdge.value = null
-      isPoked.value = false
-      if (dockUndockTimer) { clearTimeout(dockUndockTimer); dockUndockTimer = null }
-      cancelDockAnim()
-      dockedWinPos = null
-      undockedWinPos = null
-    }
-  }
-  const dxLogical = e.screenX - mouseDownX
-  const dyLogical = e.screenY - mouseDownY
-  pendingDragX = dragStartWinLogicalX + dxLogical
-  pendingDragY = dragStartWinLogicalY + dyLogical
-  if (dragRafId === null) {
-    dragRafId = requestAnimationFrame(flushDragPosition)
-  }
-}
-
-function onWindowMouseUp(e: MouseEvent) {
-  window.removeEventListener('mousemove', onWindowMouseMove)
-  window.removeEventListener('mouseup', onWindowMouseUp)
-  if (dragRafId !== null) {
-    cancelAnimationFrame(dragRafId)
-    dragRafId = null
-  }
-  // 最后一帧的位置可能还在 pending，立刻 flush 保证终态准确
-  flushDragPosition()
-
-  const duration = Date.now() - mouseDownTime
-  const dx = Math.abs(e.screenX - mouseDownX)
-  const dy = Math.abs(e.screenY - mouseDownY)
-  if (!isDragging && duration < 300 && dx < 5 && dy < 5) {
-    // 左键点击小人：按 config.leftClickAction 分发。打开前先关掉其他所有面板/菜单。
-    // 当前打开的就是目标面板时点一下应该收起 —— 保持原有 toggle 行为。
-    handleAvatarLeftClick()
-  }
-  const wasDragging = isDragging
-  isDragging = false
-  if (wasDragging) {
-    // 真正发生过拖拽再算 anchor，避免点击也触发窗口位置抖动；anchor 算完再
-    // 试自动 dock —— 顺序很重要，maybeAutoDock 依赖 avatarAnchor 算 avatar 中心位置
-    recomputeAnchor().then(() => maybeAutoDock())
-  }
-}
-
-function handleAvatarLeftClick() {
-  // dock 状态点击 → 退出 dock 再开面板。否则窗口大部分在屏幕外，面板也跟着藏，
-  // 用户点完看不到反馈。exitDock 把窗口缓动回 undock 位置，面板随窗口一起入场。
-  if (dockEdge.value) {
-    exitDock()
-  }
-  const action = configStore.config.leftClickAction
-  if (action === 'review') {
-    // 复盘窗口由 useDailyReview 控制可见态（store.showReviewWindow）。
-    // 已经显示则收起；否则关其它面板后打开
-    if (store.showReviewWindow) {
-      store.showReviewWindow = false
-    } else {
-      closeAllPanels()
-      openReview('today')
-    }
-    return
-  }
-  // 默认（含未识别值）走任务列表
-  if (store.showTaskWindow) {
-    store.showTaskWindow = false
-  } else {
-    closeAllPanels()
-    store.showTaskWindow = true
-  }
 }
 
 // --- 任务提醒联动 ---

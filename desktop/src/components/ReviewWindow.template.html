@@ -1,0 +1,243 @@
+<Transition name="panel">
+  <div v-if="store.showReviewWindow" class="review-panel pointer-target">
+    <header class="panel-header">
+      <div class="panel-title">
+        <span class="title-icon">📋</span>
+        <span class="title-text">今日复盘</span>
+      </div>
+      <div class="panel-actions">
+        <div class="range-switch">
+          <button class="range-btn" :class="{ active: range === 'today' }" :disabled="store.reviewLoading" @click="switchRange('today')">今天</button>
+          <button class="range-btn" :class="{ active: range === 'yesterday' }" :disabled="store.reviewLoading" @click="switchRange('yesterday')">昨天</button>
+          <button class="range-btn" :class="{ active: range === 'thisWeek' }" :disabled="store.reviewLoading" @click="switchRange('thisWeek')">本周</button>
+          <button class="range-btn" :class="{ active: range === 'lastWeek' }" :disabled="store.reviewLoading" @click="switchRange('lastWeek')">上周</button>
+        </div>
+        <button class="icon-btn" :class="{ spinning: refreshing }" title="刷新" @click="handleRefresh">↻</button>
+        <button class="icon-btn" title="关闭" @click="store.showReviewWindow = false">×</button>
+      </div>
+    </header>
+
+    <!-- 切 range / 手动刷新时的细条 loading：reviewData 已经在，不能用大空状态覆盖 -->
+    <div v-if="store.reviewLoading && store.reviewData" class="refresh-strip">
+      <span class="refresh-spinner">⟳</span>
+      <span>正在拉取「{{ RANGE_LABELS[range] }}」的复盘数据…</span>
+    </div>
+
+    <!-- 加载中（无数据时的大空状态） -->
+    <div v-if="store.reviewLoading && !store.reviewData" class="empty">
+      <span class="empty-icon loading">⟳</span>
+      <p class="empty-hint">正在扫描本地仓库和禅道任务…</p>
+    </div>
+
+    <!-- 错误 -->
+    <div v-else-if="store.reviewLastError && !store.reviewData" class="empty">
+      <span class="empty-icon error">!</span>
+      <p class="empty-text">生成复盘失败</p>
+      <p class="empty-hint">{{ store.reviewLastError }}</p>
+      <button class="retry-btn" @click="handleRefresh">重试</button>
+    </div>
+
+    <div v-else-if="store.reviewData" class="panel-body">
+      <!-- 招呼语 -->
+      <p class="greeting">
+        {{ configStore.config.userTitle }}，这是「{{ RANGE_LABELS[range] }}」的复盘
+      </p>
+      <!-- 概况 -->
+      <section class="section">
+        <div class="summary-grid">
+          <div class="summary-item">
+            <div class="summary-num">{{ store.reviewData.summary.totalCommits }}</div>
+            <div class="summary-label">commit</div>
+          </div>
+          <div class="summary-item">
+            <div class="summary-num">{{ store.reviewData.summary.businessLineCount }}</div>
+            <div class="summary-label">业务线</div>
+          </div>
+          <div class="summary-item">
+            <div class="summary-num">{{ store.reviewData.summary.tasksAdvancedCount }}</div>
+            <div class="summary-label">推进任务</div>
+          </div>
+          <div class="summary-item" v-if="store.reviewData.needsStatusUpdate.length > 0">
+            <div class="summary-num warn">{{ store.reviewData.needsStatusUpdate.length }}</div>
+            <div class="summary-label">待更新</div>
+          </div>
+        </div>
+        <p class="section-hint">范围：{{ store.reviewData.range.label }}</p>
+        <div v-if="range === 'today'" class="transaction-entry">
+          <button class="transaction-btn" @click="openTransactionHours">✍️ 事务类工作</button>
+          <span class="transaction-hint">没有 commit 的沟通、排障、部署、巡检，也可以从这里补工时。</span>
+        </div>
+      </section>
+
+      <!-- 空状态 -->
+      <div v-if="store.reviewData.summary.totalCommits === 0" class="empty-small">
+        这段时间没有本地提交。
+      </div>
+
+      <!-- 待状态更新的任务 -->
+      <section v-if="store.reviewData.needsStatusUpdate.length > 0" class="section needs-update">
+        <h3 class="section-title warn-title">⚠️ 需要在禅道更新状态</h3>
+        <ul class="needs-list">
+          <li
+            v-for="t in store.reviewData.needsStatusUpdate"
+            :key="t.taskId"
+            class="needs-item"
+            @click="openTask(t.taskId)"
+            title="点击打开禅道"
+          >
+            <div class="needs-title">#{{ t.taskId }} {{ t.taskName }}</div>
+            <div class="needs-reason">{{ t.reason }}</div>
+          </li>
+        </ul>
+      </section>
+
+      <!-- 按任务 -->
+      <section v-if="store.reviewData.advancedTasks.length > 0" class="section">
+        <h3 class="section-title">
+          <span>📝 按任务（用于禅道填报）</span>
+          <span class="section-count">{{ store.reviewData.advancedTasks.length }} 个任务</span>
+        </h3>
+        <p class="section-hint">点 ✍️ 写工时到禅道（弹窗内可编辑工时和内容）；点 📋 仅复制工作内容</p>
+        <ul class="task-fill-list">
+          <li v-for="t in store.reviewData.advancedTasks" :key="t.taskId" class="task-fill-item">
+            <div class="task-fill-row">
+              <span class="task-fill-id" @click="openTask(t.taskId)" title="打开禅道任务">#{{ t.taskId }}</span>
+              <span class="task-fill-name">{{ t.taskName }}</span>
+              <span v-if="t.suggestedHours" class="hours-pill">~{{ t.suggestedHours }}h</span>
+              <button
+                class="write-mini"
+                :class="{ written: isTaskWritten(t.taskId) }"
+                :disabled="isTaskWritten(t.taskId) || openingWrite"
+                @click="openWriteModalForTask(t)"
+                :title="isTaskWritten(t.taskId) ? '本会话已写入（去禅道可继续修改）' : `写入工时到禅道 #${t.taskId}`"
+              >
+                {{ isTaskWritten(t.taskId) ? '✓ 已写入' : '✍️ 写工时' }}
+              </button>
+              <button
+                class="copy-mini"
+                :class="`mini-${taskCopyState[t.taskId] || 'idle'}`"
+                @click="copyTaskCommits(t)"
+                :title="`复制 ${t.commitCount} 条工作内容`"
+              >
+                {{ taskCopyState[t.taskId] === 'ok' ? '✓' : taskCopyState[t.taskId] === 'fail' ? '×' : '📋' }}
+              </button>
+            </div>
+            <div class="task-fill-meta">
+              <span>{{ t.businessLine }}</span>
+              <span class="muted">·</span>
+              <span>{{ t.commitCount }} 个 commit</span>
+              <span v-if="t.status === 'wait'" class="status-mark">未开始</span>
+            </div>
+          </li>
+        </ul>
+      </section>
+
+      <!-- 业务线分组 -->
+      <section v-for="g in store.reviewData.byBusinessLine" :key="g.businessLine" class="section">
+        <h3 class="section-title">
+          <span>{{ g.businessLine }}</span>
+          <span class="section-count">
+            {{ g.commits.length }} 个 commit · {{ g.tasks.length }} 个任务
+            <span v-if="g.suggestedHours" class="hours-pill">建议 ~{{ g.suggestedHours }}h</span>
+          </span>
+        </h3>
+
+        <details class="commits-block" open>
+          <summary class="commits-summary">📦 commit 列表</summary>
+          <ul class="commit-list">
+            <li v-for="c in g.commits" :key="c.sha + c.repoPath" class="commit-item">
+              <div class="commit-title">{{ cleanCommitTitle(c.title) }}</div>
+              <div class="commit-meta">
+                <span class="commit-repo">{{ c.repoName }}</span>
+                <span class="commit-sha">{{ c.shortSha }}</span>
+                <span class="commit-time">{{ formatTime(c.authoredDate) }}</span>
+              </div>
+            </li>
+          </ul>
+        </details>
+
+        <details v-if="g.tasks.length > 0" class="commits-block">
+          <summary class="commits-summary">🎯 涉及的任务（{{ g.tasks.length }}）</summary>
+          <ul class="task-mini-list">
+            <li
+              v-for="t in g.tasks"
+              :key="t.taskId"
+              class="task-mini-item"
+              @click="openTask(t.taskId)"
+              title="点击打开禅道"
+            >
+              #{{ t.taskId }} {{ t.taskName }}
+            </li>
+          </ul>
+        </details>
+      </section>
+
+      <!-- 未关联任务的提交 -->
+      <section v-if="store.reviewData.orphanCommits.some(o => o.commits.length > 0)" class="section">
+        <h3 class="section-title">
+          <span>🧩 未关联禅道任务的提交</span>
+          <span class="section-count">{{ store.reviewData.summary.orphanCommitCount }} 个 commit</span>
+        </h3>
+        <p class="section-hint">这些 commit 没匹配到任务号。点 ✍️ 手动填一个任务 ID 写工时；点 📋 仅复制内容。</p>
+        <ul class="task-fill-list">
+          <li v-for="g in store.reviewData.orphanCommits.filter(o => o.commits.length > 0)"
+            :key="g.businessLine" class="task-fill-item orphan-item">
+            <div class="task-fill-row">
+              <span class="task-fill-name">{{ g.businessLine }}</span>
+              <span v-if="g.suggestedHours" class="hours-pill">~{{ g.suggestedHours }}h</span>
+              <button
+                class="write-mini"
+                :disabled="openingWrite"
+                @click="openWriteModalForOrphan(g)"
+                title="手动填任务 ID 后写入工时"
+              >
+                ✍️ 写到任务…
+              </button>
+              <button
+                class="copy-mini"
+                :class="`mini-${orphanCopyState[g.businessLine] || 'idle'}`"
+                @click="copyOrphanGroup(g)"
+                :title="`复制 ${g.commits.length} 条 commit`"
+              >
+                {{ orphanCopyState[g.businessLine] === 'ok' ? '✓' : orphanCopyState[g.businessLine] === 'fail' ? '×' : '📋' }}
+              </button>
+            </div>
+            <div class="task-fill-meta">
+              <span>{{ g.commits.length }} 个 commit</span>
+            </div>
+            <details class="orphan-commits-block">
+              <summary class="commits-summary">📦 commit 列表</summary>
+              <ul class="commit-list">
+                <li v-for="c in g.commits" :key="c.sha + c.repoPath" class="commit-item">
+                  <div class="commit-title">{{ cleanCommitTitle(c.title) }}</div>
+                  <div class="commit-meta">
+                    <span class="commit-repo">{{ c.repoName }}</span>
+                    <span class="commit-sha">{{ c.shortSha }}</span>
+                    <span class="commit-time">{{ formatTime(c.authoredDate) }}</span>
+                  </div>
+                </li>
+              </ul>
+            </details>
+          </li>
+        </ul>
+      </section>
+
+      <!-- 原始日报全文预览 -->
+      <section class="section">
+        <button class="toggle-raw" @click="showRaw = !showRaw">
+          {{ showRaw ? '收起' : '展开' }} 日报全文
+          <span class="toggle-arrow">{{ showRaw ? '▾' : '▸' }}</span>
+        </button>
+        <pre v-if="showRaw" class="markdown-pre">{{ store.reviewData.plainText }}</pre>
+      </section>
+    </div>
+
+    <!-- 打开写工时窗口失败的可见反馈 -->
+    <p v-if="writeOpenError" class="write-open-error">{{ writeOpenError }}</p>
+
+    <!-- 底部操作 -->
+    <footer v-if="store.reviewData" class="panel-footer">
+      <button class="copy-btn" :class="`state-${copyState}`" @click="handleCopy">{{ copyLabel }}</button>
+    </footer>
+  </div>
+</Transition>

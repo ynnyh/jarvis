@@ -100,12 +100,21 @@ check('npm run check:text 通过', () => {
   run('npm run check:text', { timeout: 30_000 })
 })
 
-// ── 5. 未提交变更提醒 ──
-check('工作区无未提交变更', () => {
-  const status = run('git status --porcelain')
-  if (status.trim()) {
-    return 'warn'
+// ── 5. CHANGELOG.md 检查 ──
+check(`CHANGELOG.md 有 "## v${targetVer}" 更新记录`, () => {
+  const changelog = readFileSync(resolve(root, 'CHANGELOG.md'), 'utf8')
+  const header = `## v${targetVer}`
+  const lines = changelog.split('\n')
+  const i = lines.findIndex(l => l.trim() === header || l.trim().startsWith(header + ' '))
+  if (i < 0) throw new Error(`CHANGELOG.md 缺少 "## v${targetVer}" 节，请先写更新记录再发版`)
+
+  // 检查节内是否有实质内容（跳过空白行）
+  let hasContent = false
+  for (let j = i + 1; j < lines.length; j++) {
+    if (lines[j].startsWith('## ')) break
+    if (lines[j].trim() && !lines[j].startsWith('#')) { hasContent = true; break }
   }
+  if (!hasContent) throw new Error(`CHANGELOG.md "## v${targetVer}" 节内容为空，请补充中文更新说明`)
 })
 
 // ── 6. signing key 本地可验证（可选） ──

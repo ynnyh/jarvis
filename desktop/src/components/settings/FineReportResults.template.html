@@ -1,0 +1,151 @@
+<div v-if="queryMode === 'report' && reportResult" class="report-wrap">
+  <section class="report-card">
+    <div class="report-head">
+      <div>
+        <h5 class="report-title">工作汇报</h5>
+        <p class="report-range">{{ reportResult.begin }} ~ {{ reportResult.end }}</p>
+      </div>
+      <div class="report-summary">
+        <span>{{ reportResult.appendix.total_hours.toFixed(1) }}h</span>
+        <small>总工时</small>
+      </div>
+    </div>
+    <pre class="report-text" :class="{ collapsed: !expandSummary }">{{ reportResult.summaryText }}</pre>
+    <button
+      v-if="reportResult.summaryText && reportResult.summaryText.length > 300"
+      class="expand-btn"
+      @click="$emit('update:expandSummary', !expandSummary)"
+    >{{ expandSummary ? '收起' : '查看更多' }}</button>
+  </section>
+
+  <section class="report-card">
+    <h5 class="report-title">重点主题</h5>
+    <ul class="theme-list">
+      <li v-for="theme in visibleThemes" :key="theme.name" class="theme-item">
+        <div class="theme-row">
+          <strong>{{ theme.name }}</strong>
+          <span>{{ theme.hours.toFixed(1) }}h</span>
+        </div>
+        <div v-if="theme.tasks.length" class="theme-meta">任务：{{ theme.tasks.join('；') }}</div>
+        <div v-if="theme.work_items.length" class="theme-meta">事项：{{ theme.work_items.join('；') }}</div>
+      </li>
+    </ul>
+    <button
+      v-if="(reportResult.themes?.length ?? 0) > PREVIEW_COUNT"
+      class="expand-btn"
+      @click="$emit('update:expandThemes', !expandThemes)"
+    >{{ expandThemes ? '收起' : `查看更多（共 ${reportResult.themes.length} 项）` }}</button>
+  </section>
+
+  <section class="report-grid">
+    <div class="report-card compact">
+      <h5 class="report-title">项目分布</h5>
+      <ul class="appendix-list">
+        <li v-for="item in visibleProjects" :key="`${item.projectName}-${item.hours}`">
+          <span>{{ item.projectName || '未命名项目' }}</span>
+          <strong>{{ Number(item.hours || 0).toFixed(1) }}h</strong>
+        </li>
+      </ul>
+      <button
+        v-if="topProjects.length > PREVIEW_COUNT"
+        class="expand-btn"
+        @click="$emit('update:expandProjects', !expandProjects)"
+      >{{ expandProjects ? '收起' : `查看更多（共 ${topProjects.length} 项）` }}</button>
+    </div>
+
+    <div class="report-card compact">
+      <h5 class="report-title">任务分布</h5>
+      <ul class="appendix-list">
+        <li v-for="item in visibleTasks" :key="`${item.projectName}-${item.taskName}-${item.hours}`">
+          <span>{{ item.taskName || '未命名任务' }}</span>
+          <strong>{{ Number(item.hours || 0).toFixed(1) }}h</strong>
+        </li>
+      </ul>
+      <button
+        v-if="topTasks.length > PREVIEW_COUNT"
+        class="expand-btn"
+        @click="$emit('update:expandTasks', !expandTasks)"
+      >{{ expandTasks ? '收起' : `查看更多（共 ${topTasks.length} 项）` }}</button>
+    </div>
+
+    <div class="report-card compact">
+      <h5 class="report-title">工时异常</h5>
+      <ul v-if="abnormalDays.length" class="abnormal-list">
+        <li v-for="item in abnormalDays" :key="`${item.date}-${item.hours}`" class="abnormal-item">
+          <div class="abnormal-left">
+            <span class="abnormal-date">{{ item.date }}</span>
+            <span class="abnormal-weekday" :class="{ weekend: !item.isWorkday }">{{ item.weekday }}</span>
+            <span v-if="item.holiday" class="abnormal-holiday">{{ item.holiday }}</span>
+          </div>
+          <div class="abnormal-right">
+            <strong class="abnormal-hours" :class="item.type">{{ item.hours.toFixed(1) }}h</strong>
+            <span class="abnormal-tag" :class="item.type">{{ item.type === 'low' ? '不足' : '加班' }}</span>
+          </div>
+        </li>
+      </ul>
+      <p v-else class="no-abnormal">所有工作日均达标</p>
+    </div>
+  </section>
+</div>
+
+<div v-else-if="queryMode === 'effort' && effortRecords.length" class="effort-table-wrap">
+  <div v-if="effortWorkDays && !showEffortDetail" class="effort-daily-summary">
+    <div class="daily-header">
+      <span class="daily-title">每日工时汇总</span>
+      <button class="toggle-detail-btn" @click="handleToggleDetail(true)">
+        展开明细
+      </button>
+    </div>
+    <ul class="daily-list">
+      <li v-for="g in effortDailyGroups" :key="g.date" class="daily-item" :class="{ low: g.hours < FULL_DAY_HOURS }">
+        <span class="daily-date">{{ g.date }}</span>
+        <span class="daily-hours">{{ g.hours.toFixed(1) }}h</span>
+        <span class="daily-badge" :class="g.hours >= FULL_DAY_HOURS ? 'ok' : 'low'">
+          {{ g.hours >= FULL_DAY_HOURS ? '达标' : '不足' }}
+        </span>
+        <span class="daily-count">{{ g.count }} 条</span>
+      </li>
+    </ul>
+  </div>
+  <template v-else>
+    <div v-if="effortWorkDays" class="daily-header" style="margin-bottom: 10px;">
+      <button class="toggle-detail-btn" @click="handleToggleDetail(false)">
+        收起明细
+      </button>
+    </div>
+    <table class="effort-table">
+      <colgroup>
+        <col class="col-date" />
+        <col class="col-hours" />
+        <col class="col-project" />
+        <col class="col-task" />
+        <col class="col-content" />
+      </colgroup>
+      <thead>
+        <tr>
+          <th>日期</th>
+          <th class="num">工时</th>
+          <th>项目</th>
+          <th>任务</th>
+          <th>工作内容</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="(record, index) in effortRecords" :key="`${record.date}-${record.taskName}-${index}`">
+          <td>{{ record.date }}</td>
+          <td class="num">{{ record.itemHours }}</td>
+          <td>{{ record.projectName }}</td>
+          <td>{{ record.taskName }}</td>
+          <td class="content-cell">{{ record.workContent }}</td>
+        </tr>
+      </tbody>
+      <tfoot v-if="effortRecords.length > 1">
+        <tr class="total-row">
+          <td>合计</td>
+          <td class="num">{{ totalItemHours.toFixed(1) }}</td>
+          <td colspan="3"></td>
+        </tr>
+      </tfoot>
+    </table>
+  </template>
+</div>

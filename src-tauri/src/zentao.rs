@@ -36,7 +36,7 @@ pub struct ZentaoTestResult {
 
 // ===== 任务工时分类 =====
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum TaskCategory {
     Ops,     // 运维：需求对接、数据核对、问题反馈
@@ -777,5 +777,36 @@ mod tests {
             Some("12345")
         );
         assert_eq!(extract_first_digits("no digits").as_deref(), None);
+    }
+
+    #[test]
+    fn classify_task_ops_keywords() {
+        assert_eq!(classify_task("需求对接-某某项目"), TaskCategory::Ops);
+        assert_eq!(classify_task("数据核对-月报"), TaskCategory::Ops);
+        assert_eq!(classify_task("问题反馈-线上故障"), TaskCategory::Ops);
+    }
+
+    #[test]
+    fn classify_task_feature_keyword() {
+        assert_eq!(classify_task("XZGN-用户管理"), TaskCategory::Feature);
+        assert_eq!(classify_task("【XZGN】新增导出功能"), TaskCategory::Feature);
+    }
+
+    #[test]
+    fn classify_task_daily_keywords() {
+        assert_eq!(classify_task("公共会议-周会"), TaskCategory::Daily);
+        assert_eq!(classify_task("培训-新员工入职"), TaskCategory::Daily);
+    }
+
+    #[test]
+    fn classify_task_other_fallback() {
+        assert_eq!(classify_task("随便什么任务"), TaskCategory::Other);
+        assert_eq!(classify_task("临时工作"), TaskCategory::Other);
+    }
+
+    #[test]
+    fn classify_task_ops_beats_feature_when_both_match() {
+        // Ops checked first, so "需求对接 XZGN 系统" should be Ops
+        assert_eq!(classify_task("需求对接 XZGN 系统"), TaskCategory::Ops);
     }
 }
