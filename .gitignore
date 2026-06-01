@@ -33,17 +33,10 @@ src-tauri/bundled/*
 .idea/
 *.swp
 
-# 工作中的敏感数据（含真实禅道任务标题、负责人等）
-my-assigned-tasks.json
-my-tasks-full.html
-zentao-my-tasks.html
-zentao-tasks-page.html
-dev-api-page.html
-api-data.json
-tasks-output.txt
+# 临时 / 调试数据文件（爬取的页面、API 快照等）
+data/
 
 # 临时 / 调试输出
-result-tmp.txt
 result-tmp.json
 r.json
 *.log

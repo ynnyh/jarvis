@@ -162,8 +162,8 @@ async fn rewrite_daily_with_llm(review: &daily_review::DailyReview) -> Result<St
 1. 完全去技术化——不出现 commit/sha/repo/PR/branch 等词，commit 标题原样使用（不要加技术修饰）\n\
 2. 不要凭空发挥，所有内容必须能从输入数据里找到依据\n\
 3. 用项目维度（业务线）+ 任务推进 + 需要补登/更新状态的事项 组织文章\n\
-4. 段落清晰，避免大段流水账。提供工时建议时按业务线总览，不必每个任务展开\n\
-5. 输出纯文本，不要 Markdown 符号（#、*、- 都不用）"
+4. 整体写成一段话，不要换行分段或分节。多个并列事项用数字编号列举（如 1.xxx 2.xxx 3.xxx），不要用横杠或星号\n\
+5. 输出纯文本，不要 Markdown 符号"
                 .into(),
             tool_calls: None,
             tool_call_id: None,

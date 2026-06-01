@@ -7,10 +7,15 @@
 // 写入成功后 emit "write-hours-done" 让复盘窗把任务标灰，然后 write_hours_close
 // 隐藏自己并 show avatar。
 
-import { onMounted, onUnmounted, ref, nextTick } from 'vue'
+import { onMounted, onUnmounted, ref, computed, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { emit } from '@tauri-apps/api/event'
 import ErrorBoundary from './components/ErrorBoundary.vue'
+
+interface TaskInfo {
+  id: string
+  name: string
+}
 
 interface WriteHoursPayload {
   taskId: string
@@ -18,17 +23,79 @@ interface WriteHoursPayload {
   suggestedHours?: number
   content: string
   kind: 'task' | 'orphan'
+  tasks?: TaskInfo[]
 }
 
 const payload = ref<WriteHoursPayload | null>(null)
+const taskSearch = ref('')
 const taskIdInput = ref('')
+const selectedTaskName = ref('')
 const hours = ref('')
 const content = ref('')
 const submitting = ref(false)
 const error = ref('')
 const result = ref<'idle' | 'ok' | 'fail'>('idle')
-const taskIdEl = ref<HTMLInputElement | null>(null)
 const hoursEl = ref<HTMLInputElement | null>(null)
+const searchWrapper = ref<HTMLElement | null>(null)
+const showDropdown = ref(false)
+
+/** 当前写的任务 ID（去掉 # 前缀，纯数字校验） */
+const currentTaskId = computed(() => taskIdInput.value.trim().replace(/^#/, ''))
+
+/** 已选中某个任务 */
+const hasSelectedTask = computed(() => currentTaskId.value.length > 0)
+
+/** 按搜索关键词过滤任务列表 */
+const filteredTasks = computed(() => {
+  const tasks = payload.value?.tasks
+  if (!tasks || tasks.length === 0) return []
+  const q = taskSearch.value.trim().toLowerCase()
+  if (!q) return []
+  return tasks
+    .filter(t => {
+      if (t.id.startsWith(q)) return true
+      if (t.name.toLowerCase().includes(q)) return true
+      return false
+    })
+    .slice(0, 30) // 最多展示 30 条
+})
+
+function selectTask(t: TaskInfo) {
+  taskIdInput.value = t.id
+  taskSearch.value = `#${t.id} ${t.name}`
+  selectedTaskName.value = t.name
+  showDropdown.value = false
+  error.value = ''
+  // 聚焦到工时输入
+  nextTick(() => hoursEl.value?.focus())
+}
+
+function clearTask() {
+  taskIdInput.value = ''
+  taskSearch.value = ''
+  selectedTaskName.value = ''
+  showDropdown.value = false
+}
+
+function onSearchInput() {
+  // 用户手动改搜索框时清除已选 taskId
+  if (taskSearch.value.trim() === '') {
+    taskIdInput.value = ''
+    selectedTaskName.value = ''
+  }
+  showDropdown.value = true
+}
+
+function onSearchBlur() {
+  // 延迟隐藏让 click 事件先触发
+  setTimeout(() => { showDropdown.value = false }, 180)
+}
+
+function onSearchFocus() {
+  if (filteredTasks.value.length > 0 || taskSearch.value.trim()) {
+    showDropdown.value = true
+  }
+}
 
 async function closeWindow() {
   if (submitting.value) return
@@ -36,14 +103,13 @@ async function closeWindow() {
     await invoke('write_hours_close')
   } catch (e) {
     console.error('write_hours_close 失败:', e)
-    // 兜底拽回 avatar，避免用户陷入"小人消失只能重启 app"
     try { await invoke('avatar_show_fallback') } catch {}
   }
 }
 
 async function submit() {
   if (submitting.value) return
-  const tid = taskIdInput.value.trim().replace(/^#/, '')
+  const tid = currentTaskId.value
   if (!/^\d+$/.test(tid)) {
     error.value = '任务 ID 必须是纯数字（如 10238）'
     return
@@ -66,7 +132,6 @@ async function submit() {
     })
     if (r.success && r.data?.ok) {
       result.value = 'ok'
-      // 通知复盘窗把这个任务标灰
       await emit('write-hours-done', { taskId: tid })
       setTimeout(() => { closeWindow() }, 1000)
     } else {
@@ -84,6 +149,10 @@ async function submit() {
 function applyPayload(p: WriteHoursPayload) {
   payload.value = p
   taskIdInput.value = p.taskId || ''
+  selectedTaskName.value = p.taskName || ''
+  taskSearch.value = p.taskId
+    ? `#${p.taskId} ${p.taskName}`
+    : p.taskName || ''
   hours.value = p.suggestedHours ? String(p.suggestedHours) : ''
   content.value = p.content || ''
   error.value = ''
@@ -103,7 +172,6 @@ async function loadPayload() {
 
 function onKeydown(ev: KeyboardEvent) {
   if (ev.key === 'Escape') { closeWindow(); return }
-  // Ctrl/Cmd+Enter 提交：textarea 里普通 Enter 仍换行，只有带修饰键才提交
   if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) {
     ev.preventDefault()
     submit()
@@ -111,14 +179,18 @@ function onKeydown(ev: KeyboardEvent) {
 }
 
 onMounted(async () => {
-  // Rust 端 write_hours_open 在写入 state 之后立刻 show + reload，所以这里
-  // mount 时 state 一定已经有当次 payload，直接拉就行。
   window.addEventListener('keydown', onKeydown)
   await loadPayload()
   await nextTick()
-  // 聚焦到第一个需要填的框：孤儿没 taskId 聚焦 taskId，否则聚焦工时
-  if (!taskIdInput.value) taskIdEl.value?.focus()
-  else hoursEl.value?.focus()
+  // 聚焦到搜索框（无预填任务时）或工时输入
+  if (!taskIdInput.value) {
+    // 有预填任务名时自动搜索
+    if (selectedTaskName.value && payload.value?.tasks?.length) {
+      showDropdown.value = true
+    }
+  } else {
+    hoursEl.value?.focus()
+  }
 })
 
 onUnmounted(() => {
@@ -131,28 +203,49 @@ onUnmounted(() => {
   <div class="wh-root">
     <header class="wh-header" data-tauri-drag-region>
       <h1 class="wh-title" data-tauri-drag-region>
-        {{ payload?.kind === 'orphan' ? '✍️ 写到任务（手动填任务 ID）' : '✍️ 写入工时到禅道' }}
+        {{ payload?.kind === 'orphan' ? '✍️ 写到任务' : '✍️ 写入工时到禅道' }}
       </h1>
       <button class="wh-header-close" :disabled="submitting" @click="closeWindow" title="关闭">×</button>
     </header>
 
     <div class="wh-body">
       <div class="form-row">
-        <label class="form-label">任务 ID</label>
-        <input
-          v-model="taskIdInput"
-          ref="taskIdEl"
-          class="form-input"
-          type="text"
-          inputmode="numeric"
-          :disabled="submitting || result === 'ok'"
-          placeholder="如 10238（不用带 # 号）"
-        />
-        <p v-if="payload?.kind === 'task'" class="form-hint">
-          来自任务「{{ payload.taskName }}」，需要改写到其它任务可直接覆盖
+        <label class="form-label">禅道任务</label>
+        <div class="task-search-wrapper" ref="searchWrapper">
+          <input
+            v-model="taskSearch"
+            class="form-input"
+            type="text"
+            :disabled="submitting || result === 'ok'"
+            placeholder="输入任务名称或 ID 搜索…"
+            @input="onSearchInput"
+            @focus="onSearchFocus"
+            @blur="onSearchBlur"
+          />
+          <ul v-if="showDropdown && filteredTasks.length > 0" class="task-search-dropdown">
+            <li
+              v-for="t in filteredTasks"
+              :key="t.id"
+              class="task-search-option"
+              @mousedown.prevent="selectTask(t)"
+            >
+              <span class="tso-id">#{{ t.id }}</span>
+              <span class="tso-name">{{ t.name }}</span>
+            </li>
+          </ul>
+          <p v-if="!hasSelectedTask && !showDropdown && taskSearch && filteredTasks.length === 0 && payload?.tasks?.length" class="form-hint">
+            没有匹配的任务，可以继续输入任务 ID
+          </p>
+        </div>
+        <p v-if="hasSelectedTask" class="form-hint">
+          当前选中：<strong>#{{ currentTaskId }} {{ selectedTaskName }}</strong>
+          <button class="clear-task-btn" @click="clearTask" :disabled="submitting || result === 'ok'">换一个</button>
+        </p>
+        <p v-else-if="payload?.kind === 'task' && payload.taskId" class="form-hint">
+          来自任务「{{ payload.taskName }}」，可搜索切换或直接填任务 ID
         </p>
         <p v-else class="form-hint">
-          这批 commit 没自动关联到任何任务，填一个真实任务 ID 把工时写过去
+          这批 commit 没自动关联到任务。输入关键词搜索后点选，或直接填任务 ID
         </p>
       </div>
 
@@ -304,6 +397,21 @@ onUnmounted(() => {
   color: rgba(255, 255, 255, 0.45);
   line-height: 1.5;
 }
+.form-hint strong { color: rgba(196, 181, 253, 0.95); }
+
+.clear-task-btn {
+  background: transparent;
+  border: none;
+  color: rgba(96, 165, 250, 0.85);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0 4px;
+  margin-left: 6px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.clear-task-btn:hover:not(:disabled) { color: rgba(147, 197, 253, 1); }
+.clear-task-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .form-error {
   margin: 0;
@@ -323,6 +431,53 @@ onUnmounted(() => {
   background: rgba(34, 197, 94, 0.12);
   border-left: 3px solid rgba(34, 197, 94, 0.5);
   border-radius: 4px;
+}
+
+/* ===== 任务搜索下拉 ===== */
+.task-search-wrapper { position: relative; }
+.task-search-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 4px 0;
+  background: #1e293b;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+.task-search-dropdown::-webkit-scrollbar { width: 4px; }
+.task-search-dropdown::-webkit-scrollbar-track { background: transparent; }
+.task-search-dropdown::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
+.task-search-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.85);
+  transition: background 0.1s;
+}
+.task-search-option:hover {
+  background: rgba(59, 130, 246, 0.2);
+}
+.tso-id {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: rgba(147, 197, 253, 0.8);
+  flex-shrink: 0;
+}
+.tso-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .wh-footer {

@@ -38,5 +38,9 @@ const store = useConfigStore()
         分钟提醒我做收尾
       </span>
     </label>
+    <label class="settings-toggle">
+      <input type="checkbox" v-model="store.config.notifications.eveningSummaryChannelNotify" />
+      <span :class="{ disabled: !store.config.notifications.eveningSummary }">同时推送到手机</span>
+    </label>
   </section>
 </template>

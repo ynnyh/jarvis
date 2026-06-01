@@ -18,6 +18,37 @@ use crate::llm::{
 };
 use crate::tools;
 
+/// Streaming event emitted during agent loop execution.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(tag = "type")]
+pub enum StreamEvent {
+    /// Text delta from the current LLM response
+    #[serde(rename = "delta")]
+    Delta { text: String },
+    /// Assistant message complete (text + optional tool calls)
+    #[serde(rename = "assistant")]
+    Assistant {
+        content: String,
+        iteration: u32,
+        has_tool_calls: bool,
+    },
+    /// Tool call result
+    #[serde(rename = "tool")]
+    Tool {
+        name: String,
+        preview: String,
+        iteration: u32,
+    },
+    /// Agent loop finished
+    #[serde(rename = "done")]
+    Done {
+        tokens_in: u64,
+        tokens_out: u64,
+        truncated: bool,
+    },
+}
+
 pub const DEFAULT_AGENT_TOOLS: &[&str] = &[
     "get_tasks",
     "get_today_tasks",
@@ -34,13 +65,13 @@ pub fn default_system_prompt(assistant_name: &str, user_title: &str) -> String {
     format!(
         "你是 {}，{}的个人任务助手。在对话里称呼用户为「{}」。\n\
 你可以调用工具查询禅道任务、本地 commit、今日复盘、风险分析、工时报表等。\n\
-你还可以帮用户准备给禅道任务登记工时（prepare-log-task-effort），但必须等用户确认后才会真正写入。\n\
 原则：\n\
 1. 用户问到任务/工时/风险/复盘等具体业务问题时，先调相关工具拿真实数据，再回答。不要凭空编。\n\
 2. 工具不可用或失败时，明确告诉用户失败原因，不要装作有数据。\n\
 3. 回答要简洁直接。日报、风险类的输出去技术化——不要出现 commit/sha/repo 这种词，用项目名 + 任务名组织。\n\
-4. 写工时时需要用户提供任务 ID、工时数和工作内容。如果信息不全，主动追问；信息完整后调用 prepare-log-task-effort 生成待确认写入建议，不要直接写入。\n\
-5. 查短周期工时时使用 get_efforts；查本月、本季度、近半年、本年等长周期时，优先使用 get_effort_report，输出完整工作汇报正文和数据附录。",
+4. 查短周期工时时使用 get_efforts；查本月、本季度、近半年、本年等长周期时，优先使用 get_effort_report，输出完整工作汇报正文和数据附录。\n\
+5. **主动提议记工时**：当用户提到「干了什么、花了多长时间」时（例如\"修了登录bug花了2小时\"），主动调用 get_tasks 查找匹配任务，然后调用 prepare-log-task-effort 生成待确认写入建议。调用 prepare-log-task-effort 时记得传出 taskName（任务名称），这样用户不用再自己去查任务号。\n\
+   注意：必须等用户确认（说\"确认\"\"好\"\"可以\"）后才会真正写入，你只负责准备建议。如果信息不全（缺任务、缺工时、缺工作描述），先追问清楚再准备。",
         assistant_name, user_title, user_title
     )
 }
@@ -189,6 +220,154 @@ pub async fn run_agent(opts: RunAgentOptions<'_>) -> RunAgentResult {
     }
 }
 
+/// Stream-capable agent loop. Same as `run_agent` but uses `streaming_chat` for
+/// each LLM call and emits `StreamEvent`s through `on_event`.
+pub async fn run_agent_streaming(
+    opts: RunAgentOptions<'_>,
+    on_event: std::sync::Arc<dyn Fn(StreamEvent) + Send + Sync>,
+) -> RunAgentResult {
+    let max_iterations = opts.max_iterations.max(1);
+    let mut messages: Vec<ChatMessage> = Vec::new();
+    if let Some(sp) = opts.system_prompt {
+        messages.push(ChatMessage {
+            role: Role::System,
+            content: sp,
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+        });
+    }
+    messages.extend(opts.messages.into_iter());
+
+    let tools = build_tool_definitions(opts.allowed_tools);
+    let mut new_messages: Vec<ChatMessage> = Vec::new();
+    let mut steps: Vec<AgentStep> = Vec::new();
+    let mut tokens_in = 0u64;
+    let mut tokens_out = 0u64;
+
+    for iteration in 0..max_iterations {
+        let mut req = ChatRequest::new(messages.clone());
+        req.temperature = Some(opts.temperature);
+        req.max_tokens = Some(opts.max_tokens);
+        if !tools.is_empty() {
+            req.tools = Some(tools.clone());
+        }
+
+        let cred = crate::settings::get_llm_credentials();
+        let res = match llm::streaming_chat(&req, &cred, {
+            let on_event = on_event.clone();
+            move |text| {
+                on_event(StreamEvent::Delta { text });
+            }
+        })
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                let content = if e.contains("LLM HTTP 502") {
+                    "模型服务现在返回 502，通常是上游 LLM 网关临时不可用或线路抖动。请稍后重试；如果大窗仍然正常，重启一下渠道服务再试。".to_string()
+                } else {
+                    format!("LLM 调用失败：{}", e)
+                };
+                let err_msg = ChatMessage {
+                    role: Role::Assistant,
+                    content,
+                    tool_calls: None,
+                    tool_call_id: None,
+                    name: None,
+                };
+                new_messages.push(err_msg);
+                return RunAgentResult {
+                    new_messages,
+                    steps,
+                    tokens_in,
+                    tokens_out,
+                    truncated: false,
+                };
+            }
+        };
+        tokens_in += res.tokens_in;
+        tokens_out += res.tokens_out;
+
+        let has_tool_calls = !res.tool_calls.is_empty();
+        on_event(StreamEvent::Assistant {
+            content: res.text.clone(),
+            iteration,
+            has_tool_calls,
+        });
+
+        let assistant_msg = ChatMessage {
+            role: Role::Assistant,
+            content: res.text.clone(),
+            tool_calls: if has_tool_calls {
+                Some(res.tool_calls.clone())
+            } else {
+                None
+            },
+            tool_call_id: None,
+            name: None,
+        };
+        messages.push(assistant_msg.clone());
+        new_messages.push(assistant_msg.clone());
+
+        if !has_tool_calls {
+            steps.push(AgentStep {
+                assistant_message: assistant_msg,
+                tool_results: Vec::new(),
+            });
+            return RunAgentResult {
+                new_messages,
+                steps,
+                tokens_in,
+                tokens_out,
+                truncated: false,
+            };
+        }
+
+        let mut tool_results: Vec<ChatMessage> = Vec::new();
+        for call in &res.tool_calls {
+            let tool_msg = execute_tool_call(call, opts.allowed_tools).await;
+            let preview = tool_msg
+                .content
+                .chars()
+                .take(80)
+                .collect::<String>()
+                .replace('\n', " ");
+            on_event(StreamEvent::Tool {
+                name: tool_msg.name.clone().unwrap_or_default(),
+                preview,
+                iteration,
+            });
+            tool_results.push(tool_msg.clone());
+            messages.push(tool_msg.clone());
+            new_messages.push(tool_msg);
+        }
+        steps.push(AgentStep {
+            assistant_message: assistant_msg,
+            tool_results,
+        });
+    }
+
+    let stop_msg = ChatMessage {
+        role: Role::Assistant,
+        content: format!(
+            "（达到最大工具调用轮数 {}，强制停止。可能任务过于复杂，或工具结果反复无法收敛。）",
+            max_iterations
+        ),
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+    };
+    new_messages.push(stop_msg);
+    RunAgentResult {
+        new_messages,
+        steps,
+        tokens_in,
+        tokens_out,
+        truncated: true,
+    }
+}
+
 async fn execute_tool_call(call: &ToolCall, allowed: &[String]) -> ChatMessage {
     let name = call.function.name.clone();
     // 红线第二道防线：无论 allowed 列表怎么传，agent 都不能直接调用写禅道的工具。
@@ -290,7 +469,7 @@ fn build_tool_definitions(allowed: &[String]) -> Vec<ToolDefinition> {
 fn tool_schema(name: &str) -> Option<(String, Value)> {
     match name {
         "get_tasks" => Some((
-            "获取当前用户在禅道指派给自己的全部任务列表（去掉已关闭/取消的）".into(),
+            "获取当前用户在禅道指派给自己的全部任务列表（去掉已关闭/取消的）。当用户提到做了什么工作时，先用此工具查匹配的任务 ID，再调用 prepare-log-task-effort。".into(),
             json!({ "type": "object", "properties": {}, "additionalProperties": false }),
         )),
         "get_today_tasks" => Some((
@@ -375,11 +554,12 @@ fn tool_schema(name: &str) -> Option<(String, Value)> {
             }),
         )),
         "prepare-log-task-effort" => Some((
-            "准备给禅道任务登记工时，但不直接写入。需要任务 ID、工时数和工作内容描述；返回待用户确认的写入建议。".into(),
+            "准备给禅道任务登记工时，但不直接写入。需要任务 ID、工时数和工作内容描述，可选传任务名称；返回待用户确认的写入建议。".into(),
             json!({
                 "type": "object",
                 "properties": {
                     "taskId": { "type": "string", "description": "禅道任务 ID" },
+                    "taskName": { "type": "string", "description": "任务名称（可选，填入后用户不用自己去查任务号）" },
                     "hours": { "type": "number", "description": "工时数，必须为正数" },
                     "work": { "type": "string", "description": "工作内容描述" },
                     "date": { "type": "string", "description": "日期，格式 YYYY-MM-DD，不传则默认今天" }

@@ -16,6 +16,8 @@ struct LogEffortInput {
     date: Option<String>,
     #[serde(default, rename = "clientRequestId")]
     client_request_id: Option<String>,
+    #[serde(default, rename = "taskName")]
+    task_name: Option<String>,
 }
 
 /// 扫审计日志找同 clientRequestId 的成功写入，返回其 effortId（幂等去重用）。
@@ -142,9 +144,10 @@ pub(crate) async fn prepare_log_task_effort(input: Value) -> Result<Value, Strin
             "date": date,
         },
         "summary": format!(
-            "任务: {}\n工时: {}h\n日期: {}\n内容: {}",
+            "任务: #{}{}\n工时: {}h\n日期: {}\n内容: {}",
             parsed.task_id.trim(),
             parsed.hours,
+                parsed.task_name.as_ref().map(|n| format!(" {}", n)).unwrap_or_default(),
             date,
             parsed.work.trim()
         ),

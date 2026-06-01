@@ -1,17 +1,10 @@
-import { onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useConfigStore } from '../stores/config'
-
-const CHECK_INTERVAL = 60 * 1000
+import { useSharedTick } from './useSharedTick'
 
 interface ToolResult {
   success: boolean
-  data?: {
-    totalHours?: number
-    count?: number
-    begin?: string
-    end?: string
-  }
+  data?: { totalHours?: number; count?: number; begin?: string; end?: string }
   error?: string
 }
 
@@ -24,50 +17,37 @@ function todayStr(): string {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
-
 function todayKey(suffix: string): string {
   return `jarvis.effortClosing.${todayStr()}.${suffix}`
 }
-
 function getFlag(suffix: string): string | null {
   try { return localStorage.getItem(todayKey(suffix)) } catch { return null }
 }
-
 function setFlag(suffix: string, value: string) {
   try { localStorage.setItem(todayKey(suffix), value) } catch { /* ignore storage quota */ }
 }
 
-export function ignoreTodayEffortClosing() {
-  setFlag('ignored', '1')
-}
+export function ignoreTodayEffortClosing() { setFlag('ignored', '1') }
 
 function parseHm(hm: string): number | null {
   const match = /^(\d{1,2}):(\d{2})$/.exec((hm || '').trim())
   if (!match) return null
-  const h = Number(match[1])
-  const m = Number(match[2])
+  const h = Number(match[1]), m = Number(match[2])
   if (!Number.isFinite(h) || !Number.isFinite(m) || h < 0 || h > 23 || m < 0 || m > 59) return null
   return h * 60 + m
 }
-
 function currentMinutes(): number {
   const now = new Date()
   return now.getHours() * 60 + now.getMinutes()
 }
-
 function endOfWorkdayMinutes(configStore: ReturnType<typeof useConfigStore>): number | null {
   const ends = configStore.config.workSchedule.periods
-    .map(p => parseHm(p.end))
-    .filter((v): v is number => v !== null)
-    .sort((a, b) => a - b)
+    .map(p => parseHm(p.end)).filter((v): v is number => v !== null).sort((a, b) => a - b)
   return ends.length ? ends[ends.length - 1] : null
 }
-
 function shouldSkipDay(configStore: ReturnType<typeof useConfigStore>): boolean {
-  const phase = configStore.phase
-  return phase === 'weekend' || phase === 'dayoff'
+  return configStore.phase === 'weekend' || configStore.phase === 'dayoff'
 }
-
 function shouldRepeat(configStore: ReturnType<typeof useConfigStore>, nowMinutes: number): boolean {
   const repeat = Number(configStore.config.notifications.effortClosingRepeatMinutes || 0)
   if (repeat < 15) return false
@@ -75,23 +55,17 @@ function shouldRepeat(configStore: ReturnType<typeof useConfigStore>, nowMinutes
   if (!last) return true
   return Date.now() - last >= repeat * 60 * 1000 && nowMinutes <= latestReminderMinutes(configStore)
 }
-
 function latestReminderMinutes(configStore: ReturnType<typeof useConfigStore>): number {
   return parseHm(configStore.config.notifications.effortClosingLatestTime) ?? 21 * 60
 }
 
 export function useEffortClosingCheck(options: Options) {
   const configStore = useConfigStore()
-  let timer: ReturnType<typeof setInterval> | null = null
   let checking = false
 
   async function notifyChannels(text: string) {
     if (!configStore.config.notifications.effortClosingChannelNotify) return
-    try {
-      await invoke('channels_notify', { text })
-    } catch {
-      // 桌面提醒已经展示，机器人通道失败不打断用户。
-    }
+    try { await invoke('channels_notify', { text }) } catch { /* ignore */ }
   }
 
   async function tick() {
@@ -102,24 +76,20 @@ export function useEffortClosingCheck(options: Options) {
     if (shouldSkipDay(configStore)) return
     if (!configStore.config.fineReport.realName?.trim()) return
     if (getFlag('ignored') === '1') return
-
     const lastEnd = endOfWorkdayMinutes(configStore)
     if (lastEnd === null) return
     const now = currentMinutes()
     const firstCheckAt = lastEnd + Number(n.effortClosingMinutesAfterWork || 10)
     if (now < firstCheckAt) return
     if (now > latestReminderMinutes(configStore)) return
-
     const alreadyMet = getFlag('met') === '1'
     if (alreadyMet) return
     const reminded = getFlag('reminded') === '1'
     if (reminded && !shouldRepeat(configStore, now)) return
-
     checking = true
     try {
       const result = await invoke<ToolResult>('tool_execute', {
-        name: 'get_efforts',
-        input: { range: 'today' },
+        name: 'get_efforts', input: { range: 'today' },
       })
       if (!result.success) {
         if (!reminded) {
@@ -131,30 +101,15 @@ export function useEffortClosingCheck(options: Options) {
       }
       const total = Number(result.data?.totalHours || 0)
       const target = Number(n.effortClosingTargetHours || 8)
-      if (total >= target) {
-        setFlag('met', '1')
-        return
-      }
+      if (total >= target) { setFlag('met', '1'); return }
       const missing = Math.max(0, target - total)
       setFlag('reminded', '1')
       setFlag('lastReminderAt', String(Date.now()))
       const text = `${configStore.config.userTitle}，今天已登记 ${total.toFixed(1)}h，还差 ${missing.toFixed(1)}h，要不要补一下工时？`
       options.onReminder(text, '⏱️')
       await notifyChannels(text)
-    } finally {
-      checking = false
-    }
+    } finally { checking = false }
   }
 
-  onMounted(() => {
-    setTimeout(tick, 10_000)
-    timer = setInterval(tick, CHECK_INTERVAL)
-  })
-
-  onUnmounted(() => {
-    if (timer) clearInterval(timer)
-    timer = null
-  })
-
-  return { tick }
+  useSharedTick(tick)
 }

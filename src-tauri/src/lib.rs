@@ -233,6 +233,7 @@ pub fn run() {
             commands::drag_window,
             commands::cursor_pos_in_window,
             commands::tool_execute,
+            commands::chat_send_stream,
             commands::get_proactive_reminders,
             commands::fetch_task_alerts,
             commands::open_zentao_task,

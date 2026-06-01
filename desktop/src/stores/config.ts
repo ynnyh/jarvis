@@ -40,6 +40,7 @@ export interface JarvisConfig {
     todayPlanPromptTime: string
     eveningSummary: boolean
     eveningSummaryMinutesBefore: number
+    eveningSummaryChannelNotify: boolean
     effortClosingCheck: boolean
     effortClosingMinutesAfterWork: number
     effortClosingTargetHours: number
@@ -155,6 +156,7 @@ const defaultConfig = (): JarvisConfig => ({
     todayPlanPromptTime: '09:10',
     eveningSummary: true,
     eveningSummaryMinutesBefore: 30,
+    eveningSummaryChannelNotify: false,
     effortClosingCheck: true,
     effortClosingMinutesAfterWork: 10,
     effortClosingTargetHours: 8,

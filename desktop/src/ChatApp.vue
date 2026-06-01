@@ -8,8 +8,10 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { Directive } from 'vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { useConfigStore } from './stores/config'
 import ErrorBoundary from './components/ErrorBoundary.vue'
+import MarkdownRenderer from './components/MarkdownRenderer.vue'
 
 // rename input 出现时自动 focus + select。Vue 3 <script setup> 里 v 前缀的常量
 // 自动被识别为模板里的 v-focus 指令
@@ -76,7 +78,8 @@ const isSending = ref(false)
 const renamingId = ref<string | null>(null)
 const renamingValue = ref('')
 const messagesEl = ref<HTMLElement | null>(null)
-/** 已展开的 tool 消息索引（按当前对话内的下标）。切换对话时清空 */
+/** 流式输出时累积的文本（纯视觉，不落盘） */
+const streamingContent = ref('')
 const expandedToolMsgs = ref<Set<number>>(new Set())
 
 const sortedConversations = computed(() =>
@@ -216,12 +219,29 @@ async function commitRename() {
 }
 
 // ===== 发送消息 → 调 chat_send 工具跑 agent loop =====
+const CONFIRM_KEYWORDS = ['确认', '确认写入', '好的', '好', '是的', '可以', '写', '写入', '行', '嗯', 'ok', 'OK']
+
+/** 检查用户文本是否为对上一条 pending write 的确认 */
+function matchConfirmIntent(text: string): boolean {
+  const t = text.trim()
+  return CONFIRM_KEYWORDS.some(kw => t === kw || t.startsWith(kw))
+}
+
 async function sendMessage() {
   const text = inputText.value.trim()
   if (!text || isSending.value || !currentConversation.value) return
 
   const conv = currentConversation.value
   const now = Date.now()
+
+  // 如果用户确认了 pending write，先自动确认（但继续发消息，让 agent 回复）
+  if (matchConfirmIntent(text)) {
+    const pending = conv.messages.find(m => m.pendingWrite && m.writeStatus === 'pending')
+    if (pending) {
+      await confirmPendingWrite(pending)
+      // 不 return——继续发送，让 agent 看到确认消息并回复
+    }
+  }
 
   // 1. 追加 user
   conv.messages.push({ role: 'user', content: text, createdAt: now })
@@ -239,32 +259,45 @@ async function sendMessage() {
     await invoke('conversations_save', { conversation: conv })
     await refreshList()
 
-    // 2. 跑 agent。喂 LLM 的消息只保留 role + content + tool 字段，去掉 createdAt 等本地字段
+    // 2. 跑 agent（流式）。喂 LLM 的消息只保留 role + content + tool 字段
     const llmMessages = conv.messages.map(m => stripLocalFields(m))
-    const r = await invoke<{
-      success: boolean
-      data?: { newMessages: any[]; tokensIn: number; tokensOut: number; truncated: boolean }
-      error?: string
-    }>('tool_execute', {
-      name: 'chat_send',
-      input: {
-        messages: llmMessages,
-        assistantName: configStore.config.assistantName,
-        userTitle: configStore.config.userTitle,
-      },
+
+    // 先订阅流式事件（invoke 期间持续发射）
+    const unlisten = await listen<Record<string, any>>('chat:stream', (event) => {
+      const payload = event.payload
+      if (payload.type === 'delta' && typeof payload.text === 'string') {
+        streamingContent.value += payload.text
+        scrollToBottom()
+      } else if (payload.type === 'tool' && typeof payload.name === 'string') {
+        streamingContent.value += '\n\n*\uD83D\uDD27 \u8C03用 ' + payload.name + '…*'
+        scrollToBottom()
+      } else if (payload.type === 'assistant' && payload.hasToolCalls) {
+        streamingContent.value += '\n\n*\uD83D\uDD0D \u51C6备查询数据…*'
+        scrollToBottom()
+      }
     })
 
-    if (!r.success || !r.data) {
-      conv.messages.push({
-        role: 'assistant',
-        content: `（调用失败：${r.error || '未知错误'}。检查 LLM 配置是否填好。）`,
-        createdAt: Date.now(),
+    try {
+      const r = await invoke<{
+        newMessages: any[]
+        tokensIn: number
+        tokensOut: number
+        truncated: boolean
+      }>('chat_send_stream', {
+        input: {
+          messages: llmMessages,
+          assistantName: configStore.config.assistantName,
+          userTitle: configStore.config.userTitle,
+        },
       })
-    } else {
-      // 把 agent 新生成的所有消息（assistant + tool）追加到对话，并加上本地 createdAt
+
+      // 流式结束，清除视觉层
+      streamingContent.value = ''
+
+      // 用真实消息重建对话
       const baseTs = Date.now()
-      for (let i = 0; i < r.data.newMessages.length; i++) {
-        const m = r.data.newMessages[i]
+      for (let i = 0; i < r.newMessages.length; i++) {
+        const m = r.newMessages[i]
         const next: ChatMessage = { ...m, createdAt: baseTs + i }
         const pendingWrite = pendingWriteFromToolMessage(next)
         if (pendingWrite) {
@@ -273,6 +306,8 @@ async function sendMessage() {
         }
         conv.messages.push(next)
       }
+    } finally {
+      unlisten()
     }
     conv.updatedAt = Date.now()
     await invoke('conversations_save', { conversation: conv })
@@ -280,6 +315,7 @@ async function sendMessage() {
     await nextTick()
     scrollToBottom()
   } catch (e: any) {
+    streamingContent.value = ''
     console.error('发送失败:', e)
     conv.messages.push({
       role: 'assistant',
@@ -495,14 +531,24 @@ watch(() => configStore.config.assistantName, (n) => {
                   {{ msg.role === 'user' ? '我' : msg.role === 'assistant' ? configStore.config.assistantName : msg.role }}
                   <span class="msg-time">{{ formatTime(msg.createdAt) }}</span>
                 </div>
-                <div class="msg-content" v-if="msg.content">{{ msg.content }}</div>
+                <div class="msg-content" v-if="msg.content && msg.role === 'user'">{{ msg.content }}</div>
+                <div class="msg-assistant-content" v-else-if="msg.content && msg.role === 'assistant'">
+                  <MarkdownRenderer :content="msg.content" />
+                </div>
                 <div class="msg-content tool-call-hint"
                   v-else-if="msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length">
                   正在调用 {{ msg.tool_calls.map(t => t.function.name).join('、') }}…
                 </div>
               </template>
             </div>
-            <div v-if="isSending" class="msg msg-assistant">
+            <!-- 流式输出区域（纯视觉，不影响对话消息） -->
+            <div v-if="streamingContent" class="msg msg-assistant">
+              <div class="msg-role">{{ configStore.config.assistantName }}</div>
+              <div class="msg-assistant-content">
+                <MarkdownRenderer :content="streamingContent" />
+              </div>
+            </div>
+            <div v-if="isSending && !streamingContent" class="msg msg-assistant">
               <div class="msg-role">{{ configStore.config.assistantName }}</div>
               <div class="msg-content typing">思考中…</div>
             </div>
@@ -711,6 +757,10 @@ watch(() => configStore.config.assistantName, (n) => {
   align-self: flex-start;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.msg-assistant-content {
+  font-size: 13px;
+  line-height: 1.55;
 }
 .msg-tool {
   align-self: flex-start;

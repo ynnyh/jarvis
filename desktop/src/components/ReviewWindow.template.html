@@ -63,9 +63,16 @@
           </div>
         </div>
         <p class="section-hint">范围：{{ store.reviewData.range.label }}</p>
-        <div v-if="range === 'today'" class="transaction-entry">
-          <button class="transaction-btn" @click="openTransactionHours">✍️ 事务类工作</button>
-          <span class="transaction-hint">没有 commit 的沟通、排障、部署、巡检，也可以从这里补工时。</span>
+        <div v-if="range === 'today'" class="task-entry-actions">
+          <button class="task-entry-btn" @click="startWriteSearch">
+            <span class="task-entry-icon">📝</span>
+            <span>写任务</span>
+          </button>
+          <button class="task-entry-btn transaction-btn" @click="openTransactionHours">
+            <span class="task-entry-icon">✍️</span>
+            <span>事务类工作</span>
+          </button>
+          <span class="task-entry-hint">写任务：给任意禅道任务写工时（可搜索）；事务类：没有 commit 的沟通、排障等</span>
         </div>
       </section>
 
@@ -73,6 +80,83 @@
       <div v-if="store.reviewData.summary.totalCommits === 0" class="empty-small">
         这段时间没有本地提交。
       </div>
+
+      <!-- ===== 内联写工时表单 ===== -->
+      <section v-if="inlineWrite" class="section inline-write-section">
+        <h3 class="section-title">
+          <span>✍️ {{ inlineWrite.kind === 'orphan' ? '写到任务' : '写入工时' }}</span>
+          <button class="icon-btn" title="取消" @click="cancelInlineWrite">×</button>
+        </h3>
+        <div class="iw-body">
+          <div class="iw-row">
+            <label class="iw-label">禅道任务</label>
+            <div class="iw-search-wrap">
+              <input
+                ref="inlineSearchEl"
+                v-model="inlineSearch"
+                class="iw-input"
+                type="text"
+                :disabled="inlineSubmitting || inlineResult === 'ok'"
+                placeholder="输入任务名称或 ID 搜索…"
+                @focus="onSearchFocus"
+                @blur="onSearchBlur"
+                @input="inlineSearchFocus = true"
+              />
+              <ul v-if="inlineSearchFocus && filteredTasks.length > 0" class="iw-dropdown">
+                <li
+                  v-for="t in filteredTasks"
+                  :key="t.id"
+                  class="iw-option"
+                  @mousedown.prevent="selectInlineTask(t)"
+                >
+                  <span class="iw-opt-id">#{{ t.id }}</span>
+                  <span class="iw-opt-name">{{ t.name }}</span>
+                </li>
+              </ul>
+            </div>
+            <p v-if="inlineWrite.taskId" class="iw-hint">
+              已选：<strong>#{{ inlineWrite.taskId }} {{ inlineWrite.taskName }}</strong>
+              <button class="iw-change" @click="clearInlineTask" :disabled="inlineSubmitting || inlineResult === 'ok'">换一个</button>
+            </p>
+            <p v-else-if="!inlineSearchFocus && inlineSearch && filteredTasks.length === 0 && allTasks.length > 0" class="iw-hint">
+              没有匹配的任务，继续输入任务 ID
+            </p>
+            <p v-else-if="inlineWrite.kind === 'orphan'" class="iw-hint">输入关键词搜索点选，或直接填任务 ID</p>
+          </div>
+          <div class="iw-row">
+            <label class="iw-label">工时（小时）</label>
+            <input
+              id="iw-hours"
+              v-model="inlineHours"
+              class="iw-input iw-input-narrow"
+              type="text"
+              inputmode="decimal"
+              :disabled="inlineSubmitting || inlineResult === 'ok'"
+              placeholder="如 0.5、1、1.5"
+            />
+            <p class="iw-hint">建议 ~{{ inlineWrite.suggestedHours || '—' }}h</p>
+          </div>
+          <div class="iw-row iw-row-grow">
+            <label class="iw-label">工作内容</label>
+            <textarea
+              v-model="inlineContent"
+              class="iw-textarea"
+              :disabled="inlineSubmitting || inlineResult === 'ok'"
+              placeholder="给禅道看的工作记录文本"
+            ></textarea>
+          </div>
+          <p v-if="inlineError" class="iw-error">{{ inlineError }}</p>
+          <p v-if="inlineResult === 'ok'" class="iw-success">✓ 已写入禅道</p>
+          <div class="iw-actions">
+            <button class="iw-btn iw-btn-cancel" :disabled="inlineSubmitting" @click="cancelInlineWrite">取消</button>
+            <button class="iw-btn iw-btn-confirm" :disabled="inlineSubmitting || inlineResult === 'ok'" @click="submitInlineWrite">
+              <span v-if="inlineSubmitting">提交中…</span>
+              <span v-else-if="inlineResult === 'ok'">已写入</span>
+              <span v-else>确认写入</span>
+            </button>
+          </div>
+        </div>
+      </section>
 
       <!-- 待状态更新的任务 -->
       <section v-if="store.reviewData.needsStatusUpdate.length > 0" class="section needs-update">
@@ -82,11 +166,22 @@
             v-for="t in store.reviewData.needsStatusUpdate"
             :key="t.taskId"
             class="needs-item"
-            @click="openTask(t.taskId)"
-            title="点击打开禅道"
           >
-            <div class="needs-title">#{{ t.taskId }} {{ t.taskName }}</div>
-            <div class="needs-reason">{{ t.reason }}</div>
+            <div class="needs-row">
+              <div class="needs-info" @click="openTask(t.taskId)" title="点击打开禅道">
+                <div class="needs-title">#{{ t.taskId }} {{ t.taskName }}</div>
+                <div class="needs-reason">{{ t.reason }}</div>
+              </div>
+              <button
+                class="write-mini"
+                :class="{ written: isTaskWritten(t.taskId) }"
+                :disabled="isTaskWritten(t.taskId) || inlineWrite !== null"
+                @click="startWriteSimple(t.taskId, t.taskName)"
+                :title="isTaskWritten(t.taskId) ? '本会话已写入' : `写入工时到禅道 #${t.taskId}`"
+              >
+                {{ isTaskWritten(t.taskId) ? '✓ 已写入' : '✍️ 写工时' }}
+              </button>
+            </div>
           </li>
         </ul>
       </section>
@@ -97,7 +192,7 @@
           <span>📝 按任务（用于禅道填报）</span>
           <span class="section-count">{{ store.reviewData.advancedTasks.length }} 个任务</span>
         </h3>
-        <p class="section-hint">点 ✍️ 写工时到禅道（弹窗内可编辑工时和内容）；点 📋 仅复制工作内容</p>
+        <p class="section-hint">点 ✍️ 写工时到禅道（可编辑）；点 📋 仅复制工作内容</p>
         <ul class="task-fill-list">
           <li v-for="t in store.reviewData.advancedTasks" :key="t.taskId" class="task-fill-item">
             <div class="task-fill-row">
@@ -107,8 +202,8 @@
               <button
                 class="write-mini"
                 :class="{ written: isTaskWritten(t.taskId) }"
-                :disabled="isTaskWritten(t.taskId) || openingWrite"
-                @click="openWriteModalForTask(t)"
+                :disabled="isTaskWritten(t.taskId) || inlineWrite !== null"
+                @click="startWriteForTask(t)"
                 :title="isTaskWritten(t.taskId) ? '本会话已写入（去禅道可继续修改）' : `写入工时到禅道 #${t.taskId}`"
               >
                 {{ isTaskWritten(t.taskId) ? '✓ 已写入' : '✍️ 写工时' }}
@@ -178,7 +273,7 @@
           <span>🧩 未关联禅道任务的提交</span>
           <span class="section-count">{{ store.reviewData.summary.orphanCommitCount }} 个 commit</span>
         </h3>
-        <p class="section-hint">这些 commit 没匹配到任务号。点 ✍️ 手动填一个任务 ID 写工时；点 📋 仅复制内容。</p>
+        <p class="section-hint">点 ✍️ 搜索任务名点选后写工时；点 📋 仅复制内容。</p>
         <ul class="task-fill-list">
           <li v-for="g in store.reviewData.orphanCommits.filter(o => o.commits.length > 0)"
             :key="g.businessLine" class="task-fill-item orphan-item">
@@ -187,9 +282,9 @@
               <span v-if="g.suggestedHours" class="hours-pill">~{{ g.suggestedHours }}h</span>
               <button
                 class="write-mini"
-                :disabled="openingWrite"
-                @click="openWriteModalForOrphan(g)"
-                title="手动填任务 ID 后写入工时"
+                :disabled="inlineWrite !== null"
+                @click="startWriteForOrphan(g)"
+                title="搜索任务后写工时"
               >
                 ✍️ 写到任务…
               </button>
@@ -231,9 +326,6 @@
         <pre v-if="showRaw" class="markdown-pre">{{ store.reviewData.plainText }}</pre>
       </section>
     </div>
-
-    <!-- 打开写工时窗口失败的可见反馈 -->
-    <p v-if="writeOpenError" class="write-open-error">{{ writeOpenError }}</p>
 
     <!-- 底部操作 -->
     <footer v-if="store.reviewData" class="panel-footer">

@@ -98,6 +98,8 @@ pub struct DailyReview {
     pub orphan_commits: Vec<OrphanCommitGroup>,
     pub total_hours_for_estimate: f64,
     pub plain_text: String,
+    /// 禅道全部任务（不论是否有 commit 关联），供前端写工时搜索用
+    pub all_tasks: Vec<ReviewTaskInfo>,
 }
 
 pub struct BuildOptions<'a> {
@@ -156,6 +158,7 @@ pub fn build_daily_review(
     tasks: &[ReviewTaskInfo],
     options: BuildOptions<'_>,
 ) -> DailyReview {
+    let all_tasks = tasks.to_vec();
     let date = options
         .date
         .map(|s| s.to_string())
@@ -427,6 +430,7 @@ pub fn build_daily_review(
         orphan_commits: orphan_commit_groups,
         total_hours_for_estimate: hours_per_work_day,
         plain_text,
+        all_tasks,
     }
 }
 
@@ -443,80 +447,65 @@ fn render_plain_text(
     orphan_groups: &[OrphanCommitGroup],
     hours_per_work_day: f64,
 ) -> String {
-    let mut lines: Vec<String> = Vec::new();
-    lines.push(format!("工作日报 {}", date));
-    lines.push(String::new());
+    let mut para: Vec<String> = Vec::new();
+    para.push(format!("工作日报 {}", date));
 
     if summary.total_commits == 0 {
-        lines.push("今天没有本地提交。如有未推送或外部协作，请手动补充。".into());
-        return lines.join("\n");
+        para.push("今天没有本地提交。如有未推送或外部协作，请手动补充。".into());
+        return para.join("\n");
     }
 
-    lines.push(format!(
+    para.push(format!(
         "今天共提交 {} 个 commit，覆盖 {} 个业务线，推进 {} 个任务。",
         summary.total_commits, summary.business_line_count, summary.tasks_advanced_count
     ));
-    lines.push(String::new());
 
-    lines.push("【完成内容】".into());
-    lines.push(String::new());
+    // 完成内容 —— 编号列表 + 紧凑段落，不换行
+    let mut content_items: Vec<String> = Vec::new();
     for g in by_line {
         if g.commits.is_empty() {
             continue;
         }
         let mut seen: HashSet<String> = HashSet::new();
-        let mut unique_by_title: Vec<(&CommitLink, String)> = Vec::new();
+        let mut commit_titles: Vec<String> = Vec::new();
         for c in &g.commits {
             let cleaned = clean_commit_title(&c.title, 60);
             if cleaned.is_empty() || seen.contains(&cleaned) {
                 continue;
             }
             seen.insert(cleaned.clone());
-            unique_by_title.push((c, cleaned));
+            commit_titles.push(cleaned);
         }
-        let dup_count = g.commits.len() - unique_by_title.len();
-        let count_label = if dup_count > 0 {
-            format!(
-                "{} 个主题 / 共 {} 次提交",
-                unique_by_title.len(),
-                g.commits.len()
-            )
+        let task_refs: String = if !g.tasks.is_empty() {
+            let refs: Vec<String> = g.tasks
+                .iter()
+                .map(|t| format!("#{} {}", t.task_id, t.task_name))
+                .collect();
+            format!("（{}）", refs.join("、"))
         } else {
-            format!("{} 个 commit", g.commits.len())
+            String::new()
         };
-        lines.push(format!("{}（{}）", g.business_line, count_label));
-        for (c, cleaned) in &unique_by_title {
-            lines.push(format!(
-                "  · {}  ({} · {})",
-                cleaned, c.repo_name, c.short_sha
-            ));
-        }
-        if !g.tasks.is_empty() {
-            lines.push("  推进任务：".into());
-            for t in &g.tasks {
-                let adv = advanced_tasks.iter().find(|a| a.task_id == t.task_id);
-                let status_mark = if adv.map(|a| a.status == "wait").unwrap_or(false) {
-                    "（未开始）"
-                } else {
-                    ""
-                };
-                lines.push(format!(
-                    "    - #{} {}{}",
-                    t.task_id, t.task_name, status_mark
-                ));
-            }
-        }
-        lines.push(String::new());
+        let num = content_items.len() + 1;
+        content_items.push(format!(
+            "{}. {}{}：{}",
+            num,
+            g.business_line,
+            task_refs,
+            commit_titles.join("，")
+        ));
+    }
+    if !content_items.is_empty() {
+        para.push(format!("完成内容：{}。", content_items.join("；")));
     }
 
-    // 建议工时
+    // 建议工时 —— 紧凑格式
     if hours_per_work_day > 0.0 {
         let lines_with_hours: Vec<&BusinessLineGroup> = by_line
             .iter()
             .filter(|g| g.suggested_hours.unwrap_or(0.0) > 0.0)
             .collect();
         if !lines_with_hours.is_empty() {
-            lines.push("【建议工时分配】（最小粒度 0.5h，仅供禅道填报参考）".into());
+            let mut hour_items: Vec<String> = Vec::new();
             for g in &lines_with_hours {
                 let line_tasks: Vec<&AdvancedTask> = advanced_tasks
                     .iter()
@@ -526,74 +515,78 @@ fn render_plain_text(
                     .iter()
                     .filter(|t| t.suggested_hours.unwrap_or(0.0) > 0.0)
                     .collect();
-                lines.push(format!(
-                    "  · {}：{}h（{}/{} 个主要任务）",
+                let detail: String = if tasks_with_hours.is_empty() {
+                    String::new()
+                } else {
+                    let details: Vec<String> = tasks_with_hours
+                        .iter()
+                        .map(|t| format!("#{} {} {}h", t.task_id, t.task_name, t.suggested_hours.unwrap_or(0.0)))
+                        .collect();
+                    format!("（{}）", details.join("、"))
+                };
+                let num = hour_items.len() + 1;
+                hour_items.push(format!(
+                    "{}. {} {}h{}",
+                    num,
                     g.business_line,
                     g.suggested_hours.unwrap_or(0.0),
-                    tasks_with_hours.len(),
-                    line_tasks.len()
+                    detail,
                 ));
-                for t in tasks_with_hours {
-                    lines.push(format!(
-                        "    - #{} {}：{}h",
-                        t.task_id,
-                        t.task_name,
-                        t.suggested_hours.unwrap_or(0.0)
-                    ));
-                }
             }
-            lines
-                .push("  注：commit 数少的次要任务未分配工时，主要任务工时合计为日总工时。".into());
-            lines.push(String::new());
+            para.push(format!("建议工时分配：{}。", hour_items.join("；")));
         }
     }
 
+    // 需更新状态的任务 —— 编号
     if !needs_update.is_empty() {
-        lines.push("【需要在禅道更新状态的任务】".into());
-        for t in needs_update {
-            lines.push(format!("  · #{} {}：{}", t.task_id, t.task_name, t.reason));
-        }
-        lines.push(String::new());
+        let update_items: Vec<String> = needs_update
+            .iter()
+            .enumerate()
+            .map(|(i, t)| format!("{}. #{} {}：{}", i + 1, t.task_id, t.task_name, t.reason))
+            .collect();
+        para.push(format!("需要在禅道更新状态的任务：{}。", update_items.join("；")));
     }
 
+    // 未关联任务 —— 编号
     let non_empty_orphans: Vec<&OrphanCommitGroup> = orphan_groups
         .iter()
         .filter(|o| !o.commits.is_empty())
         .collect();
     if !non_empty_orphans.is_empty() {
-        lines.push("【未关联禅道任务的提交】（建议补任务号或在日报中说明）".into());
+        let mut orphan_items: Vec<String> = Vec::new();
         for g in non_empty_orphans {
             let mut seen: HashSet<String> = HashSet::new();
-            let mut unique: Vec<(&CommitLink, String)> = Vec::new();
+            let mut unique_titles: Vec<String> = Vec::new();
             for c in &g.commits {
                 let cleaned = clean_commit_title(&c.title, 60);
                 if cleaned.is_empty() || seen.contains(&cleaned) {
                     continue;
                 }
                 seen.insert(cleaned.clone());
-                unique.push((c, cleaned));
+                unique_titles.push(cleaned);
             }
             let hours_label = match g.suggested_hours {
-                Some(h) if h > 0.0 => format!("，建议 ~{}h", h),
+                Some(h) if h > 0.0 => format!("建议 ~{}h", h),
                 _ => String::new(),
             };
-            lines.push(format!(
-                "  · {}（{} 个主题{}）",
+            let num = orphan_items.len() + 1;
+            let h = if hours_label.is_empty() {
+                String::new()
+            } else {
+                format!("，{}", hours_label)
+            };
+            orphan_items.push(format!(
+                "{}. {}{}：{}",
+                num,
                 g.business_line,
-                unique.len(),
-                hours_label
+                h,
+                unique_titles.join("，"),
             ));
-            for (c, cleaned) in &unique {
-                lines.push(format!(
-                    "    - {}  ({} · {})",
-                    cleaned, c.repo_name, c.short_sha
-                ));
-            }
         }
-        lines.push(String::new());
+        para.push(format!("未关联禅道任务的提交：{}。", orphan_items.join("；")));
     }
 
-    lines.join("\n").trim_end().to_string()
+    para.join("\n")
 }
 
 #[cfg(test)]

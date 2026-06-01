@@ -451,4 +451,10 @@ export interface DailyReviewData {
   totalHoursForEstimate: number
   /** 纯文本日报草稿，可直接复制粘贴 */
   plainText: string
+  /** 禅道全部任务（不论是否有 commit 关联），供写工时搜索用 */
+  allTasks: Array<{
+    id: string
+    name: string
+    status: string
+  }>
 }

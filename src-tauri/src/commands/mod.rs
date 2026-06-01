@@ -4,6 +4,7 @@ use std::process::Command;
 
 // ===== 子模块声明 =====
 
+pub mod chat;
 pub mod config;
 pub mod llm;
 pub mod tasks;
@@ -12,6 +13,7 @@ pub mod window;
 
 // ===== 第三方 re-export（保持 lib.rs 路径不变） =====
 
+pub use chat::*;
 pub use config::*;
 pub use llm::*;
 pub use tasks::*;
@@ -140,6 +142,7 @@ fn default_config() -> serde_json::Value {
             "morningGreeting": true,
             "eveningSummary": true,
             "eveningSummaryMinutesBefore": 30,
+            "eveningSummaryChannelNotify": false,
             "effortClosingCheck": true,
             "effortClosingMinutesAfterWork": 10,
             "effortClosingTargetHours": 8,

@@ -1,6 +1,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { useAppStore } from '../stores/app'
 import { cleanCommitTitle } from './cleanCommitTitle'
 
 /**
@@ -59,11 +60,13 @@ export function useReviewWriteHours() {
     taskId: string
     taskName: string
     suggestedHours?: number
-    commits: Array<{ title: string }>
+    commits?: Array<{ title: string }>
   }) {
     if (writtenTasks.value.has(t.taskId) || openingWrite.value) return
     openingWrite.value = true
-    const content = buildWorkContent(t.commits)
+    const content = t.commits ? buildWorkContent(t.commits) : ''
+    const store = useAppStore()
+    const allTasks = store.reviewData?.allTasks
     try {
       await invoke('write_hours_open', {
         payload: {
@@ -72,6 +75,7 @@ export function useReviewWriteHours() {
           suggestedHours: t.suggestedHours,
           content,
           kind: 'task',
+          tasks: allTasks,
         },
       })
     } catch (e) {
@@ -81,7 +85,31 @@ export function useReviewWriteHours() {
     }
   }
 
-  /** 从"未关联任务的提交"分组点开：taskId 空，让用户填 */
+  /** 从"全部禅道任务"或"需更新状态"区点开：taskId 预填，无 commit 内容 */
+  async function openWriteModalSimple(taskId: string, taskName: string) {
+    if (writtenTasks.value.has(taskId) || openingWrite.value) return
+    openingWrite.value = true
+    const store = useAppStore()
+    const allTasks = store.reviewData?.allTasks
+    try {
+      await invoke('write_hours_open', {
+        payload: {
+          taskId,
+          taskName,
+          suggestedHours: undefined,
+          content: '',
+          kind: 'task',
+          tasks: allTasks,
+        },
+      })
+    } catch (e) {
+      showWriteOpenError(e)
+    } finally {
+      setTimeout(() => { openingWrite.value = false }, 500)
+    }
+  }
+
+  /** 从"未关联任务的提交"分组点开：taskId 空，让用户填或搜索 */
   async function openWriteModalForOrphan(g: {
     businessLine: string
     suggestedHours?: number
@@ -90,6 +118,8 @@ export function useReviewWriteHours() {
     if (openingWrite.value) return
     openingWrite.value = true
     const content = buildWorkContent(g.commits)
+    const store = useAppStore()
+    const allTasks = store.reviewData?.allTasks
     try {
       await invoke('write_hours_open', {
         payload: {
@@ -98,6 +128,7 @@ export function useReviewWriteHours() {
           suggestedHours: g.suggestedHours,
           content,
           kind: 'orphan',
+          tasks: allTasks,
         },
       })
     } catch (e) {
@@ -111,12 +142,18 @@ export function useReviewWriteHours() {
     return writtenTasks.value.has(taskId)
   }
 
+  function markWritten(taskId: string) {
+    writtenTasks.value = new Set([...writtenTasks.value, taskId])
+  }
+
   return {
     writtenTasks,
     openingWrite,
     writeOpenError,
     openWriteModalForTask,
     openWriteModalForOrphan,
+    openWriteModalSimple,
     isTaskWritten,
+    markWritten,
   }
 }

@@ -26,6 +26,12 @@ use serde_json::Value;
 
 use crate::settings::{get_llm_credentials, LlmCredentials};
 
+/// Streaming text delta from the LLM.
+#[derive(Clone, Serialize)]
+pub struct StreamDelta {
+    pub text: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
@@ -378,6 +384,229 @@ fn tool_choice_to_chat(tc: Option<&ToolChoice>) -> Value {
             "function": { "name": name },
         }),
     }
+}
+
+// ============================================================================
+// 流式 Chat Completions（stream: true）
+// ============================================================================
+
+/// 发起流式 Chat Completions 请求，每收到一个 text delta 就调用 `on_delta`。
+/// 只支持 Chat Completions wire 协议（Responses API 不支持标准 SSE 流式）。
+/// 不重试——调用方（agent loop）自己处理错误恢复。
+pub async fn streaming_chat<F>(
+    req: &ChatRequest,
+    cred: &LlmCredentials,
+    on_delta: F,
+) -> Result<ChatResponse, String>
+where
+    F: Fn(String) + Send,
+{
+    if cred.api_key.is_empty() {
+        return Err(
+            "LLM apiKey 未配置（检查 ~/.jarvis/config.json 的 llm.apiKey 或 env LLM_API_KEY）"
+                .into(),
+        );
+    }
+    if cred.base_url.is_empty() {
+        return Err("LLM baseUrl 未配置".into());
+    }
+    if cred.wire_api == "responses" {
+        return Err("Responses API 不支持流式输出".into());
+    }
+
+    let url = build_endpoint_url(&cred.base_url, "chat/completions");
+    let model = req.model.clone().unwrap_or_else(|| cred.model.clone());
+    let timeout_ms = req.timeout_ms.unwrap_or(120_000);
+
+    let mut body = serde_json::json!({
+        "model": model,
+        "messages": req.messages,
+        "temperature": req.temperature.unwrap_or(0.3),
+        "max_tokens": req.max_tokens.unwrap_or(1024),
+        "stream": true,
+    });
+    if let Some(tools) = &req.tools {
+        if !tools.is_empty() {
+            body["tools"] = serde_json::to_value(tools).map_err(|e| e.to_string())?;
+            body["tool_choice"] = tool_choice_to_chat(req.tool_choice.as_ref());
+        }
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(timeout_ms))
+        .build()
+        .map_err(|e| format!("LLM client 构造失败: {}", e))?;
+
+    let resp = client
+        .post(&url)
+        .bearer_auth(&cred.api_key)
+        .json(&body)
+        .header("Accept", "text/event-stream")
+        .send()
+        .await
+        .map_err(|e| {
+            if e.is_timeout() {
+                format!("LLM 流式请求超时（{}ms）", timeout_ms)
+            } else {
+                format!("LLM 流式请求失败: {}", e)
+            }
+        })?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let text = resp.text().await.map_err(|e| e.to_string())?;
+        return Err(format!(
+            "LLM HTTP {}: {}",
+            status.as_u16(),
+            crate::util::truncate_chars(&text, 400)
+        ));
+    }
+
+    use futures_util::StreamExt;
+
+    let mut full_text = String::new();
+    let mut all_tool_calls: Vec<ToolCall> = Vec::new();
+    let mut finish_reason = String::new();
+    let mut model_out = model.clone();
+    let mut tokens_in = 0u64;
+    let mut tokens_out = 0u64;
+    let mut buffer = String::new();
+    let mut stream = resp.bytes_stream();
+
+    while let Some(chunk_result) = stream.next().await {
+        let chunk = chunk_result.map_err(|e| format!("SSE 读取错误: {}", e))?;
+        let chunk_str = String::from_utf8_lossy(&chunk);
+        buffer.push_str(&chunk_str);
+
+        loop {
+            let dnl = match buffer.find("\n\n") {
+                Some(p) => p,
+                None => break,
+            };
+            let block = buffer[..dnl].to_string();
+            buffer = buffer[dnl + 2..].to_string();
+
+            for line in block.lines() {
+                if !line.starts_with("data: ") {
+                    continue;
+                }
+                let data = line[6..].trim();
+                if data == "[DONE]" {
+                    continue;
+                }
+                let parsed: Value = match serde_json::from_str(data) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                if let Some(choices) = parsed.get("choices").and_then(|v| v.as_array()) {
+                    if let Some(choice) = choices.first() {
+                        if let Some(delta) = choice.get("delta") {
+                            // text content
+                            if let Some(content) = delta.get("content").and_then(|v| v.as_str()) {
+                                if !content.is_empty() {
+                                    full_text.push_str(content);
+                                    on_delta(content.to_string());
+                                }
+                            }
+                            // reasoning_content fallback
+                            if full_text.trim().is_empty() {
+                                if let Some(rc) =
+                                    delta.get("reasoning_content").and_then(|v| v.as_str())
+                                {
+                                    if !rc.is_empty() {
+                                        full_text.push_str(rc);
+                                        on_delta(rc.to_string());
+                                    }
+                                }
+                            }
+                            // tool calls (accumulate by index)
+                            if let Some(tcs) = delta.get("tool_calls").and_then(|v| v.as_array()) {
+                                for tc in tcs {
+                                    let idx = tc
+                                        .get("index")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0) as usize;
+                                    while all_tool_calls.len() <= idx {
+                                        all_tool_calls.push(ToolCall {
+                                            id: String::new(),
+                                            kind: "function".to_string(),
+                                            function: ToolCallFunction {
+                                                name: String::new(),
+                                                arguments: String::new(),
+                                            },
+                                        });
+                                    }
+                                    if let Some(id) =
+                                        tc.get("id").and_then(|v| v.as_str())
+                                    {
+                                        if !id.is_empty() {
+                                            all_tool_calls[idx].id = id.to_string();
+                                        }
+                                    }
+                                    if let Some(func) = tc.get("function") {
+                                        if let Some(name) =
+                                            func.get("name").and_then(|v| v.as_str())
+                                        {
+                                            if !name.is_empty() {
+                                                all_tool_calls[idx].function.name = name.to_string();
+                                            }
+                                        }
+                                        if let Some(args) =
+                                            func.get("arguments").and_then(|v| v.as_str())
+                                        {
+                                            all_tool_calls[idx].function.arguments.push_str(args);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if let Some(fr) =
+                            choice.get("finish_reason").and_then(|v| v.as_str())
+                        {
+                            if !fr.is_empty() {
+                                finish_reason = fr.to_string();
+                            }
+                        }
+                    }
+                }
+                if let Some(usage) = parsed.get("usage") {
+                    tokens_in = usage
+                        .get("prompt_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    tokens_out = usage
+                        .get("completion_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                }
+                if let Some(m) = parsed.get("model").and_then(|v| v.as_str()) {
+                    model_out = m.to_string();
+                }
+            }
+        }
+    }
+
+    let tool_calls: Vec<ToolCall> = all_tool_calls
+        .into_iter()
+        .filter(|tc| !tc.function.name.is_empty())
+        .collect();
+
+    if full_text.is_empty() && tool_calls.is_empty() {
+        return Err("LLM 流式响应既无内容也无 tool_calls".into());
+    }
+
+    Ok(ChatResponse {
+        text: full_text,
+        tool_calls,
+        finish_reason: if finish_reason.is_empty() {
+            "stop".into()
+        } else {
+            finish_reason
+        },
+        tokens_in,
+        tokens_out,
+        model: model_out,
+    })
 }
 
 // ============================================================================
