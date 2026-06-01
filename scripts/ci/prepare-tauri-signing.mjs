@@ -34,9 +34,9 @@ mkdirSync(ciDir, { recursive: true })
 writeFileSync(keyPath, privateKey, { encoding: 'utf8', mode: 0o600 })
 writeFileSync(probeFile, 'tauri updater signing probe\n', 'utf8')
 
-// signer 子命令用 _PATH 指向文件
-process.env.TAURI_SIGNING_PRIVATE_KEY = privateKey
+// signer 子命令用 _PATH 指向文件，不能同时设 _KEY（会冲突）
 process.env.TAURI_SIGNING_PRIVATE_KEY_PATH = keyPath
+delete process.env.TAURI_SIGNING_PRIVATE_KEY
 delete process.env.TAURI_SIGNING_PRIVATE_KEY_B64
 
 const result = process.platform === 'win32'
