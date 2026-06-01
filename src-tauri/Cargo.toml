@@ -36,6 +36,7 @@ base64 = "0.22"
 urlencoding = "2.1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 regex = "1"
+chinese_holiday = "2026.0.1"
 futures-util = "0.3"
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 tauri-plugin-autostart = "2.5.1"

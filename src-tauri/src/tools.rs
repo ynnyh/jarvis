@@ -582,6 +582,29 @@ struct EffortReportAppendix {
     daily_hours: Vec<Value>,
 }
 
+fn holiday_label(kind: chinese_holiday::DayKind) -> Option<&'static str> {
+    use chinese_holiday::DayKind;
+    match kind {
+        DayKind::NormalWorkday | DayKind::NormalHoliday => None,
+        DayKind::NewYearsDayHoliday => Some("元旦"),
+        DayKind::NewYearsDayWorkday => Some("元旦·调休"),
+        DayKind::SpringFestivalHoliday => Some("春节"),
+        DayKind::SpringFestivalWorkday => Some("春节·调休"),
+        DayKind::ChingMingFestivalHoliday => Some("清明"),
+        DayKind::ChingMingFestivalWorkday => Some("清明·调休"),
+        DayKind::InternationalWorkersDayHoliday => Some("劳动节"),
+        DayKind::InternationalWorkersDayWorkday => Some("劳动节·调休"),
+        DayKind::DragonBoatFestivalHoliday => Some("端午"),
+        DayKind::DragonBoatFestivalWorkday => Some("端午·调休"),
+        DayKind::MidAutumnFestivalHoliday => Some("中秋"),
+        DayKind::MidAutumnFestivalWorkday => Some("中秋·调休"),
+        DayKind::NationalDayHoliday => Some("国庆"),
+        DayKind::NationalDayWorkday => Some("国庆·调休"),
+        DayKind::OtherHoliday => Some("假日"),
+        DayKind::OtherWorkday => Some("调休"),
+    }
+}
+
 pub async fn get_efforts(input: Value) -> Result<Value, String> {
     let parsed: GetEffortsInput =
         serde_json::from_value(input).map_err(|e| format!("get_efforts 入参错误: {}", e))?;
@@ -725,12 +748,30 @@ pub async fn get_effort_report(input: Value) -> Result<Value, String> {
         bh.partial_cmp(&ah).unwrap_or(std::cmp::Ordering::Equal)
     });
 
+    let weekday_names = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
     let mut daily_hours_vec: Vec<Value> = daily_hours
         .into_iter()
-        .map(|(date, hours)| json!({
-            "date": date,
-            "hours": hours,
-        }))
+        .map(|(date, hours)| {
+            let (weekday, holiday, is_workday) = NaiveDate::parse_from_str(&date, "%Y-%m-%d")
+                .ok()
+                .map(|d| {
+                    let dow = d.weekday().num_days_from_sunday() as usize;
+                    let kind = chinese_holiday::chinese_holiday(&d);
+                    (
+                        weekday_names[dow].to_string(),
+                        holiday_label(kind),
+                        kind.is_workday(),
+                    )
+                })
+                .unwrap_or_else(|| (String::new(), None, false));
+            json!({
+                "date": date,
+                "hours": hours,
+                "weekday": weekday,
+                "holiday": holiday,
+                "isWorkday": is_workday,
+            })
+        })
         .collect();
     daily_hours_vec.sort_by(|a, b| {
         let ad = a.get("date").and_then(|v| v.as_str()).unwrap_or("");

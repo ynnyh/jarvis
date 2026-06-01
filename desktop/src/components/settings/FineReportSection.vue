@@ -190,6 +190,38 @@ const effortWorkDays = computed(() => {
 
 const FULL_DAY_HOURS = 8
 
+interface AbnormalDay {
+  date: string
+  hours: number
+  weekday: string
+  holiday: string | null
+  isWorkday: boolean
+  type: 'low' | 'overtime'
+}
+
+const abnormalDays = computed<AbnormalDay[]>(() => {
+  const all = dailyHours.value
+  if (!all.length) return []
+  return all
+    .filter(item => {
+      const h = Number(item.hours || 0)
+      const wd = Boolean(item.isWorkday)
+      return (wd && h < FULL_DAY_HOURS) || (!wd && h > 0)
+    })
+    .map(item => {
+      const hours = Number(item.hours || 0)
+      const isWorkday = Boolean(item.isWorkday)
+      return {
+        date: String(item.date),
+        hours,
+        weekday: String(item.weekday || ''),
+        holiday: (item.holiday as string) || null,
+        isWorkday,
+        type: isWorkday ? 'low' as const : 'overtime' as const,
+      }
+    })
+})
+
 const topProjects = computed(() => reportResult.value?.appendix.project_hours ?? [])
 const topTasks = computed(() => reportResult.value?.appendix.task_hours ?? [])
 const dailyHours = computed(() => reportResult.value?.appendix.daily_hours ?? [])
@@ -521,13 +553,21 @@ async function fetchEfforts() {
         </div>
 
         <div class="report-card compact">
-          <h5 class="report-title">每日工时</h5>
-          <ul class="appendix-list">
-            <li v-for="item in dailyHours" :key="`${item.date}-${item.hours}`">
-              <span>{{ item.date }}</span>
-              <strong>{{ Number(item.hours || 0).toFixed(1) }}h</strong>
+          <h5 class="report-title">工时异常</h5>
+          <ul v-if="abnormalDays.length" class="abnormal-list">
+            <li v-for="item in abnormalDays" :key="`${item.date}-${item.hours}`" class="abnormal-item">
+              <div class="abnormal-left">
+                <span class="abnormal-date">{{ item.date }}</span>
+                <span class="abnormal-weekday" :class="{ weekend: !item.isWorkday }">{{ item.weekday }}</span>
+                <span v-if="item.holiday" class="abnormal-holiday">{{ item.holiday }}</span>
+              </div>
+              <div class="abnormal-right">
+                <strong class="abnormal-hours" :class="item.type">{{ item.hours.toFixed(1) }}h</strong>
+                <span class="abnormal-tag" :class="item.type">{{ item.type === 'low' ? '不足' : '加班' }}</span>
+              </div>
             </li>
           </ul>
+          <p v-else class="no-abnormal">所有工作日均达标</p>
         </div>
       </section>
     </div>
@@ -827,6 +867,101 @@ async function fetchEfforts() {
   color: rgba(255, 255, 255, 0.92);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.abnormal-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.abnormal-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 12px;
+}
+
+.abnormal-item:first-child {
+  padding-top: 0;
+  border-top: none;
+}
+
+.abnormal-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.abnormal-date {
+  color: rgba(255, 255, 255, 0.85);
+  font-variant-numeric: tabular-nums;
+}
+
+.abnormal-weekday {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.abnormal-weekday.weekend {
+  color: rgba(251, 146, 60, 0.8);
+}
+
+.abnormal-holiday {
+  font-size: 11px;
+  color: rgba(251, 146, 60, 0.9);
+  background: rgba(251, 146, 60, 0.1);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+.abnormal-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.abnormal-hours {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.abnormal-hours.low {
+  color: rgba(252, 165, 165, 0.95);
+}
+
+.abnormal-hours.overtime {
+  color: rgba(253, 224, 71, 0.95);
+}
+
+.abnormal-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.abnormal-tag.low {
+  background: rgba(239, 68, 68, 0.12);
+  color: rgba(252, 165, 165, 0.95);
+}
+
+.abnormal-tag.overtime {
+  background: rgba(245, 158, 11, 0.12);
+  color: rgba(253, 224, 71, 0.95);
+}
+
+.no-abnormal {
+  margin: 0;
+  padding: 12px 0;
+  font-size: 12px;
+  color: rgba(34, 197, 94, 0.8);
+  text-align: center;
 }
 
 .effort-table-wrap {
