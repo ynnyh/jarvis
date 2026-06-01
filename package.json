@@ -11,6 +11,7 @@
     "desktop:build-macos-dev": "tauri build --target universal-apple-darwin",
     "desktop:build-binary": "tauri build --no-bundle",
     "release:gitee": "node scripts/publish-to-gitee.mjs",
+    "pre-release": "node scripts/pre-release.mjs",
     "desktop:portable": "npm run desktop:build-binary && node scripts/portable-zip.mjs"
   },
   "keywords": [
