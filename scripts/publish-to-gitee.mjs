@@ -202,6 +202,26 @@ async function createOrFindRelease() {
 const release = await createOrFindRelease()
 
 // --- 4. 上传附件 ---
+
+/** 删除 release 上已存在的同名附件（防重跑时 sig/exe 不一致） */
+async function deleteExistingAsset(name) {
+  const listUrl = `${API}/repos/${GITEE_OWNER}/${GITEE_REPO}/releases/${release.id}/attach_files?access_token=${TOKEN}`
+  const r = await fetch(listUrl)
+  if (!r.ok) return
+  const assets = await r.json()
+  const existing = (Array.isArray(assets) ? assets : []).find(a => a.name === name)
+  if (!existing) return
+  const del = await fetch(
+    `${API}/repos/${GITEE_OWNER}/${GITEE_REPO}/releases/${release.id}/attach_files/${existing.id}?access_token=${TOKEN}`,
+    { method: 'DELETE' },
+  )
+  if (del.ok) {
+    console.log(`  🗑 已删除旧 ${name} (id=${existing.id})，将重新上传`)
+  } else {
+    console.warn(`  ⚠ 删除旧 ${name} 失败：${del.status} ${await del.text()}`)
+  }
+}
+
 async function uploadAsset(filePath, name, { optional = false } = {}) {
   const stat = await fs.stat(filePath)
   const fileSizeMB = stat.size / (1024 * 1024)
@@ -221,8 +241,23 @@ async function uploadAsset(filePath, name, { optional = false } = {}) {
       if (!r.ok) {
         const t = await r.text()
         if (t.includes('已存在') || t.includes('exist')) {
-          console.log(`  ↪ ${name} (${fileSizeMB.toFixed(1)}MB) 已存在，跳过上传`)
-          return `https://gitee.com/${GITEE_OWNER}/${GITEE_REPO}/releases/download/${tag}/${name}`
+          console.log(`  ↪ ${name} (${fileSizeMB.toFixed(1)}MB) 已存在，先删除再重新上传`)
+          await deleteExistingAsset(name)
+          // 重试上传（不计入 attempt 次数，因为这是删除后的重传）
+          const retryForm = new FormData()
+          retryForm.append('access_token', TOKEN)
+          retryForm.append('file', new Blob([data]), name)
+          const retry = await fetch(
+            `${API}/repos/${GITEE_OWNER}/${GITEE_REPO}/releases/${release.id}/attach_files`,
+            { method: 'POST', body: retryForm },
+          )
+          if (retry.ok) {
+            const j = await retry.json()
+            console.log(`  ✓ 重新上传 ${name} (${fileSizeMB.toFixed(1)}MB): ${j.browser_download_url}`)
+            return j.browser_download_url
+          }
+          const rt = await retry.text()
+          throw new Error(`重新上传 ${name} 失败：${retry.status} ${rt}`)
         }
         if (r.status >= 500 || r.status === 429) {
           throw new Error(`HTTP ${r.status}: ${t}`)

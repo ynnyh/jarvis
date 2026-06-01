@@ -334,6 +334,7 @@ mod tests {
         assert!(is_effort_query("查看本周工时"));
         assert!(is_effort_query("工时统计"));
         assert!(is_effort_query("今天耗时明细"));
+        assert!(is_effort_query("上周工时"));
     }
 
     #[test]
@@ -389,6 +390,19 @@ mod tests {
     fn effort_query_range_detects_year() {
         let (range, _) = effort_query_range("今年工时统计");
         assert_eq!(range, "thisYear");
+    }
+
+    #[test]
+    fn effort_query_range_detects_last_week() {
+        let (range, label) = effort_query_range("上周工时");
+        assert_eq!(range, "lastWeek");
+        assert_eq!(label, "上周");
+    }
+
+    #[test]
+    fn effort_query_range_detects_last_week_alt() {
+        let (range, _) = effort_query_range("查看上一周耗时");
+        assert_eq!(range, "lastWeek");
     }
 
     #[test]
@@ -596,7 +610,7 @@ fn is_effort_query(text: &str) -> bool {
         return false;
     }
     [
-        "查", "查询", "看", "统计", "汇总", "多少", "明细", "本周", "今天", "昨天", "本月", "本季度", "季度", "半年", "近半年", "今年",
+        "查", "查询", "看", "统计", "汇总", "多少", "明细", "本周", "上周", "今天", "昨天", "本月", "本季度", "季度", "半年", "近半年", "今年",
     ]
     .iter()
     .any(|w| lower.contains(w))
@@ -608,6 +622,8 @@ fn effort_query_range(text: &str) -> (&'static str, String) {
         ("yesterday", "昨天".to_string())
     } else if lower.contains("今天") || lower.contains("今日") {
         ("today", "今天".to_string())
+    } else if lower.contains("上周") || lower.contains("上一周") {
+        ("lastWeek", "上周".to_string())
     } else if lower.contains("本月") || lower.contains("这个月") {
         ("thisMonth", "本月".to_string())
     } else if lower.contains("本季度") || lower.contains("这个季度") || lower.contains("季度") {

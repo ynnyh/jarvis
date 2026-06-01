@@ -20,6 +20,7 @@ const RANGE_LABELS: Record<ReviewRange, string> = {
   today: '今天',
   yesterday: '昨天',
   thisWeek: '本周',
+  lastWeek: '上周',
 }
 
 /** 每个任务的复制状态：taskId → 'ok' | 'fail' */
@@ -262,6 +263,7 @@ function isTaskWritten(taskId: string): boolean {
             <button class="range-btn" :class="{ active: range === 'today' }" :disabled="store.reviewLoading" @click="switchRange('today')">今天</button>
             <button class="range-btn" :class="{ active: range === 'yesterday' }" :disabled="store.reviewLoading" @click="switchRange('yesterday')">昨天</button>
             <button class="range-btn" :class="{ active: range === 'thisWeek' }" :disabled="store.reviewLoading" @click="switchRange('thisWeek')">本周</button>
+            <button class="range-btn" :class="{ active: range === 'lastWeek' }" :disabled="store.reviewLoading" @click="switchRange('lastWeek')">上周</button>
           </div>
           <button class="icon-btn" :class="{ spinning: refreshing }" title="刷新" @click="handleRefresh">↻</button>
           <button class="icon-btn" title="关闭" @click="store.showReviewWindow = false">×</button>

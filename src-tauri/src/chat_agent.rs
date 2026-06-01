@@ -338,7 +338,7 @@ fn tool_schema(name: &str) -> Option<(String, Value)> {
             json!({
                 "type": "object",
                 "properties": {
-                    "range": { "type": "string", "enum": ["today","yesterday","thisWeek","last7days"] },
+                    "range": { "type": "string", "enum": ["today","yesterday","thisWeek","lastWeek","last7days"] },
                     "since": { "type": "string" },
                     "until": { "type": "string" },
                     "date": { "type": "string" },
@@ -349,11 +349,11 @@ fn tool_schema(name: &str) -> Option<(String, Value)> {
             }),
         )),
         "get_efforts" => Some((
-            "查询帆软报表中的工时明细。可传 range（today/yesterday/thisWeek/thisMonth/thisYear），也可传 begin/end 精确日期；返回每条工时记录及合计。".into(),
+            "查询帆软报表中的工时明细。可传 range（today/yesterday/lastWeek/thisWeek/thisMonth/thisYear），也可传 begin/end 精确日期；返回每条工时记录及合计。".into(),
             json!({
                 "type": "object",
                 "properties": {
-                    "range": { "type": "string", "enum": ["today","yesterday","thisWeek","thisMonth","thisYear"], "description": "常用日期范围。用户说今天/昨天/本周/本月/今年时优先传这个字段。" },
+                    "range": { "type": "string", "enum": ["today","yesterday","lastWeek","thisWeek","thisMonth","thisYear"], "description": "常用日期范围。用户说今天/昨天/上周/本周/本月/今年时优先传这个字段。" },
                     "begin": { "type": "string", "description": "开始日期，格式 YYYY-MM-DD" },
                     "end": { "type": "string", "description": "结束日期，格式 YYYY-MM-DD" },
                     "realName": { "type": "string", "description": "中文姓名，用于过滤本人数据。不传则使用配置中的默认值" }

@@ -811,10 +811,17 @@ fn resolve_effort_range(
             today,
             "thisWeek".to_string(),
         ),
+        "lastWeek" => {
+            let dow0 = today.weekday().num_days_from_monday() as i64;
+            let this_monday = today - ChronoDuration::days(dow0);
+            let last_sunday = this_monday - ChronoDuration::days(1);
+            let last_monday = this_monday - ChronoDuration::days(7);
+            (last_monday, last_sunday, "lastWeek".to_string())
+        }
         other => {
             if begin.is_none() || end.is_none() {
                 return Err(format!(
-                    "get_efforts range 不支持: {}。可用 today/yesterday/thisWeek/thisMonth/thisQuarter/last6Months/thisYear，或显式传 begin/end。",
+                    "get_efforts range 不支持: {}。可用 today/yesterday/lastWeek/thisWeek/thisMonth/thisQuarter/last6Months/thisYear，或显式传 begin/end。",
                     other
                 ));
             }

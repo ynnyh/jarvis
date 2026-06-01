@@ -66,6 +66,7 @@ type RangeKey =
   | 'yesterday'
   | 'today'
   | 'thisWeek'
+  | 'lastWeek'
   | 'thisMonth'
   | 'thisQuarter'
   | 'last6Months'
@@ -75,6 +76,7 @@ const rangePresets: Array<{ key: RangeKey; label: string }> = [
   { key: 'yesterday', label: '昨天' },
   { key: 'today', label: '今天' },
   { key: 'thisWeek', label: '本周' },
+  { key: 'lastWeek', label: '上周' },
   { key: 'thisMonth', label: '本月' },
   { key: 'thisQuarter', label: '本季度' },
   { key: 'last6Months', label: '近半年' },
@@ -111,6 +113,19 @@ function dateRange(key: RangeKey): { begin: string; end: string } {
       const day = today.getDay()
       const diff = day === 0 ? 6 : day - 1
       begin.setDate(today.getDate() - diff)
+      break
+    }
+    case 'lastWeek': {
+      const day = today.getDay()
+      const diff = day === 0 ? 6 : day - 1
+      const thisMonday = new Date(today)
+      thisMonday.setDate(today.getDate() - diff)
+      const lastSunday = new Date(thisMonday)
+      lastSunday.setDate(thisMonday.getDate() - 1)
+      const lastMonday = new Date(thisMonday)
+      lastMonday.setDate(thisMonday.getDate() - 7)
+      begin = lastMonday
+      end = lastSunday
       break
     }
     case 'thisMonth':

@@ -25,7 +25,7 @@ function unpack(result: ToolResult): DailyReviewData | null {
   return null
 }
 
-export type ReviewRange = 'today' | 'yesterday' | 'thisWeek'
+export type ReviewRange = 'today' | 'yesterday' | 'thisWeek' | 'lastWeek'
 
 export function useDailyReview() {
   const store = useAppStore()
