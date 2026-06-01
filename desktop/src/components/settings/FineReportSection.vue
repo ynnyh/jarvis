@@ -224,6 +224,25 @@ const abnormalDays = computed<AbnormalDay[]>(() => {
 
 const topProjects = computed(() => reportResult.value?.appendix.project_hours ?? [])
 const topTasks = computed(() => reportResult.value?.appendix.task_hours ?? [])
+
+const PREVIEW_COUNT = 3
+const expandSummary = ref(false)
+const expandThemes = ref(false)
+const expandProjects = ref(false)
+const expandTasks = ref(false)
+
+const visibleThemes = computed(() => {
+  const all = reportResult.value?.themes ?? []
+  return expandThemes.value ? all : all.slice(0, PREVIEW_COUNT)
+})
+const visibleProjects = computed(() => {
+  const all = topProjects.value
+  return expandProjects.value ? all : all.slice(0, PREVIEW_COUNT)
+})
+const visibleTasks = computed(() => {
+  const all = topTasks.value
+  return expandTasks.value ? all : all.slice(0, PREVIEW_COUNT)
+})
 const dailyHours = computed(() => reportResult.value?.appendix.daily_hours ?? [])
 
 function parseDate(value: string): Date | null {
@@ -334,6 +353,10 @@ async function fetchEfforts() {
   reportResult.value = null
   queryMode.value = null
   showEffortDetail.value = false
+  expandSummary.value = false
+  expandThemes.value = false
+  expandProjects.value = false
+  expandTasks.value = false
 
   const useReport = shouldUseReportMode()
   const toolName = useReport ? 'get_effort_report' : 'get_efforts'
@@ -514,13 +537,18 @@ async function fetchEfforts() {
             <small>总工时</small>
           </div>
         </div>
-        <pre class="report-text">{{ reportResult.summaryText }}</pre>
+        <pre class="report-text" :class="{ collapsed: !expandSummary }">{{ reportResult.summaryText }}</pre>
+        <button
+          v-if="reportResult.summaryText && reportResult.summaryText.length > 300"
+          class="expand-btn"
+          @click="expandSummary = !expandSummary"
+        >{{ expandSummary ? '收起' : '查看更多' }}</button>
       </section>
 
       <section class="report-card">
         <h5 class="report-title">重点主题</h5>
         <ul class="theme-list">
-          <li v-for="theme in reportResult.themes" :key="theme.name" class="theme-item">
+          <li v-for="theme in visibleThemes" :key="theme.name" class="theme-item">
             <div class="theme-row">
               <strong>{{ theme.name }}</strong>
               <span>{{ theme.hours.toFixed(1) }}h</span>
@@ -529,27 +557,42 @@ async function fetchEfforts() {
             <div v-if="theme.work_items.length" class="theme-meta">事项：{{ theme.work_items.join('；') }}</div>
           </li>
         </ul>
+        <button
+          v-if="(reportResult.themes?.length ?? 0) > PREVIEW_COUNT"
+          class="expand-btn"
+          @click="expandThemes = !expandThemes"
+        >{{ expandThemes ? '收起' : `查看更多（共 ${reportResult.themes.length} 项）` }}</button>
       </section>
 
       <section class="report-grid">
         <div class="report-card compact">
           <h5 class="report-title">项目分布</h5>
           <ul class="appendix-list">
-            <li v-for="item in topProjects" :key="`${item.projectName}-${item.hours}`">
+            <li v-for="item in visibleProjects" :key="`${item.projectName}-${item.hours}`">
               <span>{{ item.projectName || '未命名项目' }}</span>
               <strong>{{ Number(item.hours || 0).toFixed(1) }}h</strong>
             </li>
           </ul>
+          <button
+            v-if="topProjects.length > PREVIEW_COUNT"
+            class="expand-btn"
+            @click="expandProjects = !expandProjects"
+          >{{ expandProjects ? '收起' : `查看更多（共 ${topProjects.length} 项）` }}</button>
         </div>
 
         <div class="report-card compact">
           <h5 class="report-title">任务分布</h5>
           <ul class="appendix-list">
-            <li v-for="item in topTasks" :key="`${item.projectName}-${item.taskName}-${item.hours}`">
+            <li v-for="item in visibleTasks" :key="`${item.projectName}-${item.taskName}-${item.hours}`">
               <span>{{ item.taskName || '未命名任务' }}</span>
               <strong>{{ Number(item.hours || 0).toFixed(1) }}h</strong>
             </li>
           </ul>
+          <button
+            v-if="topTasks.length > PREVIEW_COUNT"
+            class="expand-btn"
+            @click="expandTasks = !expandTasks"
+          >{{ expandTasks ? '收起' : `查看更多（共 ${topTasks.length} 项）` }}</button>
         </div>
 
         <div class="report-card compact">
@@ -800,6 +843,37 @@ async function fetchEfforts() {
   line-height: 1.7;
   color: rgba(255, 255, 255, 0.84);
   font-family: inherit;
+}
+
+.report-text.collapsed {
+  max-height: 120px;
+  overflow: hidden;
+  position: relative;
+  &::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 40px;
+    background: linear-gradient(transparent, #1e1e2e);
+  }
+}
+
+.expand-btn {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 6px 0;
+  border: none;
+  background: none;
+  color: rgba(99, 179, 237, 0.8);
+  font-size: 11px;
+  cursor: pointer;
+  text-align: center;
+  &:hover {
+    color: rgba(99, 179, 237, 1);
+  }
 }
 
 .theme-list,
