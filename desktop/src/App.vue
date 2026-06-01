@@ -605,8 +605,6 @@ function computePeekTarget(
   if (!dockedWinPos) return null
   const maxPeek = WINDOW_LOGICAL_W - DOCK_SHOW_PX
   const peek = Math.max(0, Math.min(DOCK_PEEK_PX, maxPeek))
-  const relCenterX = dockedWinPos.x + ANCHOR_AVATAR_CENTER[dockedWinPos.anchor].x - mon.x
-  const relCenterY = dockedWinPos.y + ANCHOR_AVATAR_CENTER[dockedWinPos.anchor].y - mon.y
   let winX = dockedWinPos.x
   let winY = dockedWinPos.y
   if (edge === 'right') {
@@ -618,8 +616,11 @@ function computePeekTarget(
   } else {
     winY = dockedWinPos.y - peek
   }
-  const clampedX = Math.min(Math.max(winX, mon.x - relCenterX), mon.x + mon.w - relCenterX)
-  const clampedY = Math.min(Math.max(winY, mon.y - relCenterY), mon.y + mon.h - relCenterY)
+  // 约束：avatar 中心必须在显示器范围内
+  // avatar 中心 = winPos + offset，所以 winPos ∈ [mon.start - offset, mon.end - offset]
+  const off = ANCHOR_AVATAR_CENTER[dockedWinPos.anchor]
+  const clampedX = Math.min(Math.max(winX, mon.x - off.x), mon.x + mon.w - off.x)
+  const clampedY = Math.min(Math.max(winY, mon.y - off.y), mon.y + mon.h - off.y)
   return { winX: clampedX, winY: clampedY }
 }
 
