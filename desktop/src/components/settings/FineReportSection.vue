@@ -161,6 +161,35 @@ const totalItemHours = computed(() =>
   effortRecords.value.reduce((sum, item) => sum + (item.itemHours || 0), 0),
 )
 
+const showEffortDetail = ref(false)
+
+interface DailyGroup {
+  date: string
+  hours: number
+  count: number
+}
+
+const effortDailyGroups = computed<DailyGroup[]>(() => {
+  const map = new Map<string, { hours: number; count: number }>()
+  for (const r of effortRecords.value) {
+    const d = r.date || '未知日期'
+    const entry = map.get(d) || { hours: 0, count: 0 }
+    entry.hours += r.itemHours || 0
+    entry.count += 1
+    map.set(d, entry)
+  }
+  return Array.from(map.entries())
+    .map(([date, { hours, count }]) => ({ date, hours, count }))
+    .sort((a, b) => a.date.localeCompare(b.date))
+})
+
+const effortWorkDays = computed(() => {
+  const days = effortDailyGroups.value.length
+  return days > 1
+})
+
+const FULL_DAY_HOURS = 8
+
 const topProjects = computed(() => reportResult.value?.appendix.project_hours ?? [])
 const topTasks = computed(() => reportResult.value?.appendix.task_hours ?? [])
 const dailyHours = computed(() => reportResult.value?.appendix.daily_hours ?? [])
@@ -272,6 +301,7 @@ async function fetchEfforts() {
   effortRecords.value = []
   reportResult.value = null
   queryMode.value = null
+  showEffortDetail.value = false
 
   const useReport = shouldUseReportMode()
   const toolName = useReport ? 'get_effort_report' : 'get_efforts'
@@ -503,7 +533,31 @@ async function fetchEfforts() {
     </div>
 
     <div v-else-if="queryMode === 'effort' && effortRecords.length" class="effort-table-wrap">
-      <table class="effort-table">
+      <div v-if="effortWorkDays && !showEffortDetail" class="effort-daily-summary">
+        <div class="daily-header">
+          <span class="daily-title">每日工时汇总</span>
+          <button class="toggle-detail-btn" @click="showEffortDetail = true">
+            展开明细
+          </button>
+        </div>
+        <ul class="daily-list">
+          <li v-for="g in effortDailyGroups" :key="g.date" class="daily-item" :class="{ low: g.hours < FULL_DAY_HOURS }">
+            <span class="daily-date">{{ g.date }}</span>
+            <span class="daily-hours">{{ g.hours.toFixed(1) }}h</span>
+            <span class="daily-badge" :class="g.hours >= FULL_DAY_HOURS ? 'ok' : 'low'">
+              {{ g.hours >= FULL_DAY_HOURS ? '达标' : '不足' }}
+            </span>
+            <span class="daily-count">{{ g.count }} 条</span>
+          </li>
+        </ul>
+      </div>
+      <template v-else>
+        <div v-if="effortWorkDays" class="daily-header" style="margin-bottom: 10px;">
+          <button class="toggle-detail-btn" @click="showEffortDetail = false">
+            收起明细
+          </button>
+        </div>
+        <table class="effort-table">
         <colgroup>
           <col class="col-date" />
           <col class="col-hours" />
@@ -537,6 +591,7 @@ async function fetchEfforts() {
           </tr>
         </tfoot>
       </table>
+      </template>
     </div>
   </section>
 </template>
@@ -828,6 +883,100 @@ async function fetchEfforts() {
   color: rgba(147, 197, 253, 0.9);
   background: rgba(255, 255, 255, 0.04);
   border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.effort-daily-summary {
+  margin-top: 12px;
+  padding: 14px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.daily-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.daily-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.toggle-detail-btn {
+  padding: 3px 10px;
+  border: 1px solid rgba(147, 197, 253, 0.4);
+  background: rgba(59, 130, 246, 0.12);
+  color: rgba(191, 219, 254, 0.9);
+  border-radius: 12px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.toggle-detail-btn:hover {
+  background: rgba(59, 130, 246, 0.25);
+  border-color: rgba(147, 197, 253, 0.6);
+}
+
+.daily-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.daily-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 12px;
+}
+
+.daily-item:first-child {
+  padding-top: 0;
+  border-top: none;
+}
+
+.daily-date {
+  min-width: 96px;
+  color: rgba(255, 255, 255, 0.85);
+  font-variant-numeric: tabular-nums;
+}
+
+.daily-hours {
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.92);
+  font-variant-numeric: tabular-nums;
+  min-width: 48px;
+}
+
+.daily-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.daily-badge.ok {
+  background: rgba(34, 197, 94, 0.15);
+  color: rgba(134, 239, 172, 0.95);
+}
+
+.daily-badge.low {
+  background: rgba(245, 158, 11, 0.15);
+  color: rgba(253, 224, 71, 0.95);
+}
+
+.daily-count {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 11px;
 }
 
 @media (max-width: 1100px) {

@@ -665,7 +665,7 @@ pub fn parse_detail_html(html: &str) -> Result<Vec<EffortRecord>, String> {
             continue;
         }
 
-        let text = decode_html_entities(inner);
+        let text = html_to_plain_text(&decode_html_entities(inner));
 
         // 主单元格写入，rowSpan>1 时覆盖到下面行的同列
         for rr in row..row.saturating_add(row_span) {
@@ -760,6 +760,28 @@ fn decode_html_entities(s: &str) -> String {
         i += step;
     }
     out
+}
+
+/// Strip HTML tags and clean up rich-text content from FineReport work content cells.
+/// FR sometimes stores `<p><span style="...">text</span></p>` which ends up as raw tags
+/// after decode_html_entities. This extracts the visible text only.
+fn html_to_plain_text(s: &str) -> String {
+    // Remove all HTML tags
+    let re = regex::Regex::new(r"<[^>]*>").unwrap();
+    let stripped = re.replace_all(s, "").to_string();
+    // Collapse whitespace
+    let collapsed = stripped
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    // Replace literal \r\n / \n (FR stores these as visible text)
+    let cleaned = collapsed
+        .replace("\\r\\n", "")
+        .replace("\\n", "")
+        .replace("  ", " ")
+        .trim()
+        .to_string();
+    cleaned
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1089,5 +1111,19 @@ mod tests {
         assert_eq!(decode_html_entities("a&amp;b"), "a&b");
         assert_eq!(decode_html_entities("&#x8F6F;&#x4EF6;"), "软件");
         assert_eq!(decode_html_entities("plain"), "plain");
+    }
+
+    #[test]
+    fn html_to_plain_strips_rich() {
+        assert_eq!(
+            html_to_plain_text(r#"<p><span style="font-size: 13px;">完成页面改造</span></p>"#),
+            "完成页面改造"
+        );
+        assert_eq!(
+            html_to_plain_text(r#"新增自提运价卡控标准\r\n，甩挂记录"#),
+            "新增自提运价卡控标准，甩挂记录"
+        );
+        assert_eq!(html_to_plain_text("纯文本内容"), "纯文本内容");
+        assert_eq!(html_to_plain_text(""), "");
     }
 }
