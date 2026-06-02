@@ -20,6 +20,7 @@ import WorkPeriodsSection from './components/settings/WorkPeriodsSection.vue'
 import WorkdayNudgesSection from './components/settings/WorkdayNudgesSection.vue'
 import WorkStyleSection from './components/settings/WorkStyleSection.vue'
 import ZentaoSection from './components/settings/ZentaoSection.vue'
+import CostRatesSection from './components/settings/CostRatesSection.vue'
 
 export type SettingsPageKey = 'zentao' | 'finereport' | 'ai' | 'channels' | 'code' | 'dailyNudges' | 'effortClosing' | 'personalization' | 'about'
 
@@ -45,7 +46,7 @@ export const SETTINGS_MENU: SettingsMenuItem[] = [
 ]
 
 export const SETTINGS_PAGE_COMPONENTS: Record<SettingsPageKey, Component[]> = {
-  zentao: [ZentaoSection],
+  zentao: [ZentaoSection, CostRatesSection],
   finereport: [FineReportSection],
   ai: [LlmSection],
   channels: [ChannelsSection],

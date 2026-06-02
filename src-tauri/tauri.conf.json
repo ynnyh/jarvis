@@ -163,6 +163,28 @@
         "shadow": true,
         "focus": true,
         "visible": false
+      },
+      {
+        "label": "cost",
+        "title": "成本分析",
+        "url": "cost.html",
+        "width": 900,
+        "height": 650,
+        "minWidth": 700,
+        "minHeight": 500,
+        "center": true,
+        "resizable": true,
+        "maximizable": true,
+        "minimizable": true,
+        "closable": true,
+        "fullscreen": false,
+        "alwaysOnTop": false,
+        "skipTaskbar": false,
+        "transparent": false,
+        "decorations": false,
+        "shadow": true,
+        "focus": true,
+        "visible": false
       }
     ],
     "security": {

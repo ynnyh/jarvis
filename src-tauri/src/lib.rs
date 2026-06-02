@@ -4,6 +4,7 @@ mod commands;
 mod commit_classifier;
 mod commit_link;
 mod conversations;
+mod cost_rates;
 mod credentials;
 mod daily_review;
 mod fine_report;
@@ -212,6 +213,10 @@ pub fn run() {
                 setup_close_requested(&bw, app.handle(), || {});
             }
 
+            if let Some(cw) = app.get_webview_window("cost") {
+                setup_close_requested(&cw, app.handle(), || {});
+            }
+
             if channels::should_auto_start() {
                 let app_handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
@@ -229,6 +234,7 @@ pub fn run() {
             commands::chat_send_stream,
             commands::get_proactive_reminders,
             commands::fetch_task_alerts,
+            commands::list_projects,
             commands::open_zentao_task,
             commands::quit_app,
             commands::toggle_avatar_window,
@@ -253,6 +259,8 @@ pub fn run() {
             commands::manual_hours_close,
             commands::batch_write_open,
             commands::batch_write_close,
+            commands::cost_open,
+            commands::cost_close,
             channels::channels_start,
             channels::channels_stop,
             channels::channel_status,
@@ -268,6 +276,10 @@ pub fn run() {
             fine_report::credentials::finereport_credentials_delete,
             fine_report::commands::finereport_test_connection,
             fine_report::commands::finereport_get_efforts,
+            cost_rates::cost_rates_load,
+            cost_rates::cost_rates_save,
+            cost_rates::cost_team_members,
+            cost_rates::project_cost_summary,
             settings_extras::pick_directory,
             settings_extras::excluded_business_lines_load,
             settings_extras::excluded_business_lines_save,

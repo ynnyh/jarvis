@@ -50,8 +50,21 @@ const menuItems = computed(() => {
 })
 
 /** 日常类菜单项（前 3 个）和系统类菜单项（后 4 个） */
-const dailyMenuItems = computed(() => menuItems.value.slice(0, 3))
-const systemMenuItems = computed(() => menuItems.value.slice(3))
+const dailyMenuItems = computed(() => {
+  const items = menuItems.value
+  if (!configStore.config.costFeatureEnabled) {
+    return items.filter(i => i.key !== 'cost')
+  }
+  return items
+})
+const systemMenuItems = computed(() => {
+  // 系统组始终从 chat 开始（根据 MENU_KEYS 顺序，chat 是日常组之后第一个系统项）
+  const items = menuItems.value
+  const chatIdx = items.findIndex(i => i.key === 'chat')
+  if (chatIdx === -1) return items.slice(3)
+  return items.slice(chatIdx)
+})
+const costMenuItem = computed(() => menuItems.value.find(i => i.key === 'cost'))
 
 const alertText = ref('')
 const alertEmoji = ref('')
@@ -424,6 +437,12 @@ function menuShowReview() {
   openReview('today')
 }
 
+function menuOpenCost() {
+  closeAllPanels()
+  showMenu.value = false
+  invoke('cost_open').catch(e => console.error('cost_open 失败:', e))
+}
+
 async function menuQuit() {
   showMenu.value = false
   await invoke('quit_app')
@@ -571,6 +590,9 @@ onUnmounted(() => {
       </button>
       <button class="menu-item" @click="menuOpenTodayPlan">
         <span>{{ dailyMenuItems[2].emoji }}</span><span>{{ dailyMenuItems[2].label }}</span>
+      </button>
+      <button v-if="configStore.config.costFeatureEnabled && costMenuItem" class="menu-item" @click="menuOpenCost">
+        <span>{{ costMenuItem.emoji }}</span><span>{{ costMenuItem.label }}</span>
       </button>
 
       <div class="menu-divider" />

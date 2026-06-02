@@ -59,19 +59,22 @@ pub const DEFAULT_AGENT_TOOLS: &[&str] = &[
     "get_efforts",
     "get_effort_report",
     "prepare-log-task-effort",
+    "cost_report_preview",
+    "cost_report",
 ];
 
 pub fn default_system_prompt(assistant_name: &str, user_title: &str) -> String {
     format!(
         "你是 {}，{}的个人任务助手。在对话里称呼用户为「{}」。\n\
-你可以调用工具查询禅道任务、git 提交、今日复盘、风险分析、工时报表等。\n\
+你可以调用工具查询禅道任务、git 提交、今日复盘、风险分析、工时报表、项目成本等。\n\
 原则：\n\
 1. 用户问到任务/工时/风险/复盘等具体业务问题时，先调相关工具拿真实数据，再回答。不要凭空编。\n\
 2. 工具不可用或失败时，明确告诉用户失败原因，不要装作有数据。\n\
 3. 回答要简洁直接。日报、风险类的输出去技术化——不要出现 commit/sha/repo 这种词，用项目名 + 任务名组织。\n\
 4. 查短周期工时时使用 get_efforts；查本月、本季度、近半年、本年等长周期时，优先使用 get_effort_report，输出完整工作汇报正文和数据附录。\n\
 5. **主动提议记工时**：当用户提到「干了什么、花了多长时间」时（例如\"修了登录bug花了2小时\"），主动调用 get_tasks 查找匹配任务。返回任务列表后，先向用户说明你找到了哪些可能匹配的任务以及你的选择理由，再调用 prepare-log-task-effort 生成待确认写入建议（记得传出 taskName）。如果拿不准选哪个，把候选列表发给用户让对方选。\n\
-   注意：必须等用户确认（说\"确认\"\"好\"\"可以\"）后才会真正写入，你只负责准备建议。如果信息不全（缺任务、缺工时、缺工作描述），先追问清楚再准备。",
+   注意：必须等用户确认（说\"确认\"\"好\"\"可以\"）后才会真正写入，你只负责准备建议。如果信息不全（缺任务、缺工时、缺工作描述），先追问清楚再准备。\n\
+6. **项目成本查询两步确认**：用户问项目成本时，必须先调 cost_report_preview 拉团队成员列表，展示给用户确认「你要查的是 XXX 项目吗？团队成员有张三、李四…」，用户确认后再调 cost_report 出完整报告。禁止跳过预览直接查成本。",
         assistant_name, user_title, user_title
     )
 }
@@ -579,6 +582,28 @@ fn tool_schema(name: &str) -> Option<(String, Value)> {
                     "date": { "type": "string", "description": "日期，格式 YYYY-MM-DD，不传则默认今天" }
                 },
                 "required": ["taskId", "hours", "work"],
+                "additionalProperties": false
+            }),
+        )),
+        "cost_report_preview" => Some((
+            "项目成本查询预览：轻量接口，只返回项目团队成员列表，不计算工时和成本。用于在正式查询前让用户确认项目名是否正确。必须先调此工具确认，再调 cost_report。".into(),
+            json!({
+                "type": "object",
+                "properties": {
+                    "projectName": { "type": "string", "description": "禅道项目名称" }
+                },
+                "required": ["projectName"],
+                "additionalProperties": false
+            }),
+        )),
+        "cost_report" => Some((
+            "查询指定项目的团队成本分析：从禅道拉取该项目全部任务的团队工时数据，按人聚合工时×时薪，返回文本报告（含条形图、人均工时、成本汇总）。必须先用 cost_report_preview 确认项目名无误后才能调用此工具。".into(),
+            json!({
+                "type": "object",
+                "properties": {
+                    "projectName": { "type": "string", "description": "禅道项目名称，必须精确匹配" }
+                },
+                "required": ["projectName"],
                 "additionalProperties": false
             }),
         )),

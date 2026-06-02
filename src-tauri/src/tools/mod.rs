@@ -22,6 +22,7 @@
 
 pub mod cc_switch_import;
 pub mod chat_tool;
+pub mod cost_report;
 pub mod daily_review_tool;
 pub mod effort_logging;
 pub mod effort_report;
@@ -54,6 +55,8 @@ pub async fn dispatch(name: &str, input: Value) -> Result<Value, String> {
         "log-task-effort" => self::effort_logging::log_task_effort(input).await,
         "ask-llm" => self::llm_passthrough::ask_llm(input).await,
         "cc_switch_import" => self::cc_switch_import::cc_switch_import(input).await,
+        "cost_report" => self::cost_report::cost_report(input).await,
+        "cost_report_preview" => self::cost_report::cost_report_preview(input).await,
         // chat_send → run_agent → dispatch（递归调其它 tool）。Box::pin 打破
         // async fn 静态递归类型，否则 rustc 报"recursive async fn requires indirection"。
         // agent 自身不会再叫 chat_send（不在 DEFAULT_AGENT_TOOLS），这层 Pin 只为通过编译。

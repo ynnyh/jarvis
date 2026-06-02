@@ -14,7 +14,7 @@ export interface MenuTheme {
 }
 
 /** 菜单项 key 列表，顺序决定菜单展示顺序 */
-export const MENU_KEYS = ['tasks', 'review', 'plan', 'chat', 'settings', 'update', 'quit'] as const
+export const MENU_KEYS = ['tasks', 'review', 'plan', 'cost', 'chat', 'settings', 'update', 'quit'] as const
 export type MenuKey = (typeof MENU_KEYS)[number]
 
 /** 内置主题集合 */
@@ -27,6 +27,7 @@ export const MENU_THEMES: MenuTheme[] = [
       { key: 'tasks', label: '任务提醒', emoji: '🔔' },
       { key: 'review', label: '今日复盘', emoji: '📋' },
       { key: 'plan', label: '今日计划', emoji: '📝' },
+      { key: 'cost', label: '项目成本', emoji: '💰' },
       { key: 'chat', label: '聊天（大窗）', emoji: '💬' },
       { key: 'settings', label: '设置', emoji: '⚙️' },
       { key: 'update', label: '检查更新', emoji: '✨' },
@@ -41,6 +42,7 @@ export const MENU_THEMES: MenuTheme[] = [
       { key: 'tasks', label: '催债清单', emoji: '🔔' },
       { key: 'review', label: '记工分', emoji: '📋' },
       { key: 'plan', label: '画饼', emoji: '📝' },
+      { key: 'cost', label: '算账', emoji: '💰' },
       { key: 'chat', label: '摸鱼唠嗑', emoji: '💬' },
       { key: 'settings', label: '设置', emoji: '⚙️' },
       { key: 'update', label: '检查更新', emoji: '✨' },
@@ -55,6 +57,7 @@ export const MENU_THEMES: MenuTheme[] = [
       { key: 'tasks', label: '待办', emoji: '🔔' },
       { key: 'review', label: '工时', emoji: '📋' },
       { key: 'plan', label: '计划', emoji: '📝' },
+      { key: 'cost', label: '成本', emoji: '💰' },
       { key: 'chat', label: '聊天', emoji: '💬' },
       { key: 'settings', label: '设置', emoji: '⚙️' },
       { key: 'update', label: '更新', emoji: '✨' },
@@ -69,6 +72,7 @@ export const MENU_THEMES: MenuTheme[] = [
       { key: 'tasks', label: '任务副本', emoji: '🔔' },
       { key: 'review', label: '今日结算', emoji: '📋' },
       { key: 'plan', label: '作战部署', emoji: '📝' },
+      { key: 'cost', label: '军费核算', emoji: '💰' },
       { key: 'chat', label: '通讯台', emoji: '💬' },
       { key: 'settings', label: '设置', emoji: '⚙️' },
       { key: 'update', label: '版本检视', emoji: '✨' },

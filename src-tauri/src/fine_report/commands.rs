@@ -173,6 +173,36 @@ pub async fn finereport_get_efforts(
     })
 }
 
+/// 内部调用：拉工时明细（仅返回 records）。
+/// `all_people = true` 时不传 realName 过滤，拉全部门数据（成本分析用）。
+pub async fn finereport_get_efforts_raw(
+    begin: String,
+    end: String,
+    real_name: Option<String>,
+    all_people: bool,
+) -> Result<Vec<EffortRecord>, String> {
+    let cred = get_fine_report_credentials();
+    // all_people 模式：不传 realName → 帆软返回全部门数据
+    let effective_real_name = if all_people {
+        String::new()
+    } else {
+        real_name.unwrap_or(cred.real_name)
+    };
+    let client = FineReportClient::new(cred.base_url, cred.account, cred.password)?;
+    let auth = client.ensure_valid_auth().await?;
+    let session_id = client
+        .open_report_and_get_session(&auth.jwt, DEFAULT_VIEWLET)
+        .await?;
+    let cid = FineReportClient::generate_cid(&session_id);
+    client
+        .submit_filter(&auth.jwt, &session_id, &begin, &end, &effective_real_name)
+        .await?;
+    client
+        .fetch_report_html(&auth.jwt, &session_id, &cid, 1)
+        .await
+        .and_then(|html| parse_detail_html(&html))
+}
+
 // ============================================================================
 // 测试连接（设置面板按钮）
 // ============================================================================

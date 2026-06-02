@@ -548,6 +548,112 @@ impl ZentaoClient {
         Ok(Some(json.get("task").cloned().unwrap_or(json)))
     }
 
+    /// 列出当前用户有权限的所有项目（OpenAPI v1）。
+    pub async fn list_projects(&self) -> Result<Vec<Value>, String> {
+        let token = self.ensure_token().await?;
+        let url = self.url("api.php/v1/projects?limit=200");
+        let resp = self
+            .client
+            .get(&url)
+            .header("Content-Type", "application/json")
+            .header("User-Agent", UA)
+            .header("Token", &token)
+            .send()
+            .await
+            .map_err(|e| format!("获取项目列表失败: {}", e))?;
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(format!(
+                "获取项目列表 HTTP {}: {}",
+                status.as_u16(),
+                crate::util::truncate_chars(&text, 300)
+            ));
+        }
+        let json: Value = serde_json::from_str(&text).map_err(|_| {
+            format!(
+                "获取项目列表返回非 JSON: {}",
+                crate::util::truncate_chars(&text, 200)
+            )
+        })?;
+        let projects = json
+            .get("projects")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        Ok(projects)
+    }
+
+    /// 拉取指定项目下所有任务（全量，含 team/consumed 字段）。
+    /// 流程：项目名 → 项目 ID → executions → 逐执行拉 tasks。
+    pub async fn get_all_project_tasks(&self, project_name: &str) -> Result<Vec<Value>, String> {
+        let token = self.ensure_token().await?;
+        let projects = self.list_projects().await?;
+        let project_id = projects
+            .iter()
+            .find(|p| p.get("name").and_then(|v| v.as_str()) == Some(project_name))
+            .and_then(|p| p.get("id"))
+            .and_then(|v| v.as_i64().map(|i| i.to_string()))
+            .or_else(|| {
+                projects.iter().find(|p| p.get("name").and_then(|v| v.as_str()) == Some(project_name))
+                    .and_then(|p| p.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
+            })
+            .ok_or_else(|| format!("未找到项目: {}", project_name))?;
+
+        let exec_url = self.url(&format!("api.php/v1/projects/{}/executions?limit=100", project_id));
+        let resp = self.client.get(&exec_url)
+            .header("Content-Type", "application/json")
+            .header("User-Agent", UA).header("Token", &token)
+            .send().await.map_err(|e| format!("获取执行列表失败: {}", e))?;
+        let text = resp.text().await.unwrap_or_default();
+        let json: Value = serde_json::from_str(&text).map_err(|_| "执行列表非 JSON".to_string())?;
+        let executions = json.get("executions").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+
+        let mut all_tasks: Vec<Value> = Vec::new();
+        for exec in &executions {
+            let exec_id = exec.get("id")
+                .and_then(|v| v.as_i64().map(|i| i.to_string()))
+                .or_else(|| exec.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()));
+            let exec_id = match exec_id { Some(id) => id, None => continue };
+            let task_url = self.url(&format!("api.php/v1/executions/{}/tasks?recPerPage=200", exec_id));
+            let Ok(task_resp) = self.client.get(&task_url)
+                .header("Content-Type", "application/json")
+                .header("User-Agent", UA).header("Token", &token)
+                .send().await else { continue };
+            let task_text = task_resp.text().await.unwrap_or_default();
+            let task_json: Value = match serde_json::from_str(&task_text) { Ok(v) => v, Err(_) => continue };
+            if let Some(tasks) = task_json.get("tasks").and_then(|v| v.as_array()) {
+                all_tasks.extend(tasks.clone());
+            }
+        }
+        Ok(all_tasks)
+    }
+
+    /// 拉取指定项目下所有任务的参与人员（从 team 字段提取 account，去重）。
+    pub async fn get_project_team_members(&self, project_name: &str) -> Result<Vec<String>, String> {
+        let tasks = self.get_all_project_tasks(project_name).await?;
+        let mut seen = std::collections::HashSet::new();
+        let mut members: Vec<String> = Vec::new();
+        for t in &tasks {
+            if let Some(a) = t.get("assignedTo").and_then(|v| v.as_str()) {
+                if !a.is_empty() && seen.insert(a.to_string()) {
+                    members.push(a.to_string());
+                }
+            }
+            if let Some(team) = t.get("team").and_then(|v| v.as_array()) {
+                for m in team {
+                    if let Some(account) = m.get("account").and_then(|v| v.as_str()) {
+                        if !account.is_empty() && seen.insert(account.to_string()) {
+                            members.push(account.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        members.sort();
+        Ok(members)
+    }
+
     /// 写工时。完整配方见 feedback_zentao_workhour_recipe 记忆。
     pub async fn add_effort(
         &self,

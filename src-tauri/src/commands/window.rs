@@ -306,6 +306,39 @@ pub async fn batch_write_close(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+// ===== Cost 窗口切换 =====
+
+#[tauri::command]
+pub async fn cost_open(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(cost) = app.get_webview_window("cost") {
+        cost.show()
+            .map_err(|e| format!("show cost 失败: {}", e))?;
+        cost.set_focus()
+            .map_err(|e| format!("focus cost 失败: {}", e))?;
+    } else {
+        return Err("cost 窗口未注册".into());
+    }
+    if let Some(avatar) = app.get_webview_window("avatar") {
+        avatar
+            .hide()
+            .map_err(|e| format!("hide avatar 失败: {}", e))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn cost_close(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(cost) = app.get_webview_window("cost") {
+        cost.hide()
+            .map_err(|e| format!("hide cost 失败: {}", e))?;
+    }
+    if let Some(avatar) = app.get_webview_window("avatar") {
+        avatar.show().ok();
+        avatar.set_focus().ok();
+    }
+    Ok(())
+}
+
 // ===== 手动写工时窗口 =====
 
 #[tauri::command]

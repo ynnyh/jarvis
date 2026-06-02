@@ -304,6 +304,14 @@ pub async fn get_proactive_reminders() -> Result<Vec<ProactiveReminder>, String>
     Ok(reminders)
 }
 
+// ===== 禅道项目列表 =====
+
+#[tauri::command]
+pub async fn list_projects() -> Result<Vec<serde_json::Value>, String> {
+    let client = crate::zentao::ZentaoClient::from_settings()?;
+    client.list_projects().await
+}
+
 // ===== 打开禅道任务页 =====
 
 #[tauri::command]

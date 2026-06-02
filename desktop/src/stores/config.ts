@@ -116,6 +116,8 @@ export interface JarvisConfig {
   todayPlan: TodayPlan
   /** 右键菜单主题 id，对应 menu-themes.ts 中的 id */
   menuTheme: string
+  /** 项目成本分析功能开关，默认关闭 */
+  costFeatureEnabled: boolean
 }
 
 export interface ScheduledReminder {
@@ -197,6 +199,7 @@ const defaultConfig = (): JarvisConfig => ({
   workStyle: 'balanced',
   todayPlan: { date: '', taskIds: [] },
   menuTheme: 'default',
+  costFeatureEnabled: false,
 })
 
 function todayStr(): string {
@@ -276,6 +279,7 @@ export const useConfigStore = defineStore('config', () => {
           ? remote.workStyle
           : defaults.workStyle,
         menuTheme: remote.menuTheme ?? defaults.menuTheme,
+        costFeatureEnabled: remote.costFeatureEnabled ?? defaults.costFeatureEnabled,
         todayPlan: {
           date: remote.todayPlan?.date ?? defaults.todayPlan.date,
           taskIds: Array.isArray(remote.todayPlan?.taskIds)
