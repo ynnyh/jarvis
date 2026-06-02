@@ -362,7 +362,8 @@ export const useConfigStore = defineStore('config', () => {
   // —— 派生：当前时间上下文 ——
   // 用一个 reactive tick 让计算属性每分钟刷新
   const tick = ref(Date.now())
-  setInterval(() => { tick.value = Date.now() }, 30 * 1000)
+  const _tickTimer = setInterval(() => { tick.value = Date.now() }, 30 * 1000)
+  // Pinia setup store 是应用级单例，_tickTimer 生命周期与 app 等同，无需显式清理。
 
   function parseHm(hm: string): number {
     const [h, m] = hm.split(':').map(Number)

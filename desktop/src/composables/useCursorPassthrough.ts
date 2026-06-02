@@ -57,14 +57,37 @@ export function useCursorPassthrough() {
     }
   }
 
-  onMounted(() => {
+  function startPolling() {
+    if (timer) return
+    // 窗口回来先关穿透，避免 120ms 盲区
     setIgnore(false)
     timer = setInterval(tick, POLL_INTERVAL)
+  }
+
+  function stopPolling() {
+    if (timer) {
+      clearInterval(timer)
+      timer = null
+    }
+  }
+
+  let visCleanup: (() => void) | null = null
+
+  onMounted(() => {
+    setIgnore(false)
+    if (!document.hidden) startPolling()
+
+    const onVis = () => {
+      if (document.hidden) stopPolling()
+      else startPolling()
+    }
+    document.addEventListener('visibilitychange', onVis)
+    visCleanup = () => document.removeEventListener('visibilitychange', onVis)
   })
 
   onUnmounted(() => {
-    if (timer) clearInterval(timer)
-    timer = null
+    stopPolling()
+    visCleanup?.()
     setIgnore(false)
   })
 }

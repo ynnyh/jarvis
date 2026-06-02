@@ -262,7 +262,8 @@ async function sendMessage() {
     // 2. 跑 agent（流式）。喂 LLM 的消息只保留 role + content + tool 字段
     const llmMessages = conv.messages.map(m => stripLocalFields(m))
 
-    // 先订阅流式事件（invoke 期间持续发射）
+    // 先清理旧的流式监听器，再订阅新的
+    streamUnlisten?.()
     const unlisten = await listen<Record<string, any>>('chat:stream', (event) => {
       const payload = event.payload
       if (payload.type === 'delta' && typeof payload.text === 'string') {
@@ -276,6 +277,7 @@ async function sendMessage() {
         scrollToBottom()
       }
     })
+    streamUnlisten = unlisten
 
     try {
       const r = await invoke<{
@@ -308,6 +310,7 @@ async function sendMessage() {
       }
     } finally {
       unlisten()
+      streamUnlisten = null
     }
     conv.updatedAt = Date.now()
     await invoke('conversations_save', { conversation: conv })
@@ -412,6 +415,7 @@ async function handleClose() {
 }
 
 let cleanup: (() => void) | null = null
+let streamUnlisten: (() => void) | null = null
 onMounted(async () => {
   await configStore.load()
   document.title = `${configStore.config.assistantName} · 对话`
@@ -428,7 +432,10 @@ onMounted(async () => {
     await handleClose()
   })
 })
-onUnmounted(() => { cleanup?.() })
+onUnmounted(() => {
+  cleanup?.()
+  streamUnlisten?.()
+})
 
 watch(() => configStore.config.assistantName, (n) => {
   if (n) document.title = `${n} · 对话`

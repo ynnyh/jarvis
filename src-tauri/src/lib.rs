@@ -154,85 +154,62 @@ pub fn run() {
                 let _ = window.set_ignore_cursor_events(false);
             }
 
-            // ===== writeHours 关窗事件 Rust 侧拦截 =====
-            // 历史教训：在 WriteHoursApp.vue 里 onCloseRequested 用 async 回调 +
-            // e.preventDefault() 拦截 OS × 按钮，实测有偶发竞态：preventDefault 在
-            // 异步分支里被 Tauri 当作"未拦截"，窗口实际被销毁，avatar 也跟着失踪。
-            // 改在 Rust 层挂 on_window_event，CloseRequested 时同步 prevent_close +
-            // hide 自己 + show avatar，绕开 JS 的异步 race。
-            if let Some(wh) = app.get_webview_window("writeHours") {
-                let app_handle = app.handle().clone();
-                let wh_clone = wh.clone();
-                wh.on_window_event(move |event| {
+            // 对非 avatar 子窗口挂 CloseRequested：prevent_close + hide + show avatar，
+            // 绕开 JS 端 onCloseRequested 的异步竞态（preventDefault 在异步分支里可能被 Tauri
+            // 当作"未拦截"导致窗口销毁 → avatar 跟着失踪）。
+            // extra 闭包跑窗口专属清理，如清空 state payload 或发事件通知前端。
+            fn setup_close_requested(
+                win: &tauri::WebviewWindow,
+                app_handle: &tauri::AppHandle,
+                extra: impl Fn() + Send + 'static,
+            ) {
+                let w = win.clone();
+                let h = app_handle.clone();
+                win.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
-                        let _ = wh_clone.hide();
-                        // 清掉残留 payload，下次开新任务才不会读到旧的
-                        if let Some(state) = app_handle.try_state::<commands::WriteHoursState>() {
+                        let _ = w.hide();
+                        extra();
+                        if let Some(avatar) = h.get_webview_window("avatar") {
+                            avatar.unminimize().ok();
+                            let _ = avatar.show();
+                            avatar.set_focus().ok();
+                        }
+                    }
+                });
+            }
+
+            if let Some(wh) = app.get_webview_window("writeHours") {
+                let ah = app.handle().clone();
+                setup_close_requested(&wh, &ah, {
+                    let ah = ah.clone();
+                    move || {
+                        if let Some(state) = ah.try_state::<commands::WriteHoursState>() {
                             if let Ok(mut slot) = state.payload.lock() {
                                 *slot = None;
                             }
                         }
-                        if let Some(avatar) = app_handle.get_webview_window("avatar") {
-                            avatar.unminimize().ok();
-                            let _ = avatar.show();
-                            avatar.set_focus().ok();
-                        }
                     }
                 });
             }
 
-            // ===== manualHours 关窗事件 Rust 侧拦截（同 writeHours 套路） =====
-            // OS × 按钮默认销毁窗口 → 下次 manual_hours_open 拿不到 webview，
-            // 又因为 avatar.hide() 没被 undo，小人也消失。同 writeHours 一样
-            // Rust 层 prevent_close + hide + 恢复 avatar。
             if let Some(mh) = app.get_webview_window("manualHours") {
                 let app_handle = app.handle().clone();
-                let mh_clone = mh.clone();
-                mh.on_window_event(move |event| {
-                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        let _ = mh_clone.hide();
-                        if let Some(avatar) = app_handle.get_webview_window("avatar") {
-                            avatar.unminimize().ok();
-                            let _ = avatar.show();
-                            avatar.set_focus().ok();
-                        }
-                    }
-                });
+                setup_close_requested(&mh, &app_handle, || {});
             }
 
             if let Some(tp) = app.get_webview_window("todayPlan") {
-                let app_handle = app.handle().clone();
-                let tp_clone = tp.clone();
-                tp.on_window_event(move |event| {
-                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        let _ = tp_clone.hide();
-                        let _ = app_handle.emit_to("avatar", "today-plan-window-closed", ());
-                        if let Some(avatar) = app_handle.get_webview_window("avatar") {
-                            avatar.unminimize().ok();
-                            let _ = avatar.show();
-                            avatar.set_focus().ok();
-                        }
+                let ah = app.handle().clone();
+                setup_close_requested(&tp, &ah, {
+                    let ah = ah.clone();
+                    move || {
+                        let _ = ah.emit_to("avatar", "today-plan-window-closed", ());
                     }
                 });
             }
 
             if let Some(bw) = app.get_webview_window("batchWrite") {
-                let app_handle = app.handle().clone();
-                let bw_clone = bw.clone();
-                bw.on_window_event(move |event| {
-                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        let _ = bw_clone.hide();
-                        if let Some(avatar) = app_handle.get_webview_window("avatar") {
-                            avatar.unminimize().ok();
-                            let _ = avatar.show();
-                            avatar.set_focus().ok();
-                        }
-                    }
-                });
+                setup_close_requested(&bw, app.handle(), || {});
             }
 
             if channels::should_auto_start() {

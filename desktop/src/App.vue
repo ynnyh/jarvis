@@ -231,6 +231,7 @@ watch(state, () => {
 })
 
 let alertTimer: number | null = null
+let greetingTimer: ReturnType<typeof setTimeout> | null = null
 
 /**
  * 气泡渲染后纠正窗口位置：测气泡 + 状态条的实际屏幕坐标，超出屏幕就把
@@ -456,14 +457,11 @@ function showTaskAlertBubble() {
       `${u}，你有 ${store.overdueCount} 个任务已逾期，最久 ${maxDays} 天`,
       '🔥', 'warning', 0,
     )
-    state.value = 'warning'
   } else if (store.todayCount > 0) {
     showAlert(`${u}，今天有 ${store.todayCount} 个任务到期`, '⏰', 'warning', 10000)
-    state.value = 'warning'
   } else if (store.stackedDays.length > 0) {
     const s = store.stackedDays[0]
     showAlert(`${u}，${s.date} 有 ${s.count} 个任务堆在一天，建议提前处理`, '⚠️', 'warning', 10000)
-    state.value = 'warning'
   } else if (store.soonCount > 0) {
     showAlert(`${u}，3 天内有 ${store.soonCount} 个任务到期`, '⏳', 'thinking', 8000)
   } else if (store.alertsLoaded) {
@@ -498,7 +496,7 @@ onMounted(() => {
     }
   }).then(un => { unlistenFocus = un })
 
-  setTimeout(() => showAlert(`${configStore.config.userTitle}，${configStore.config.assistantName} 来啦`, '🤖', 'idle', 3000), 500)
+  greetingTimer = setTimeout(() => showAlert(`${configStore.config.userTitle}，${configStore.config.assistantName} 来啦`, '🤖', 'idle', 3000), 500)
   // 等数据加载后显示提醒
   watch(() => store.alertsLoaded, (loaded) => {
     if (loaded) showTaskAlertBubble()
@@ -548,6 +546,7 @@ function onWizardDone() {
 
 onUnmounted(() => {
   if (alertTimer) clearTimeout(alertTimer)
+  if (greetingTimer) clearTimeout(greetingTimer)
   unlistenNewTasks?.()
   unlistenSettingsClosed?.()
   unlistenFocus?.()
