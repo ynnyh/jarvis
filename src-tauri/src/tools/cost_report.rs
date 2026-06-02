@@ -32,8 +32,12 @@ pub(crate) async fn cost_report(input: Value) -> Result<Value, String> {
     if project_name.is_empty() {
         return Err("projectName 不能为空".into());
     }
+    let include_overtime = input
+        .get("includeOvertime")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
-    let result = crate::cost_rates::project_cost_summary_inner(&project_name).await?;
+    let result = crate::cost_rates::project_cost_summary_inner(&project_name, include_overtime).await?;
     let text = format_report(&result);
 
     Ok(json!({
@@ -75,15 +79,29 @@ fn format_report(result: &crate::cost_rates::CostSummaryResult) -> String {
         .fold(0.0_f64, f64::max)
         .max(1.0);
 
+    let has_overtime = result.total_overtime_hours.is_some();
+
     let mut lines = Vec::new();
     lines.push(format!("📊 项目成本 · {}", result.project_name));
     lines.push(String::new());
-    lines.push(format!(
-        "总工时 {}h | 总成本 ¥{} | {}人",
-        fmt_hours(result.total_hours),
-        fmt_money(result.total_cost),
-        result.members.len(),
-    ));
+
+    let summary = if has_overtime {
+        let nh = result.total_normal_hours.unwrap_or(0.0);
+        let oh = result.total_overtime_hours.unwrap_or(0.0);
+        format!(
+            "总工时 {}h（正常 {}h / 加班 {}h）| 总成本 ¥{} | {}人",
+            fmt_hours(result.total_hours), fmt_hours(nh), fmt_hours(oh),
+            fmt_money(result.total_cost), result.members.len(),
+        )
+    } else {
+        format!(
+            "总工时 {}h | 总成本 ¥{} | {}人",
+            fmt_hours(result.total_hours),
+            fmt_money(result.total_cost),
+            result.members.len(),
+        )
+    };
+    lines.push(summary);
     lines.push(String::new());
 
     // 条形图 + 明细
@@ -98,21 +116,18 @@ fn format_report(result: &crate::cost_rates::CostSummaryResult) -> String {
         let filled = filled.min(bar_width);
         let empty = bar_width - filled;
         let bar: String = "■".repeat(filled) + &"·".repeat(empty);
-        let cost_str = if m.cost > 0.0 {
-            format!(" ¥{}", fmt_money(m.cost))
-        } else {
-            String::new()
-        };
-        lines.push(format!(
-            "{} {}h {}",
-            bar,
-            fmt_hours(m.hours),
-            name,
-        ));
-        if !cost_str.is_empty() {
-            // 在名字后面追加成本，对齐
-            lines.last_mut().unwrap().push_str(&cost_str);
+        let mut line = format!("{} {}h {}", bar, fmt_hours(m.hours), name);
+        if has_overtime {
+            let nh = m.normal_hours.unwrap_or(0.0);
+            let oh = m.overtime_hours.unwrap_or(0.0);
+            if oh > 0.0 {
+                line += &format!("（正常{}h/加班{}h）", fmt_hours(nh), fmt_hours(oh));
+            }
         }
+        if m.cost > 0.0 {
+            line += &format!(" ¥{}", fmt_money(m.cost));
+        }
+        lines.push(line);
     }
 
     lines.join("\n")

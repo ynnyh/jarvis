@@ -12,6 +12,10 @@ interface MemberCost {
   hourlyRate: number
   cost: number
   taskCount: number
+  normalHours?: number
+  overtimeHours?: number
+  normalCost?: number
+  overtimeCost?: number
 }
 
 interface CostSummaryResult {
@@ -19,6 +23,8 @@ interface CostSummaryResult {
   members: MemberCost[]
   totalHours: number
   totalCost: number
+  totalNormalHours?: number
+  totalOvertimeHours?: number
 }
 
 interface ProjectInfo {
@@ -31,6 +37,7 @@ const projects = ref<ProjectInfo[]>([])
 const projectSearch = ref('')
 const showProjectDropdown = ref(false)
 const loading = ref(false)
+const includeOvertime = ref(false)
 const error = ref<string | null>(null)
 const result = ref<CostSummaryResult | null>(null)
 
@@ -50,6 +57,7 @@ const filteredProjects = computed(() => {
 })
 
 const memberCount = computed(() => result.value?.members.length ?? 0)
+const hasOvertime = computed(() => result.value?.totalOvertimeHours != null)
 
 const maxHours = computed(() => {
   if (!result.value) return 1
@@ -117,6 +125,7 @@ async function runQuery() {
   try {
     result.value = await invoke<CostSummaryResult>('project_cost_summary', {
       projectName: projectSearch.value,
+      include_overtime: includeOvertime.value,
     })
     // 把结果中的时薪和中文名同步到编辑态
     if (result.value) {
@@ -197,6 +206,8 @@ function onRateChange(account: string, val: string) {
     if (m) {
       m.hourlyRate = num
       m.cost = m.hours * num
+      if (m.normalHours != null) m.normalCost = m.normalHours * num
+      if (m.overtimeHours != null) m.overtimeCost = m.overtimeHours * num
       recalcTotals()
     }
   }
@@ -215,6 +226,8 @@ function applyUnifiedRate() {
     for (const m of result.value.members) {
       m.hourlyRate = r
       m.cost = m.hours * r
+      if (m.normalHours != null) m.normalCost = m.normalHours * r
+      if (m.overtimeHours != null) m.overtimeCost = m.overtimeHours * r
     }
     recalcTotals()
   }
@@ -313,6 +326,10 @@ onMounted(async () => {
         <button class="query-btn" :disabled="loading || !projectSearch" @click="runQuery">
           {{ loading ? '查询中…' : '查询' }}
         </button>
+        <label class="overtime-check">
+          <input type="checkbox" v-model="includeOvertime" />
+          <span>含加班</span>
+        </label>
       </div>
 
       <div v-if="error" class="cost-error">{{ error }}</div>
@@ -323,6 +340,10 @@ onMounted(async () => {
           <div class="summary-card">
             <div class="card-num">{{ fmt(result.totalHours) }}h</div>
             <div class="card-label">总工时</div>
+          </div>
+          <div v-if="hasOvertime" class="summary-card">
+            <div class="card-num">{{ fmt(result.totalNormalHours ?? 0) }}h / {{ fmt(result.totalOvertimeHours ?? 0) }}h</div>
+            <div class="card-label">正常 / 加班</div>
           </div>
           <div class="summary-card">
             <div class="card-num">&yen;{{ fmtMoney(result.totalCost) }}</div>
@@ -400,6 +421,8 @@ onMounted(async () => {
                   <th class="num">时薪 (元/h)</th>
                   <th>账号</th>
                   <th class="num">工时</th>
+                  <th v-if="hasOvertime" class="num">正常</th>
+                  <th v-if="hasOvertime" class="num">加班</th>
                   <th class="num">任务数</th>
                   <th class="num">成本</th>
                 </tr>
@@ -427,6 +450,8 @@ onMounted(async () => {
                   </td>
                   <td class="account-cell">{{ m.account }}</td>
                   <td class="num">{{ fmt(m.hours) }}</td>
+                  <td v-if="hasOvertime" class="num">{{ fmt(m.normalHours ?? 0) }}</td>
+                  <td v-if="hasOvertime" class="num overtime-num">{{ fmt(m.overtimeHours ?? 0) }}</td>
                   <td class="num">{{ m.taskCount }}</td>
                   <td class="num cost-total">{{ m.cost > 0 ? '&yen;' + fmtMoney(m.cost) : '-' }}</td>
                 </tr>
@@ -437,6 +462,8 @@ onMounted(async () => {
                   <td class="num">-</td>
                   <td class="num">-</td>
                   <td class="num">{{ fmt(result.totalHours) }}</td>
+                  <td v-if="hasOvertime" class="num">{{ fmt(result.totalNormalHours ?? 0) }}</td>
+                  <td v-if="hasOvertime" class="num overtime-num">{{ fmt(result.totalOvertimeHours ?? 0) }}</td>
                   <td class="num">-</td>
                   <td class="num cost-total">&yen;{{ fmtMoney(result.totalCost) }}</td>
                 </tr>
@@ -531,6 +558,13 @@ onMounted(async () => {
 }
 .query-btn:hover:not(:disabled) { box-shadow: 0 4px 12px rgba(0, 212, 255, 0.3); }
 .query-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.overtime-check {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 12px; color: rgba(255, 255, 255, 0.6);
+  white-space: nowrap; cursor: pointer; user-select: none;
+}
+.overtime-check input { accent-color: rgba(0, 212, 255, 0.8); }
 
 .cost-error {
   padding: 8px; font-size: 12.5px;
@@ -638,6 +672,7 @@ onMounted(async () => {
 .result-table td { padding: 5px 6px; border-bottom: 1px solid rgba(255, 255, 255, 0.03); }
 .result-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .cost-total { font-weight: 600; color: rgba(0, 212, 255, 0.95); }
+.overtime-num { color: rgba(245, 158, 11, 0.85); }
 .total-row td {
   border-top: 1px solid rgba(255, 255, 255, 0.12);
   font-weight: 600; color: rgba(255, 255, 255, 0.85); padding-top: 6px;

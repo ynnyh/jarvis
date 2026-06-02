@@ -548,6 +548,48 @@ impl ZentaoClient {
         Ok(Some(json.get("task").cloned().unwrap_or(json)))
     }
 
+    /// 拉取任务的工作日志（按日期的工时明细）。
+    /// 返回 JSON 数组，每条含 account/date/consumed/work 等字段。
+    pub async fn get_task_works(&self, task_id: &str) -> Result<Vec<Value>, String> {
+        let token = self.ensure_token().await?;
+        let url = self.url(&format!("api.php/v1/tasks/{}/works", task_id));
+        let resp = self
+            .client
+            .get(&url)
+            .header("Content-Type", "application/json")
+            .header("User-Agent", UA)
+            .header("Token", &token)
+            .send()
+            .await
+            .map_err(|e| format!("读任务工作日志失败: {}", e))?;
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(format!(
+                "读任务工作日志 HTTP {}: {}",
+                status.as_u16(),
+                crate::util::truncate_chars(&text, 300)
+            ));
+        }
+        let json: Value = serde_json::from_str(&text).map_err(|_| {
+            format!(
+                "读任务工作日志返回非 JSON: {}",
+                crate::util::truncate_chars(&text, 200)
+            )
+        })?;
+        // 兼容 {works: [...]} 或直接数组
+        let works = if let Some(arr) = json.as_array() {
+            arr.clone()
+        } else if let Some(arr) = json.get("works").and_then(|v| v.as_array()) {
+            arr.clone()
+        } else if let Some(arr) = json.get("data").and_then(|v| v.as_array()) {
+            arr.clone()
+        } else {
+            Vec::new()
+        };
+        Ok(works)
+    }
+
     /// 列出当前用户有权限的所有项目（OpenAPI v1）。
     pub async fn list_projects(&self) -> Result<Vec<Value>, String> {
         let token = self.ensure_token().await?;

@@ -597,11 +597,12 @@ fn tool_schema(name: &str) -> Option<(String, Value)> {
             }),
         )),
         "cost_report" => Some((
-            "查询指定项目的团队成本分析：从禅道拉取该项目全部任务的团队工时数据，按人聚合工时×时薪，返回文本报告（含条形图、人均工时、成本汇总）。必须先用 cost_report_preview 确认项目名无误后才能调用此工具。".into(),
+            "查询指定项目的团队成本分析：从禅道拉取该项目全部任务的团队工时数据，按人聚合工时×时薪，返回文本报告（含条形图、人均工时、成本汇总）。必须先用 cost_report_preview 确认项目名无误后才能调用此工具。传 includeOvertime=true 可拆分正常/加班工时（需要逐任务拉工作日志，较慢）。".into(),
             json!({
                 "type": "object",
                 "properties": {
-                    "projectName": { "type": "string", "description": "禅道项目名称，必须精确匹配" }
+                    "projectName": { "type": "string", "description": "禅道项目名称，必须精确匹配" },
+                    "includeOvertime": { "type": "boolean", "description": "是否拆分正常/加班工时，默认 false（较快）。设为 true 会逐任务拉工作日志按日期拆分，较慢但能看到加班数据。" }
                 },
                 "required": ["projectName"],
                 "additionalProperties": false
