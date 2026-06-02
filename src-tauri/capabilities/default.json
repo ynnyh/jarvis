@@ -8,7 +8,8 @@
     "settings",
     "writeHours",
     "manualHours",
-    "todayPlan"
+    "todayPlan",
+    "batchWrite"
   ],
   "permissions": [
     "core:default",

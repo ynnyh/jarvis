@@ -141,6 +141,28 @@
         "shadow": true,
         "focus": true,
         "visible": false
+      },
+      {
+        "label": "batchWrite",
+        "title": "一键写工时",
+        "url": "batchWrite.html",
+        "width": 900,
+        "height": 700,
+        "minWidth": 640,
+        "minHeight": 480,
+        "center": true,
+        "resizable": true,
+        "maximizable": true,
+        "minimizable": true,
+        "closable": true,
+        "fullscreen": false,
+        "alwaysOnTop": false,
+        "skipTaskbar": false,
+        "transparent": false,
+        "decorations": false,
+        "shadow": true,
+        "focus": true,
+        "visible": false
       }
     ],
     "security": {

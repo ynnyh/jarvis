@@ -22,6 +22,7 @@ export default defineConfig({
         writeHours: resolve(__dirname, 'desktop/writeHours.html'),
         manualHours: resolve(__dirname, 'desktop/manualHours.html'),
         todayPlan: resolve(__dirname, 'desktop/todayPlan.html'),
+        batchWrite: resolve(__dirname, 'desktop/batchWrite.html'),
       },
     },
   },

@@ -353,11 +353,52 @@ impl ZentaoClient {
     // 业务调用
     // ============================================================================
 
-    /// 拉"指派给我"的任务列表。返回原始 JSON 数组（每条是 ZenTao 后端的 task 对象）。
+    /// 拉"指派给我"的所有任务（不限工作台视图），用于今日计划搜索。
+    /// 同时尝试 my-task 和 my-work-task 两个接口，按 ID 去重合并，覆盖更全。
+    pub async fn get_all_assigned_tasks(&self) -> Result<Vec<Value>, String> {
+        let mut seen = std::collections::HashMap::new();
+        for url_suffix in &[
+            "my-task-assignedTo--id_desc.json",
+            "my-work-task-assignedTo--id_desc.json",
+        ] {
+            match self.try_fetch_tasks(url_suffix).await {
+                Ok(tasks) => {
+                    eprintln!(
+                        "[zentao] {} returned {} tasks",
+                        url_suffix.trim_end_matches(".json"),
+                        tasks.len()
+                    );
+                    for t in tasks {
+                        let id = t
+                            .get("id")
+                            .map(|v| {
+                                v.as_str()
+                                    .map(|s| s.to_string())
+                                    .unwrap_or_else(|| v.to_string().trim_matches('"').to_string())
+                            })
+                            .unwrap_or_default();
+                        seen.entry(id).or_insert(t);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[zentao] {} failed: {}", url_suffix, e);
+                }
+            }
+        }
+        if seen.is_empty() {
+            return Err("无法获取任务列表（所有接口均失败）".into());
+        }
+        Ok(seen.into_values().collect())
+    }
+
+    /// 拉"指派给我"的任务列表（仅工作台视图）。返回原始 JSON 数组。
     pub async fn get_my_tasks(&self) -> Result<Vec<Value>, String> {
+        self.try_fetch_tasks("my-work-task-assignedTo--id_desc.json").await
+    }
+
+    async fn try_fetch_tasks(&self, url_suffix: &str) -> Result<Vec<Value>, String> {
         let token = self.ensure_token().await?;
-        // 工作台 .json 端点，pagerMyWork cookie 控制每页数量（一次性拉全）
-        let url = self.url("my-work-task-assignedTo--id_desc.json");
+        let url = self.url(url_suffix);
         let resp = self
             .client
             .get(&url)

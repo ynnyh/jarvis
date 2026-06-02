@@ -122,6 +122,15 @@
 .task-entry-btn:hover {
   background: rgba(59, 130, 246, 0.28);
 }
+.task-entry-btn.primary-entry-btn {
+  border-color: rgba(59, 130, 246, 0.7);
+  background: linear-gradient(135deg, rgba(59,130,246,.25), rgba(37,99,235,.18));
+  font-weight: 600;
+  font-size: 13px;
+}
+.task-entry-btn.primary-entry-btn:hover {
+  background: linear-gradient(135deg, rgba(59,130,246,.4), rgba(37,99,235,.3));
+}
 .task-entry-btn.transaction-btn {
   border-color: rgba(168, 85, 247, 0.45);
   background: rgba(168, 85, 247, 0.18);

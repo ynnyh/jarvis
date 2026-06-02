@@ -13,6 +13,7 @@
           <button class="range-btn" :class="{ active: range === 'lastWeek' }" :disabled="store.reviewLoading" @click="switchRange('lastWeek')">上周</button>
         </div>
         <button class="icon-btn" :class="{ spinning: refreshing }" title="刷新" @click="handleRefresh">↻</button>
+        <button class="icon-btn batch-write" title="一键写工时" :disabled="!store.reviewData || store.reviewLoading" @click="openBatchWrite">✍</button>
         <button class="icon-btn" title="关闭" @click="store.showReviewWindow = false">×</button>
       </div>
     </header>
@@ -64,15 +65,15 @@
         </div>
         <p class="section-hint">范围：{{ store.reviewData.range.label }}</p>
         <div v-if="range === 'today'" class="task-entry-actions">
-          <button class="task-entry-btn" @click="startWriteSearch">
+          <button class="task-entry-btn primary-entry-btn" @click="openBatchWrite">
             <span class="task-entry-icon">📝</span>
-            <span>写任务</span>
+            <span>一键写工时</span>
           </button>
           <button class="task-entry-btn transaction-btn" @click="openTransactionHours">
             <span class="task-entry-icon">✍️</span>
             <span>事务类工作</span>
           </button>
-          <span class="task-entry-hint">写任务：给任意禅道任务写工时（可搜索）；事务类：没有 commit 的沟通、排障等</span>
+          <span class="task-entry-hint">一键写工时：汇总今天所有提交，确认后一键写入禅道；事务类：没有 commit 的沟通、排障等</span>
         </div>
       </section>
 

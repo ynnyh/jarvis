@@ -19,6 +19,20 @@ const HISTORY_DAYS: i64 = 14;
 pub struct TodayPlan {
     pub date: String,
     pub task_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub estimated_hours: HashMap<String, f64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub custom_items: Vec<CustomPlanItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomPlanItem {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "estimatedHours")]
+    pub estimated_hours: f64,
+    pub kind: String, // "custom" | "transaction"
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,6 +55,10 @@ pub struct TodayPlanLoadResponse {
     pub task_ids: Vec<String>,
     pub work_style: String,
     pub candidate_tasks: Vec<CandidateTask>,
+    #[serde(default)]
+    pub estimated_hours: HashMap<String, f64>,
+    #[serde(default)]
+    pub custom_items: Vec<CustomPlanItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -158,7 +176,12 @@ fn read_today_plan() -> TodayPlan {
         .and_then(|v| serde_json::from_value::<TodayPlan>(v).ok());
     match plan {
         Some(plan) if plan.date == today_str() => plan,
-        _ => TodayPlan { date: today_str(), task_ids: Vec::new() },
+        _ => TodayPlan {
+            date: today_str(),
+            task_ids: Vec::new(),
+            estimated_hours: HashMap::new(),
+            custom_items: Vec::new(),
+        },
     }
 }
 
@@ -230,13 +253,10 @@ fn summarize(cards: &[WorklogCard]) -> WorklogSummary {
 }
 
 /// 工作定位画像。由 config.workStyle（用户在引导/设置里选的"大白话定位"）派生，
-/// 驱动候选任务条数 + 复盘时是否侧重事务类录入。职位标签（运维/前端/后端）只是这几条的组合，
-/// 不直接暴露给用户。
+/// 用于复盘时是否侧重事务类录入。
 struct WorkProfile {
     /// focused 专注写码 / multi 多线开发 / transactional 事务为主 / balanced 比较均衡
     style: String,
-    /// 候选任务最多显示几条；None = 不截断（多线开发项目多，全量交给前端搜索过滤）
-    candidate_limit: Option<usize>,
     /// 事务为主的人 commit 少，复盘要偏向事务类录入并提示补工时
     transactional_emphasis: bool,
 }
@@ -248,15 +268,9 @@ fn work_profile_from_config(cfg: &Value) -> WorkProfile {
         .map(|s| s.trim().to_string())
         .filter(|s| matches!(s.as_str(), "focused" | "multi" | "transactional" | "balanced"))
         .unwrap_or_else(|| "balanced".to_string());
-    let (candidate_limit, transactional_emphasis) = match style.as_str() {
-        "focused" => (Some(6usize), false),
-        "multi" => (None, false),
-        "transactional" => (Some(10usize), true),
-        _ => (Some(12usize), false),
-    };
+    let transactional_emphasis = matches!(style.as_str(), "transactional");
     WorkProfile {
         style,
-        candidate_limit,
         transactional_emphasis,
     }
 }
@@ -324,9 +338,9 @@ fn task_system_hint(task_id: &str) -> Option<String> {
     path.rsplit('/').nth(1).map(|s| s.to_string()).or_else(|| path.rsplit('/').next().map(|s| s.to_string()))
 }
 
-async fn candidate_tasks(profile: &WorkProfile) -> Result<Vec<CandidateTask>, String> {
+async fn candidate_tasks() -> Result<Vec<CandidateTask>, String> {
     let client = ZentaoClient::from_settings()?;
-    let tasks = client.get_my_tasks().await?;
+    let tasks = client.get_all_assigned_tasks().await?;
     let hits = recent_audit_hits();
     let mut out: Vec<CandidateTask> = tasks
         .into_iter()
@@ -383,9 +397,6 @@ async fn candidate_tasks(profile: &WorkProfile) -> Result<Vec<CandidateTask>, St
             .then_with(|| a.id.cmp(&b.id))
     });
 
-    if let Some(limit) = profile.candidate_limit {
-        out.truncate(out.len().min(limit));
-    }
     Ok(out)
 }
 
@@ -574,7 +585,7 @@ async fn build_session(date: &str) -> Result<WorklogSession, String> {
 
     if date == today_plan.date {
         let existing_task_ids: HashSet<String> = cards.iter().map(|c| c.task_id.clone()).collect();
-        let candidate_map: HashMap<String, CandidateTask> = candidate_tasks(&profile)
+        let candidate_map: HashMap<String, CandidateTask> = candidate_tasks()
             .await?
             .into_iter()
             .map(|t| (t.id.clone(), t))
@@ -728,12 +739,14 @@ pub async fn today_plan_load() -> Result<TodayPlanLoadResponse, String> {
     let cfg = crate::settings::load_raw_config().unwrap_or_else(|| json!({}));
     let profile = work_profile_from_config(&cfg);
     let plan = read_today_plan();
-    let candidate_tasks = candidate_tasks(&profile).await?;
+    let candidate_tasks = candidate_tasks().await?;
     Ok(TodayPlanLoadResponse {
         date: plan.date,
         task_ids: plan.task_ids,
         work_style: profile.style,
         candidate_tasks,
+        estimated_hours: plan.estimated_hours,
+        custom_items: plan.custom_items,
     })
 }
 
@@ -741,11 +754,15 @@ pub async fn today_plan_load() -> Result<TodayPlanLoadResponse, String> {
 pub async fn today_plan_save(
     task_ids: Vec<String>,
     date: Option<String>,
+    estimated_hours: Option<HashMap<String, f64>>,
+    custom_items: Option<Vec<CustomPlanItem>>,
     app: tauri::AppHandle,
 ) -> Result<TodayPlanLoadResponse, String> {
     let next = TodayPlan {
         date: date.unwrap_or_else(today_str),
         task_ids,
+        estimated_hours: estimated_hours.unwrap_or_default(),
+        custom_items: custom_items.unwrap_or_default(),
     };
     let _guard = CONFIG_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     write_today_plan(&next)?;
@@ -760,6 +777,8 @@ pub async fn today_plan_clear(date: Option<String>, app: tauri::AppHandle) -> Re
     let next = TodayPlan {
         date: date.unwrap_or_else(today_str),
         task_ids: Vec::new(),
+        estimated_hours: HashMap::new(),
+        custom_items: Vec::new(),
     };
     let _guard = CONFIG_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     write_today_plan(&next)?;
@@ -767,6 +786,44 @@ pub async fn today_plan_clear(date: Option<String>, app: tauri::AppHandle) -> Re
     let _ = app.emit("config-changed", ());
     drop(_guard);
     today_plan_load().await
+}
+
+#[tauri::command]
+pub async fn today_plan_lookup_task(task_id: String) -> Result<CandidateTask, String> {
+    let client = ZentaoClient::from_settings()?;
+    let task = client
+        .get_task(&task_id)
+        .await?
+        .ok_or_else(|| format!("任务 #{} 不存在", task_id))?;
+    let id = task
+        .get("id")
+        .map(|v| {
+            v.as_str()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| v.to_string().trim_matches('"').to_string())
+        })
+        .unwrap_or_default();
+    let name = task
+        .get("name")
+        .or_else(|| task.get("title"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let status = task.get("status").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let priority = task
+        .get("priority")
+        .and_then(|v| v.as_str())
+        .unwrap_or("normal")
+        .to_string();
+    Ok(CandidateTask {
+        id,
+        name,
+        status,
+        priority,
+        score: 0.0,
+        reason: "manually added by ID".to_string(),
+        system_hint: None,
+    })
 }
 
 #[tauri::command]

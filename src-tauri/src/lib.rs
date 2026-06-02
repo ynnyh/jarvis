@@ -219,6 +219,22 @@ pub fn run() {
                 });
             }
 
+            if let Some(bw) = app.get_webview_window("batchWrite") {
+                let app_handle = app.handle().clone();
+                let bw_clone = bw.clone();
+                bw.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = bw_clone.hide();
+                        if let Some(avatar) = app_handle.get_webview_window("avatar") {
+                            avatar.unminimize().ok();
+                            let _ = avatar.show();
+                            avatar.set_focus().ok();
+                        }
+                    }
+                });
+            }
+
             if channels::should_auto_start() {
                 let app_handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
@@ -258,6 +274,8 @@ pub fn run() {
             commands::avatar_show_fallback,
             commands::manual_hours_open,
             commands::manual_hours_close,
+            commands::batch_write_open,
+            commands::batch_write_close,
             channels::channels_start,
             channels::channels_stop,
             channels::channel_status,
@@ -287,6 +305,7 @@ pub fn run() {
             worklog::today_plan_load,
             worklog::today_plan_save,
             worklog::today_plan_clear,
+            worklog::today_plan_lookup_task,
             worklog::worklog_session_get,
             worklog::worklog_card_update,
             worklog::worklog_manual_card_add,

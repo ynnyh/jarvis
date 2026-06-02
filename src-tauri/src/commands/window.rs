@@ -270,6 +270,38 @@ pub async fn write_hours_take_payload(
     Ok(slot.clone())
 }
 
+// ===== 批量写工时窗口 =====
+
+#[tauri::command]
+pub async fn batch_write_open(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("batchWrite") {
+        w.unminimize().ok();
+        w.show()
+            .map_err(|e| format!("show batchWrite 失败: {}", e))?;
+        w.set_focus().ok();
+        let _ = w.eval("window.location.reload()");
+    } else {
+        return Err("batchWrite 窗口未注册".into());
+    }
+    if let Some(avatar) = app.get_webview_window("avatar") {
+        avatar.hide().map_err(|e| format!("hide avatar 失败: {}", e))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn batch_write_close(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("batchWrite") {
+        w.hide().map_err(|e| format!("hide batchWrite 失败: {}", e))?;
+    }
+    if let Some(avatar) = app.get_webview_window("avatar") {
+        avatar.unminimize().ok();
+        avatar.show().map_err(|e| format!("show avatar 失败: {}", e))?;
+        avatar.set_focus().ok();
+    }
+    Ok(())
+}
+
 // ===== 手动写工时窗口 =====
 
 #[tauri::command]

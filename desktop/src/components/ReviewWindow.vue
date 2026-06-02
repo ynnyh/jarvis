@@ -251,6 +251,14 @@ async function handleRefresh() {
   }
 }
 
+async function openBatchWrite() {
+  try {
+    await invoke('batch_write_open')
+  } catch (e) {
+    console.error('open batchWrite failed:', e)
+  }
+}
+
 async function handleCopy() {
   const ok = await copyPlainText()
   copyState.value = ok ? 'ok' : 'fail'
