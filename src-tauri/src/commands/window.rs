@@ -115,14 +115,18 @@ pub async fn settings_open(app: tauri::AppHandle, page: Option<String>) -> Resul
         } else {
             safe_page
         };
+        // 已开的窗口只更新 URL 不刷新，侧边栏 SPA 内切换
+        let already = settings.is_visible().unwrap_or(false);
         let script = format!(
-            "window.history.replaceState(null, '', 'settings.html?page={}'); window.location.reload();",
+            "window.history.replaceState(null,'','settings.html?page={}');window.dispatchEvent(new Event('settings-page-changed'));",
             safe_page
         );
         let _ = settings.eval(&script);
-        settings
-            .show()
-            .map_err(|e| format!("show settings 失败: {}", e))?;
+        if !already {
+            settings
+                .show()
+                .map_err(|e| format!("show settings 失败: {}", e))?;
+        }
         settings
             .set_focus()
             .map_err(|e| format!("focus settings 失败: {}", e))?;

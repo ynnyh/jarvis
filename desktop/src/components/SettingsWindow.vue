@@ -56,11 +56,11 @@ function pageStatus(key: SettingsPageKey) {
     return names.join(' / ') || '未启用'
   }
   if (key === 'code') return `${store.config.repoRoots.length} 个目录`
-  if (key === 'schedule') return `${store.config.workSchedule.workDays.length} 个工作日`
+  if (key === 'dailyNudges') return store.config.notifications.todayPlanPromptEnabled ? '已启用' : '已配置'
   if (key === 'effortClosing') {
     return store.config.notifications.effortClosingCheck ? '已启用' : '已关闭'
   }
-  if (key === 'nudges') return store.isQuietHours ? '静默中' : '启用中'
+  if (key === 'personalization') return store.config.assistantName || '已配置'
   return store.config.assistantName
 }
 

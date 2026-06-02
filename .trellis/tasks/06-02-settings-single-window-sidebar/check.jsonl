@@ -1,0 +1,2 @@
+{"file": "spec/frontend/quality-guidelines.md", "reason": "验证合并后的页面内容完整、无遗漏字段"}
+{"file": "spec/guides/cross-layer-thinking-guide.md", "reason": "验证 settings_open 命令仍正常工作，现有调用不受影响"}
