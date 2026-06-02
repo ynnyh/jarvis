@@ -28,6 +28,7 @@ import BindTaskWindow from './components/BindTaskWindow.vue'
 import WelcomeWizard from './components/WelcomeWizard.vue'
 import PetAvatar from './components/PetAvatar.vue'
 import ErrorBoundary from './components/ErrorBoundary.vue'
+import { MENU_KEYS, getMenuTheme } from './menu-themes'
 
 const store = useAppStore()
 const configStore = useConfigStore()
@@ -41,6 +42,17 @@ type JarvisState = 'idle' | 'thinking' | 'working' | 'warning' | 'happy' | 'morn
 
 const state = ref<JarvisState>('idle')
 const showMenu = ref(false)
+
+/** 当前主题的菜单项，按 MENU_KEYS 顺序排列 */
+const menuItems = computed(() => {
+  const theme = getMenuTheme(configStore.config.menuTheme)
+  return MENU_KEYS.map(key => theme.items.find(i => i.key === key)!)
+})
+
+/** 日常类菜单项（前 3 个）和系统类菜单项（后 4 个） */
+const dailyMenuItems = computed(() => menuItems.value.slice(0, 3))
+const systemMenuItems = computed(() => menuItems.value.slice(3))
+
 const alertText = ref('')
 const alertEmoji = ref('')
 const alertActions = ref<Array<{ label: string; action: () => void | Promise<void> }>>([])
@@ -539,28 +551,36 @@ onUnmounted(() => {
     <!-- 菜单打开时铺满窗口的透明遮罩，点击任意位置关闭菜单 -->
     <div v-if="showMenu" class="menu-backdrop pointer-target" @click="showMenu = false" @contextmenu.prevent="showMenu = false" />
     <div v-if="showMenu" class="menu pointer-target">
+      <!-- 日常组 -->
       <button class="menu-item" @click="menuShowAlerts">
-        <span>🔔</span><span>任务提醒</span>
+        <span>{{ dailyMenuItems[0].emoji }}</span><span>{{ dailyMenuItems[0].label }}</span>
         <span v-if="store.overdueCount > 0" class="menu-badge badge-danger">{{ store.overdueCount }}</span>
         <span v-else-if="store.todayCount > 0" class="menu-badge badge-warn">{{ store.todayCount }}</span>
         <span v-else-if="store.soonCount > 0" class="menu-badge badge-soon">{{ store.soonCount }}</span>
       </button>
-      <button class="menu-item" @click="menuShowRisk"><span>⚠️</span><span>风险分析</span></button>
-      <button class="menu-item" @click="menuShowReview"><span>📋</span><span>今日复盘</span></button>
-      <button class="menu-item" @click="menuOpenTodayPlan"><span>📝</span><span>今日计划</span></button>
-      <button class="menu-item" @click="menuOpenManualHours"><span>✍️</span><span>写工时</span></button>
-      <button class="menu-item" @click="menuOpenChat"><span>💬</span><span>聊天（大窗）</span></button>
-      <button class="menu-item" @click="menuShowSettings"><span>⚙️</span><span>设置</span></button>
-      <button class="menu-item" @click="menuToggleDock">
-        <span>{{ dockEdge ? '📤' : '📥' }}</span>
-        <span>{{ dockEdge ? '从边缘弹出' : '贴到屏幕边' }}</span>
+      <button class="menu-item" @click="menuShowReview">
+        <span>{{ dailyMenuItems[1].emoji }}</span><span>{{ dailyMenuItems[1].label }}</span>
+      </button>
+      <button class="menu-item" @click="menuOpenTodayPlan">
+        <span>{{ dailyMenuItems[2].emoji }}</span><span>{{ dailyMenuItems[2].label }}</span>
+      </button>
+
+      <div class="menu-divider" />
+
+      <!-- 系统组 -->
+      <button class="menu-item" @click="menuOpenChat">
+        <span>{{ systemMenuItems[0].emoji }}</span><span>{{ systemMenuItems[0].label }}</span>
+      </button>
+      <button class="menu-item" @click="menuShowSettings">
+        <span>{{ systemMenuItems[1].emoji }}</span><span>{{ systemMenuItems[1].label }}</span>
       </button>
       <button class="menu-item" @click="menuCheckUpdate">
-        <span>✨</span><span>检查更新</span>
+        <span>{{ systemMenuItems[2].emoji }}</span><span>{{ systemMenuItems[2].label }}</span>
         <span v-if="updater.available.value" class="menu-badge badge-soon">新</span>
       </button>
-      <div class="menu-divider" />
-      <button class="menu-item menu-item-danger" @click="menuQuit"><span>🚪</span><span>退出 {{ configStore.config.assistantName }}</span></button>
+      <button class="menu-item menu-item-danger" @click="menuQuit">
+        <span>{{ systemMenuItems[3].emoji }}</span><span>{{ systemMenuItems[3].label }}</span>
+      </button>
     </div>
 
     <div class="menu-btn pointer-target" @click="toggleMenu">⋯</div>

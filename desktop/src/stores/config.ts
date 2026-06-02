@@ -114,6 +114,8 @@ export interface JarvisConfig {
   reminders: ScheduledReminder[]
   workStyle: WorkStyle
   todayPlan: TodayPlan
+  /** 右键菜单主题 id，对应 menu-themes.ts 中的 id */
+  menuTheme: string
 }
 
 export interface ScheduledReminder {
@@ -194,6 +196,7 @@ const defaultConfig = (): JarvisConfig => ({
   activeLlmProfileId: '',
   workStyle: 'balanced',
   todayPlan: { date: '', taskIds: [] },
+  menuTheme: 'default',
 })
 
 function todayStr(): string {
@@ -272,6 +275,7 @@ export const useConfigStore = defineStore('config', () => {
         workStyle: ['focused', 'multi', 'transactional', 'balanced'].includes(remote.workStyle)
           ? remote.workStyle
           : defaults.workStyle,
+        menuTheme: remote.menuTheme ?? defaults.menuTheme,
         todayPlan: {
           date: remote.todayPlan?.date ?? defaults.todayPlan.date,
           taskIds: Array.isArray(remote.todayPlan?.taskIds)

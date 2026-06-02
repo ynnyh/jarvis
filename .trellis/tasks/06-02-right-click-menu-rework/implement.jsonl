@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Vue 组件规范，指导如何组织菜单组件和设置面板"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "新建 menu-themes.ts 的文件位置参考"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Pinia store 模式，config store 新增 menuTheme 字段"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "TypeScript 类型定义规范，MenuTheme 类型设计"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "代码质量检查标准"}
