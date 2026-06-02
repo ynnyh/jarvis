@@ -162,7 +162,7 @@ function buildEntries(review: DailyReviewData, plan: TodayPlanData | null) {
   for (const t of review.advancedTasks) {
     const planHours = plan?.estimatedHours?.[t.taskId]
     const hours = planHours ?? t.suggestedHours ?? Math.round(t.effort * 100) / 100
-    const content = t.defaultWorkContent || t.commits.map(c => c.title).join('；')
+    const content = t.defaultWorkContent || t.commits.map((c, i) => `${i + 1}、${c.title}`).join('；')
     result.push({
       key: `task-${t.taskId}`,
       taskId: t.taskId,
@@ -184,7 +184,7 @@ function buildEntries(review: DailyReviewData, plan: TodayPlanData | null) {
       taskId: '',
       taskName: `[未关联] ${o.businessLine}`,
       hours: o.suggestedHours || 0,
-      workContent: o.commits.map(c => c.title).join('；'),
+      workContent: o.commits.map((c, i) => `${i + 1}、${c.title}`).join('；'),
       commits: o.commits,
       kind: 'orphan',
       written: false,

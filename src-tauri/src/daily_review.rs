@@ -121,16 +121,16 @@ fn round_half(x: f64) -> f64 {
 
 fn build_default_work_content(commits: &[CommitLink]) -> String {
     let mut seen: HashSet<String> = HashSet::new();
-    let mut lines: Vec<String> = Vec::new();
+    let mut items: Vec<String> = Vec::new();
     for c in commits {
         let cleaned = clean_commit_title(&c.title, 80);
         if cleaned.is_empty() || seen.contains(&cleaned) {
             continue;
         }
         seen.insert(cleaned.clone());
-        lines.push(format!("- {}", cleaned));
+        items.push(cleaned);
     }
-    lines.join("\n")
+    items.iter().enumerate().map(|(i, s)| format!("{}、{}", i + 1, s)).collect::<Vec<_>>().join("；")
 }
 
 /// 业务线工时按 0.5h 量化分配给任务（commit 数倒序）
