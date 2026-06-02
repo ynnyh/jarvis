@@ -1,4 +1,4 @@
-use crate::channels::types::{AgentReply, ChannelMessage};
+use crate::channels::types::{AgentReply, ChannelMessage, PendingAction};
 use crate::settings;
 use crate::tools;
 use serde_json::json;
@@ -67,7 +67,11 @@ pub(super) async fn handle_incoming(
     let agent_text = last_assistant_text(&new_messages)
         .unwrap_or_else(|| "我处理完了，但没有生成可展示的回复。".to_string());
 
-    let pending = pending_actions::detect_effort_proposal(&incoming, &agent_text).await?;
+    // 优先从工具结果拿写入建议（避免重复走正则兜底）
+    let pending = match extract_pending_from_tool_result(&new_messages) {
+        Some(action) => Some(action),
+        None => pending_actions::detect_effort_proposal(&incoming, &agent_text).await?,
+    };
     let text = if let Some(action) = &pending {
         pending_actions::save_pending_action(action)?;
         format!(
@@ -89,6 +93,21 @@ pub(super) async fn handle_plain_chat(
     assistant_name: &str,
     user_title: &str,
 ) -> Result<AgentReply, String> {
+    // 常见问候直接本地回复，不走 LLM
+    let last_user_text = history
+        .iter()
+        .rev()
+        .find(|m| m.get("role").and_then(|v| v.as_str()) == Some("user"))
+        .and_then(|m| m.get("content").and_then(|v| v.as_str()))
+        .unwrap_or("")
+        .trim();
+    let trimmed = last_user_text.trim_matches(|c: char| c.is_whitespace() || "，。！？,.!?".contains(c));
+    if matches!(trimmed, "在吗" | "在不在" | "你好" | "嗨" | "hello" | "hi") {
+        return Ok(AgentReply {
+            text: format!("在的，{}！有什么需要帮忙的吗？", user_title),
+        });
+    }
+
     let mut messages = vec![json!({
         "role": "system",
         "content": format!(
@@ -140,7 +159,7 @@ pub fn should_use_agent_tools(text: &str) -> bool {
     let lower = text.to_lowercase();
     [
         "禅道", "任务", "工时", "耗时", "小时", "风险", "延期", "逾期", "复盘", "日报", "周报",
-        "项目", "进展", "本周", "今天", "昨天", "明天", "写入", "记录", "提交", "commit", "bug",
+        "项目", "进展", "本周", "写入", "记录", "提交", "commit", "bug",
         "需求",
     ]
     .iter()
@@ -157,6 +176,7 @@ pub(super) fn allowed_channel_tools() -> Vec<&'static str> {
         "get_daily_review",
         "get_efforts",
         "get_effort_report",
+        "prepare-log-task-effort",
     ]
 }
 
@@ -168,4 +188,58 @@ pub(super) fn last_assistant_text(messages: &[serde_json::Value]) -> Option<Stri
         .and_then(|m| m.get("content").and_then(|v| v.as_str()))
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+/// 扫 new_messages 中 prepare-log-task-effort 的成功结果，直接提取 PendingAction。
+/// 优先于正则兜底，避免 agent 已准备写入建议后又跑一遍 regex。
+fn extract_pending_from_tool_result(new_messages: &[serde_json::Value]) -> Option<PendingAction> {
+    for msg in new_messages.iter().rev() {
+        let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("");
+        let name = msg.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        if role != "tool" || name != "prepare-log-task-effort" {
+            continue;
+        }
+        let content = match msg.get("content").and_then(|v| v.as_str()) {
+            Some(c) => c,
+            None => continue,
+        };
+        let parsed: serde_json::Value = match serde_json::from_str(content) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if parsed.get("pendingWrite").and_then(|v| v.as_bool()) != Some(true) {
+            continue;
+        }
+        let payload = match parsed.get("payload") {
+            Some(p) => p,
+            None => continue,
+        };
+        let summary = match parsed.get("summary").and_then(|v| v.as_str()) {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        let task_id = match payload.get("taskId").and_then(|v| v.as_str()) {
+            Some(id) => id,
+            None => continue,
+        };
+        let hours = match payload.get("hours").and_then(|v| v.as_f64()) {
+            Some(h) => h,
+            None => continue,
+        };
+        let work_val = match payload.get("work").and_then(|v| v.as_str()) {
+            Some(w) => w,
+            None => continue,
+        };
+        let id = format!("tool-prep-{}", task_id);
+        return Some(PendingAction {
+            id,
+            channel: String::new(),
+            chat_id: String::new(),
+            kind: "log-task-effort".to_string(),
+            payload: serde_json::json!({"taskId": task_id, "hours": hours, "work": work_val}),
+            summary,
+            created_at: chrono::Utc::now().timestamp_millis(),
+        });
+    }
+    None
 }
