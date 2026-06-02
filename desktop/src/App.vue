@@ -484,9 +484,18 @@ onMounted(() => {
   configStore.load()
   store.refreshTaskBindings()
 
-  // 窗口失焦时关闭所有面板和菜单：用户点击桌面或其他应用时自动收起
+  // 窗口失焦时关闭大部分面板和菜单：用户点击桌面或其他应用时自动收起。
+  // 但不关绑定窗（showBindTaskWindow），因为「浏览选择其它目录」会弹出
+  // 原生目录选择器导致窗口短暂失焦，此时关窗会让用户无法确认绑定。
   getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-    if (!focused) closeAllPanels()
+    if (!focused) {
+      showMenu.value = false
+      store.showTaskWindow = false
+      store.showRiskWindow = false
+      store.showReviewWindow = false
+      store.showUpdateWindow = false
+      configStore.showSettingsWindow = false
+    }
   }).then(un => { unlistenFocus = un })
 
   setTimeout(() => showAlert(`${configStore.config.userTitle}，${configStore.config.assistantName} 来啦`, '🤖', 'idle', 3000), 500)

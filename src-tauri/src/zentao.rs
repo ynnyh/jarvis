@@ -355,6 +355,7 @@ impl ZentaoClient {
 
     /// 拉"指派给我"的所有任务（不限工作台视图），用于今日计划搜索。
     /// 同时尝试 my-task 和 my-work-task 两个接口，按 ID 去重合并，覆盖更全。
+    /// my-task 不一定所有禅道版本都有，失败静默回退，不打印错误。
     pub async fn get_all_assigned_tasks(&self) -> Result<Vec<Value>, String> {
         let mut seen = std::collections::HashMap::new();
         for url_suffix in &[
@@ -380,8 +381,8 @@ impl ZentaoClient {
                         seen.entry(id).or_insert(t);
                     }
                 }
-                Err(e) => {
-                    eprintln!("[zentao] {} failed: {}", url_suffix, e);
+                Err(_e) => {
+                    // my-task 接口不一定存在，静默跳过
                 }
             }
         }

@@ -88,31 +88,41 @@ fn format_effort_reply(label: &str, response: &serde_json::Value) -> String {
         "{}工时（{} ~ {}）：共 {} 条，合计 {:.1} 小时。",
         label, begin, end, count, total_hours
     )];
-    for record in records.iter().take(8) {
-        let date = record.get("date").and_then(|v| v.as_str()).unwrap_or("");
-        let hours = record
-            .get("itemHours")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
-        let task = record
+
+    // Group records by task name for structured display
+    let mut groups: std::collections::BTreeMap<String, Vec<&serde_json::Value>> =
+        std::collections::BTreeMap::new();
+    for record in &records {
+        let name = record
             .get("taskName")
             .and_then(|v| v.as_str())
             .filter(|s| !s.trim().is_empty())
-            .unwrap_or("未命名任务");
-        let work = record
-            .get("workContent")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .trim();
-        if work.is_empty() {
-            lines.push(format!("- {} {:.1}h {}", date, hours, task));
-        } else {
-            lines.push(format!("- {} {:.1}h {}：{}", date, hours, task, work));
+            .unwrap_or("未命名任务")
+            .to_string();
+        groups.entry(name).or_default().push(record);
+    }
+
+    for (task_name, recs) in &groups {
+        let task_total: f64 = recs
+            .iter()
+            .filter_map(|r| r.get("itemHours").and_then(|v| v.as_f64()))
+            .sum();
+        lines.push(format!("【{}】{:.1}h", task_name, task_total));
+
+        let mut seen: Vec<&str> = Vec::new();
+        for r in recs {
+            let work = r
+                .get("workContent")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            if !work.is_empty() && !seen.contains(&work) {
+                seen.push(work);
+                lines.push(format!("  - {}", work));
+            }
         }
     }
-    if records.len() > 8 {
-        lines.push(format!("还有 {} 条明细没有展开。", records.len() - 8));
-    }
+    lines.push(format!("合计：{:.1} 小时", total_hours));
     lines.join("\n")
 }
 
@@ -129,8 +139,52 @@ fn format_effort_report_reply(label: &str, response: &serde_json::Value) -> Stri
     let begin = response.get("begin").and_then(|v| v.as_str()).unwrap_or("");
     let end = response.get("end").and_then(|v| v.as_str()).unwrap_or("");
 
-    format!(
-        "{}工作汇报（{} ~ {}）\n\n{}\n\n数据附录：总工时 {:.1}h，任务数 {}，项目数 {}。",
-        label, begin, end, summary, total_hours, task_count, project_count
-    )
+    let mut parts = vec![format!(
+        "{}工作汇报（{} ~ {}）\n\n{}",
+        label, begin, end, summary
+    )];
+
+    // Anomaly detection: workday < 8h or non-workday > 0h
+    let anomalies: Vec<&serde_json::Value> = appendix
+        .get("daily_hours")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter(|item| {
+                    let h = item.get("hours").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let wd = item.get("isWorkday").and_then(|v| v.as_bool()).unwrap_or(true);
+                    (wd && h < 8.0) || (!wd && h > 0.0)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if !anomalies.is_empty() {
+        let mut anomaly_lines = vec!["\n工时异常：".to_string()];
+        for item in &anomalies {
+            let date = item.get("date").and_then(|v| v.as_str()).unwrap_or("");
+            let hours = item.get("hours").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let is_workday = item.get("isWorkday").and_then(|v| v.as_bool()).unwrap_or(true);
+            let holiday = item
+                .get("holiday")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty());
+
+            if is_workday {
+                anomaly_lines.push(format!("  - {} 只录了 {:.1}h（工作日不足 8h）", date, hours));
+            } else {
+                let suffix = holiday.map(|h| format!("（{}）", h)).unwrap_or_default();
+                anomaly_lines.push(format!("  - {}{} 录了 {:.1}h（非工作日）", date, suffix, hours));
+            }
+        }
+        anomaly_lines.push(format!("共 {} 天异常", anomalies.len()));
+        parts.push(anomaly_lines.join("\n"));
+    }
+
+    parts.push(format!(
+        "\n数据附录：总工时 {:.1}h，任务数 {}，项目数 {}。",
+        total_hours, task_count, project_count
+    ));
+
+    parts.join("\n")
 }

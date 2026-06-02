@@ -46,10 +46,28 @@ const plainRecommendations = computed<RepoRecommendation[]>(() =>
   repoRoots.value.map(r => ({ repoRoot: r, score: 0, reason: '', isTop: false })),
 )
 
-// 当前展示的列表：AI 已请求则用 AI 结果，否则用纯列表
-const displayRecommendations = computed(() =>
-  aiRequested.value ? recommendations.value : plainRecommendations.value,
-)
+// 当前展示的列表：AI 已请求则用 AI 结果，否则用 repoRoots + 手动选择 + 已绑定的目录
+const displayRecommendations = computed(() => {
+  const base = aiRequested.value ? [...recommendations.value] : [...plainRecommendations.value]
+  const existingPaths = new Set(base.map(r => r.repoRoot))
+  // 补上手动选择的目录（通过「浏览选择其它目录」添加的）
+  if (!aiRequested.value) {
+    for (const entry of recommendations.value) {
+      if (entry.reason === '手动选择' && !existingPaths.has(entry.repoRoot)) {
+        base.push(entry)
+        existingPaths.add(entry.repoRoot)
+      }
+    }
+  }
+  // 补上已选中但不在当前列表里的目录（比如之前通过浏览绑定过的非 repoRoots 路径）
+  for (const root of selectedRepos.value) {
+    if (!existingPaths.has(root)) {
+      base.push({ repoRoot: root, score: 0, reason: '已绑定', isTop: false })
+      existingPaths.add(root)
+    }
+  }
+  return base
+})
 
 async function requestAiRecommendation() {
   const task = currentTask.value
@@ -139,8 +157,8 @@ async function browseAndPickRepo() {
     })
     if (!picked) return  // 用户取消
 
-    // 已经在列表里就只是勾上，不重复添加
-    const existing = recommendations.value.find(r => r.repoRoot === picked)
+    // 已经在 repoRoots 里就只是勾上，不重复添加
+    const existing = repoRoots.value.find(r => r === picked)
     if (existing) {
       toggleRepo(picked)
       return
@@ -211,12 +229,23 @@ function advanceQueue() {
   // 否则 watch(currentTask) 会重新拉推荐
 }
 
-// 任务切换时重置 AI 状态，默认选中第一个项目
-watch(currentTask, (t) => {
+// 绑定窗打开或切换任务时重置选中状态，优先预填已有绑定。
+// 必须同时 watch currentTask 和 showBindTaskWindow：前者是任务切换（队列前进），
+// 后者是窗口打开（用户点击任务卡上的绑定按钮时 currentTask 可能不变）。
+watch([currentTask, () => store.showBindTaskWindow], ([t, showing]) => {
+  if (!showing || !t) {
+    selectedRepos.value = new Set()
+    return
+  }
   aiRequested.value = false
   recommendations.value = []
   error.value = null
-  if (t && repoRoots.value.length > 0) {
+  // 已有绑定则预填
+  const existing = store.taskBindings[t.id]
+  const roots = existing?.repoRoots?.filter(r => r) ?? []
+  if (roots.length > 0) {
+    selectedRepos.value = new Set(roots)
+  } else if (repoRoots.value.length > 0) {
     selectedRepos.value = new Set([repoRoots.value[0]])
   } else {
     selectedRepos.value = new Set()
@@ -228,8 +257,15 @@ watch(currentTask, (t) => {
 useExpandedAvatarWindow(computed(() => store.showBindTaskWindow))
 
 onMounted(() => {
-  if (currentTask.value && repoRoots.value.length > 0) {
-    selectedRepos.value = new Set([repoRoots.value[0]])
+  const t = currentTask.value
+  if (t) {
+    const existing = store.taskBindings[t.id]
+    const roots = existing?.repoRoots?.filter(r => r) ?? []
+    if (roots.length > 0) {
+      selectedRepos.value = new Set(roots)
+    } else if (repoRoots.value.length > 0) {
+      selectedRepos.value = new Set([repoRoots.value[0]])
+    }
   }
 })
 
