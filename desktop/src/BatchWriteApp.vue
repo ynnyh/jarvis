@@ -122,6 +122,7 @@ function loadTaskSearch(entry: WriteEntry) {
 function assignTask(entry: WriteEntry, task: ReviewAllTask) {
   entry.taskId = task.id
   entry.taskName = task.name
+  entry.kind = 'task'
   // check if plan has estimated hours for this task
   const planHours = planData.value?.estimatedHours?.[task.id]
   if (planHours) entry.hours = planHours
