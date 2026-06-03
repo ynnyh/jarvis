@@ -1,0 +1,3 @@
+{"file":"tasks/06-02-project-cost/prd.md","reason":"验收标准：成本分析功能是否满足需求"}
+{"file":"src-tauri/src/zentao.rs","reason":"检查 list_projects 方法是否正确调用禅道 API"}
+{"file":"desktop/src/stores/config.ts","reason":"检查 costFeatureEnabled 字段是否正确注册和持久化"}
