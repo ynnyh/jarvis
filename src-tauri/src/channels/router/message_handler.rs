@@ -159,7 +159,7 @@ pub fn should_use_agent_tools(text: &str) -> bool {
     let lower = text.to_lowercase();
     [
         "禅道", "任务", "工时", "耗时", "小时", "风险", "延期", "逾期", "复盘", "日报", "周报",
-        "项目", "进展", "本周", "写入", "记录", "提交", "commit", "bug",
+        "项目", "成本", "进展", "本周", "写入", "记录", "提交", "commit", "bug",
         "需求",
     ]
     .iter()
@@ -176,6 +176,8 @@ pub(super) fn allowed_channel_tools() -> Vec<&'static str> {
         "get_daily_review",
         "get_efforts",
         "get_effort_report",
+        "cost_report_preview",
+        "cost_report",
         "prepare-log-task-effort",
     ]
 }

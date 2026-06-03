@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 成本分析独立大窗口：项目搜索 + 概览卡片 + 条形图 + 成本占比 + 明细表（内联时薪编辑）。
 // 从 in-app overlay 升级为独立 Tauri 窗口，走 cost_open / cost_close 命令。
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { invoke } from '@tauri-apps/api/core'
 
@@ -38,13 +38,64 @@ const projectSearch = ref('')
 const showProjectDropdown = ref(false)
 const loading = ref(false)
 const includeOvertime = ref(false)
+const includeResigned = ref(false)
 const error = ref<string | null>(null)
 const result = ref<CostSummaryResult | null>(null)
 
+// 时间范围：快捷档 key + 自定义起止。默认本月，全周期档已移除（数据量太大会让帆软超时）。
+type RangePreset = 'thisMonth' | 'thisQuarter' | 'halfYear' | 'thisYear' | 'custom'
+// 默认本月：全周期数据量太大会让帆软查询超时（error sending request）。
+const rangePreset = ref<RangePreset>('thisMonth')
+const customStart = ref('')
+const customEnd = ref('')
+
+const RANGE_PRESETS: Array<{ key: RangePreset; label: string }> = [
+  { key: 'thisMonth', label: '本月' },
+  { key: 'thisQuarter', label: '本季' },
+  { key: 'halfYear', label: '近半年' },
+  { key: 'thisYear', label: '今年' },
+  { key: 'custom', label: '自定义' },
+]
+
+function ymd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/** 根据当前 preset / 自定义输入算出 [start, end]，空串表示该侧不限。 */
+const effectiveRange = computed<{ start: string; end: string }>(() => {
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = now.getMonth()
+  switch (rangePreset.value) {
+    case 'thisQuarter': {
+      const qStart = Math.floor(m / 3) * 3
+      return { start: ymd(new Date(y, qStart, 1)), end: ymd(new Date(y, qStart + 3, 0)) }
+    }
+    case 'halfYear': {
+      const start = new Date(now)
+      start.setMonth(start.getMonth() - 6)
+      return { start: ymd(start), end: ymd(now) }
+    }
+    case 'thisYear':
+      return { start: ymd(new Date(y, 0, 1)), end: ymd(new Date(y, 11, 31)) }
+    case 'custom':
+      return { start: customStart.value, end: customEnd.value }
+    case 'thisMonth':
+    default:
+      return { start: ymd(new Date(y, m, 1)), end: ymd(new Date(y, m + 1, 0)) }
+  }
+})
+
+const rangeHint = computed(() => {
+  const { start, end } = effectiveRange.value
+  if (start && end) return `${start} ~ ${end}`
+  if (start) return `${start} 起`
+  if (end) return `截至 ${end}`
+  return '请选择日期'
+})
+
 // 时薪编辑：account → hourlyRate
 const rates = ref<Record<string, number>>({})
-// 中文名编辑：account → displayName
-const names = ref<Record<string, string>>({})
 // 统一时薪快捷输入
 const unifiedRate = ref<number | null>(null)
 
@@ -57,7 +108,7 @@ const filteredProjects = computed(() => {
 })
 
 const memberCount = computed(() => result.value?.members.length ?? 0)
-const hasOvertime = computed(() => result.value?.totalOvertimeHours != null)
+const hasOvertime = computed(() => includeOvertime.value && result.value?.totalOvertimeHours != null)
 
 const maxHours = computed(() => {
   if (!result.value) return 1
@@ -81,16 +132,6 @@ const COST_COLORS = [
   'rgba(163, 230, 53, 0.8)',
 ]
 
-const costBarSegments = computed(() => {
-  if (!result.value || result.value.totalCost <= 0) return []
-  return result.value.members.map((m, i) => ({
-    account: getDisplayName(m.account),
-    cost: m.cost,
-    pct: (m.cost / result.value!.totalCost) * 100,
-    color: COST_COLORS[i % COST_COLORS.length],
-  })).filter(s => s.cost > 0).sort((a, b) => b.cost - a.cost)
-})
-
 // ===== 数据加载 =====
 async function loadProjects() {
   try {
@@ -104,16 +145,12 @@ async function loadRates() {
   try {
     const loaded = await invoke<Record<string, { hourlyRate: number; displayName: string }>>('cost_rates_load')
     const rateMap: Record<string, number> = {}
-    const nameMap: Record<string, string> = {}
     for (const [k, v] of Object.entries(loaded)) {
       rateMap[k] = v.hourlyRate
-      if (v.displayName) nameMap[k] = v.displayName
     }
     rates.value = rateMap
-    names.value = nameMap
   } catch {
     rates.value = {}
-    names.value = {}
   }
 }
 
@@ -123,18 +160,19 @@ async function runQuery() {
   error.value = null
   result.value = null
   try {
+    const { start, end } = effectiveRange.value
     result.value = await invoke<CostSummaryResult>('project_cost_summary', {
       projectName: projectSearch.value,
-      include_overtime: includeOvertime.value,
+      include_overtime: true,
+      startDate: start || null,
+      endDate: end || null,
+      includeResigned: includeResigned.value,
     })
-    // 把结果中的时薪和中文名同步到编辑态
+    // 把结果中的时薪同步到编辑态
     if (result.value) {
       for (const m of result.value.members) {
         if (rates.value[m.account] === undefined) {
           rates.value[m.account] = m.hourlyRate
-        }
-        if (!names.value[m.account] && m.displayName && m.displayName !== m.account) {
-          names.value[m.account] = m.displayName
         }
       }
     }
@@ -147,28 +185,24 @@ async function runQuery() {
 
 // ===== 内联编辑 =====
 
-/** 获取显示名：已配置返回中文名，未配置返回空字符串 */
-function getDisplayName(account: string): string {
-  return names.value[account] || ''
-}
-
-/** 是否未配置中文名 */
-function isNameUnset(account: string): boolean {
-  return !names.value[account]
-}
-
-/** 饼图用：conic-gradient 数据 */
+/** 饼图用：conic-gradient 数据。有成本按成本占比，没配时薪（totalCost=0）回退按工时占比。 */
 const pieSegments = computed(() => {
-  if (!result.value || result.value.totalCost <= 0) return { gradient: '', items: [] as Array<{ account: string; cost: number; pct: number; color: string }> }
+  if (!result.value) return { gradient: '', items: [] as Array<{ account: string; value: number; pct: number; color: string }>, metric: 'cost' as 'cost' | 'hours' }
+  const useCost = result.value.totalCost > 0
+  const total = useCost ? result.value.totalCost : result.value.totalHours
+  if (total <= 0) return { gradient: '', items: [], metric: useCost ? 'cost' : 'hours' }
   const items = result.value.members
-    .map((m, i) => ({
-      account: getDisplayName(m.account) || m.account,
-      cost: m.cost,
-      pct: (m.cost / result.value!.totalCost) * 100,
-      color: COST_COLORS[i % COST_COLORS.length],
-    }))
-    .filter(s => s.cost > 0)
-    .sort((a, b) => b.cost - a.cost)
+    .map((m, i) => {
+      const value = useCost ? m.cost : m.hours
+      return {
+        account: m.account,
+        value,
+        pct: (value / total) * 100,
+        color: COST_COLORS[i % COST_COLORS.length],
+      }
+    })
+    .filter(s => s.value > 0)
+    .sort((a, b) => b.value - a.value)
 
   let acc = 0
   const stops: string[] = []
@@ -176,24 +210,8 @@ const pieSegments = computed(() => {
     stops.push(`${item.color} ${acc}% ${acc + item.pct}%`)
     acc += item.pct
   }
-  return { gradient: `conic-gradient(${stops.join(', ')})`, items }
+  return { gradient: `conic-gradient(${stops.join(', ')})`, items, metric: (useCost ? 'cost' : 'hours') as 'cost' | 'hours' }
 })
-
-/** 内联编辑中文名后调用 */
-function onNameChange(account: string, val: string) {
-  const trimmed = val.trim()
-  if (!trimmed || trimmed === account) {
-    delete names.value[account]
-  } else {
-    names.value[account] = trimmed
-  }
-  // 同步到结果
-  if (result.value) {
-    const m = result.value.members.find(m => m.account === account)
-    if (m) m.displayName = trimmed || account
-  }
-  debouncedSave()
-}
 
 /** 内联编辑时薪后调用 */
 function onRateChange(account: string, val: string) {
@@ -245,13 +263,13 @@ function debouncedSave() {
 }
 
 async function saveRates() {
-  // 构造完整的 RatesMap 格式 { account: { hourlyRate, displayName } }
+  // 构造完整的 RatesMap 格式 { account: { hourlyRate, displayName } }。
+  // 数据源是帆软，account 本身就是员工中文名，displayName 直接等于 account。
   const map: Record<string, { hourlyRate: number; displayName: string }> = {}
-  const allAccounts = new Set([...Object.keys(rates.value), ...Object.keys(names.value)])
-  for (const account of allAccounts) {
+  for (const account of Object.keys(rates.value)) {
     map[account] = {
       hourlyRate: rates.value[account] ?? 0,
-      displayName: names.value[account] || account,
+      displayName: account,
     }
   }
   try {
@@ -327,14 +345,41 @@ onMounted(async () => {
           {{ loading ? '查询中…' : '查询' }}
         </button>
         <label class="overtime-check">
-          <input type="checkbox" v-model="includeOvertime" />
-          <span>含加班</span>
+          <input type="checkbox" v-model="includeResigned" />
+          <span>含离职</span>
         </label>
+      </div>
+
+      <!-- 时间范围 -->
+      <div class="range-bar">
+        <button
+          v-for="p in RANGE_PRESETS"
+          :key="p.key"
+          class="range-chip"
+          :class="{ active: rangePreset === p.key }"
+          @click="rangePreset = p.key"
+        >
+          {{ p.label }}
+        </button>
+        <template v-if="rangePreset === 'custom'">
+          <input v-model="customStart" type="date" class="range-date" />
+          <span class="range-sep">~</span>
+          <input v-model="customEnd" type="date" class="range-date" />
+        </template>
+        <span class="range-hint">{{ rangeHint }}</span>
       </div>
 
       <div v-if="error" class="cost-error">{{ error }}</div>
 
       <template v-if="result">
+        <!-- 显示选项：含加班只切换本地展示，不重新查询 -->
+        <div class="display-options">
+          <label class="overtime-check">
+            <input type="checkbox" v-model="includeOvertime" />
+            <span>含加班</span>
+          </label>
+        </div>
+
         <!-- 概览卡片 -->
         <div class="summary-cards">
           <div class="summary-card">
@@ -366,7 +411,7 @@ onMounted(async () => {
             <h3 class="section-title">人均工时对比</h3>
             <div class="bar-chart">
               <div v-for="m in result.members" :key="m.account" class="bar-row">
-                <div class="bar-name">{{ getDisplayName(m.account) || m.account }}</div>
+                <div class="bar-name">{{ m.account }}</div>
                 <div class="bar-track">
                   <div
                     class="bar-fill"
@@ -380,10 +425,10 @@ onMounted(async () => {
 
           <!-- 右栏：饼图 -->
           <section v-if="pieSegments.items.length > 0" class="chart-section chart-right">
-            <h3 class="section-title">成本占比</h3>
+            <h3 class="section-title">{{ pieSegments.metric === 'cost' ? '成本占比' : '工时占比' }}</h3>
             <div class="pie-container">
               <div class="pie-chart" :style="{ background: pieSegments.gradient }">
-                <div class="pie-center">¥{{ fmtMoney(result!.totalCost) }}</div>
+                <div class="pie-center">{{ pieSegments.metric === 'cost' ? '¥' + fmtMoney(result!.totalCost) : fmt(result!.totalHours) + 'h' }}</div>
               </div>
               <div class="pie-legend">
                 <div v-for="seg in pieSegments.items" :key="seg.account" class="pie-legend-item">
@@ -417,28 +462,22 @@ onMounted(async () => {
             <table class="result-table">
               <thead>
                 <tr>
-                  <th>中文名</th>
-                  <th class="num">时薪 (元/h)</th>
-                  <th>账号</th>
+                  <th>姓名</th>
                   <th class="num">工时</th>
                   <th v-if="hasOvertime" class="num">正常</th>
                   <th v-if="hasOvertime" class="num">加班</th>
                   <th class="num">任务数</th>
+                  <th class="num">时薪 (元/h)</th>
                   <th class="num">成本</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="m in result.members" :key="m.account">
-                  <td class="name-cell" :class="{ 'name-unset': isNameUnset(m.account) }">
-                    <input
-                      type="text"
-                      class="name-input"
-                      :value="getDisplayName(m.account)"
-                      :placeholder="m.account"
-                      @change="onNameChange(m.account, ($event.target as HTMLInputElement).value)"
-                      @blur="onNameChange(m.account, ($event.target as HTMLInputElement).value)"
-                    />
-                  </td>
+                  <td class="name-cell">{{ m.account }}</td>
+                  <td class="num">{{ fmt(m.hours) }}</td>
+                  <td v-if="hasOvertime" class="num">{{ fmt(m.normalHours ?? 0) }}</td>
+                  <td v-if="hasOvertime" class="num overtime-num">{{ fmt(m.overtimeHours ?? 0) }}</td>
+                  <td class="num">{{ m.taskCount }}</td>
                   <td class="num rate-cell">
                     <input
                       type="number"
@@ -448,22 +487,16 @@ onMounted(async () => {
                       @change="onRateChange(m.account, ($event.target as HTMLInputElement).value)"
                     />
                   </td>
-                  <td class="account-cell">{{ m.account }}</td>
-                  <td class="num">{{ fmt(m.hours) }}</td>
-                  <td v-if="hasOvertime" class="num">{{ fmt(m.normalHours ?? 0) }}</td>
-                  <td v-if="hasOvertime" class="num overtime-num">{{ fmt(m.overtimeHours ?? 0) }}</td>
-                  <td class="num">{{ m.taskCount }}</td>
                   <td class="num cost-total">{{ m.cost > 0 ? '&yen;' + fmtMoney(m.cost) : '-' }}</td>
                 </tr>
               </tbody>
               <tfoot>
                 <tr class="total-row">
                   <td>合计</td>
-                  <td class="num">-</td>
-                  <td class="num">-</td>
                   <td class="num">{{ fmt(result.totalHours) }}</td>
                   <td v-if="hasOvertime" class="num">{{ fmt(result.totalNormalHours ?? 0) }}</td>
                   <td v-if="hasOvertime" class="num overtime-num">{{ fmt(result.totalOvertimeHours ?? 0) }}</td>
+                  <td class="num">-</td>
                   <td class="num">-</td>
                   <td class="num cost-total">&yen;{{ fmtMoney(result.totalCost) }}</td>
                 </tr>
@@ -566,6 +599,38 @@ onMounted(async () => {
 }
 .overtime-check input { accent-color: rgba(0, 212, 255, 0.8); }
 
+/* 时间范围栏 */
+.range-bar {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  margin-top: -4px;
+}
+.range-chip {
+  padding: 4px 10px; font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px; cursor: pointer; font-family: inherit;
+  white-space: nowrap;
+}
+.range-chip:hover { background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.85); }
+.range-chip.active {
+  color: rgba(0, 212, 255, 0.95);
+  background: rgba(0, 212, 255, 0.12);
+  border-color: rgba(0, 212, 255, 0.35);
+}
+.range-date {
+  padding: 4px 8px; font-size: 11.5px;
+  background: rgba(0, 0, 0, 0.25); border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px; color: rgba(255, 255, 255, 0.9);
+  font-family: inherit; color-scheme: dark;
+}
+.range-date:focus { border-color: rgba(0, 212, 255, 0.5); outline: none; }
+.range-sep { color: rgba(255, 255, 255, 0.4); font-size: 12px; }
+.range-hint {
+  font-size: 11px; color: rgba(255, 255, 255, 0.4);
+  margin-left: auto; white-space: nowrap;
+}
+
 .cost-error {
   padding: 8px; font-size: 12.5px;
   color: rgba(248, 113, 113, 0.95);
@@ -573,6 +638,7 @@ onMounted(async () => {
 }
 
 /* 概览卡片 */
+.display-options { display: flex; justify-content: flex-end; }
 .summary-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 .summary-card {
   padding: 10px 8px; text-align: center;
@@ -688,26 +754,8 @@ onMounted(async () => {
 }
 .rate-input:focus { border-color: rgba(0, 212, 255, 0.5); outline: none; background: rgba(0, 212, 255, 0.05); }
 
-/* 内联中文名输入 */
-.name-cell { padding: 2px 4px !important; width: 72px; }
-.name-input {
-  width: 64px; padding: 2px 4px; font-size: 11.5px;
-  background: transparent; border: 1px solid transparent;
-  border-radius: 4px; color: rgba(255, 255, 255, 0.9);
-  font-family: inherit;
-}
-.name-input:hover { border-color: rgba(255, 255, 255, 0.1); }
-.name-input:focus { border-color: rgba(0, 212, 255, 0.5); outline: none; background: rgba(0, 0, 0, 0.2); }
-.name-unset .name-input {
-  color: rgba(255, 255, 255, 0.35);
-  font-style: italic;
-}
-.name-unset .name-input:focus { color: rgba(255, 255, 255, 0.9); font-style: normal; }
-.account-cell {
-  font-size: 10.5px; color: rgba(255, 255, 255, 0.35);
-  font-family: monospace;
-  max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
+/* 姓名单元格（纯文本，account 即员工中文名） */
+.name-cell { font-weight: 500; color: rgba(255, 255, 255, 0.9); white-space: nowrap; }
 
 /* 底部汇总 */
 .bottom-summary {

@@ -74,7 +74,7 @@ pub fn default_system_prompt(assistant_name: &str, user_title: &str) -> String {
 4. 查短周期工时时使用 get_efforts；查本月、本季度、近半年、本年等长周期时，优先使用 get_effort_report，输出完整工作汇报正文和数据附录。\n\
 5. **主动提议记工时**：当用户提到「干了什么、花了多长时间」时（例如\"修了登录bug花了2小时\"），主动调用 get_tasks 查找匹配任务。返回任务列表后，先向用户说明你找到了哪些可能匹配的任务以及你的选择理由，再调用 prepare-log-task-effort 生成待确认写入建议（记得传出 taskName）。如果拿不准选哪个，把候选列表发给用户让对方选。\n\
    注意：必须等用户确认（说\"确认\"\"好\"\"可以\"）后才会真正写入，你只负责准备建议。如果信息不全（缺任务、缺工时、缺工作描述），先追问清楚再准备。\n\
-6. **项目成本查询两步确认**：用户问项目成本时，必须先调 cost_report_preview 拉团队成员列表，展示给用户确认「你要查的是 XXX 项目吗？团队成员有张三、李四…」，用户确认后再调 cost_report 出完整报告。禁止跳过预览直接查成本。",
+6. **项目成本查询两步确认**：用户问项目成本时，必须先调 cost_report_preview 拉团队成员列表，展示给用户确认「你要查的是 XXX 项目吗？团队成员有张三、李四…」，用户确认后再调 cost_report 出完整报告。若用户指定了周期（今年/本季/近半年/某段日期），调 cost_report 时带上 range 或 startDate+endDate；默认本月。禁止跳过预览直接查成本。",
         assistant_name, user_title, user_title
     )
 }
@@ -597,12 +597,20 @@ fn tool_schema(name: &str) -> Option<(String, Value)> {
             }),
         )),
         "cost_report" => Some((
-            "查询指定项目的团队成本分析：从禅道拉取该项目全部任务的团队工时数据，按人聚合工时×时薪，返回文本报告（含条形图、人均工时、成本汇总）。必须先用 cost_report_preview 确认项目名无误后才能调用此工具。传 includeOvertime=true 可拆分正常/加班工时（需要逐任务拉工作日志，较慢）。".into(),
+            "查询指定项目的团队成本分析：数据源为帆软 BI 工时明细，一次拉取该项目指定周期的全部工时，按人聚合 工时×时薪，返回文本报告（含条形图、人均工时、成本汇总、统计周期）。默认查本月；可用 range 选本季/近半年/今年，或用 startDate+endDate 指定自定义区间。includeOvertime=true 按工作日/节假日把每日工时拆成正常+加班（本地计算，很快）。includeResigned=true 含离职人员。必须先用 cost_report_preview 确认项目名无误后才能调用。".into(),
             json!({
                 "type": "object",
                 "properties": {
                     "projectName": { "type": "string", "description": "禅道项目名称，必须精确匹配" },
-                    "includeOvertime": { "type": "boolean", "description": "是否拆分正常/加班工时，默认 false（较快）。设为 true 会逐任务拉工作日志按日期拆分，较慢但能看到加班数据。" }
+                    "range": {
+                        "type": "string",
+                        "enum": ["thisMonth", "thisQuarter", "halfYear", "thisYear"],
+                        "description": "统计周期快捷档：thisMonth 本月(默认)、thisQuarter 本季、halfYear 近半年、thisYear 今年。同时给了 startDate+endDate 时此项忽略。"
+                    },
+                    "startDate": { "type": "string", "description": "自定义起始日期 YYYY-MM-DD（含端点）。需与 endDate 同时提供，优先级高于 range。" },
+                    "endDate": { "type": "string", "description": "自定义结束日期 YYYY-MM-DD（含端点）。需与 startDate 同时提供。" },
+                    "includeOvertime": { "type": "boolean", "description": "是否拆分正常/加班工时，默认 false。设 true 在本地按日期把每人每日工时拆成正常+加班，很快。" },
+                    "includeResigned": { "type": "boolean", "description": "是否包含离职人员，默认 false（仅在职）。" }
                 },
                 "required": ["projectName"],
                 "additionalProperties": false

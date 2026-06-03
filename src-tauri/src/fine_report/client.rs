@@ -92,7 +92,20 @@ impl FineReportClient {
         Self::new(cred.base_url, cred.account, cred.password)
     }
 
+    /// 默认 10s timeout：日报这类小查询足够，定位卡点也灵敏。成本/团队人员
+    /// 这类大报表（all_people + 长周期）走 `new_with_timeout` 调到 60s。
     pub fn new(base_url: String, account: String, password: String) -> Result<Self, String> {
+        Self::new_with_timeout(base_url, account, password, 10)
+    }
+
+    /// 同 `new` 但可指定请求超时（秒）。大报表查询（all_people + 长周期）
+    /// 数据量大，10s 扛不住，调用方传 60。
+    pub fn new_with_timeout(
+        base_url: String,
+        account: String,
+        password: String,
+        timeout_secs: u64,
+    ) -> Result<Self, String> {
         if base_url.is_empty() {
             return Err("帆软 baseUrl 未配置".into());
         }
@@ -101,11 +114,9 @@ impl FineReportClient {
             base = format!("http://{}", base);
         }
         let jar = Arc::new(Jar::default());
-        // 10s timeout：原 30s 太慢，定位卡点不够灵敏；如果服务端真要长拉
-        // 再后续按步调高。
         let client = reqwest::Client::builder()
             .cookie_provider(jar.clone())
-            .timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(timeout_secs))
             .connect_timeout(Duration::from_secs(5))
             .build()
             .map_err(|e| format!("帆软 HTTP client 构造失败: {}", e))?;
@@ -335,6 +346,11 @@ impl FineReportClient {
     /// 空就传空数组 `[]`，相当于不过滤（让 SQL 走 IS NULL 分支不再 AND 收敛）。
     ///
     /// sessionID 加在 URL 参数里——FR 后端用它定位之前 op=write 那一步建立的 writePane 上下文。
+    ///
+    /// `project_name` 填进 PJ_NAME（帆软项目名筛选位）；空串=不按项目过滤（日报/chat 路径）。
+    ///
+    /// `user_status` 填进 USER_STATUS（员工状态筛选位）：`"0"`=仅在职（日报/chat 维持现状）；
+    /// `""`=不筛（含离职，成本分析「含离职」勾选时用）。
     pub async fn submit_filter(
         &self,
         jwt: &str,
@@ -342,6 +358,8 @@ impl FineReportClient {
         begin: &str,
         end: &str,
         real_name: &str,
+        project_name: &str,
+        user_status: &str,
     ) -> Result<(), String> {
         let real_name_field: serde_json::Value = if real_name.is_empty() {
             serde_json::json!([])
@@ -367,8 +385,8 @@ impl FineReportClient {
             "BEGIN_TIME": begin_full,
             "END_TIME": end_full,
             "REAL_NAME": real_name_field,
-            "USER_STATUS": "0",
-            "PJ_NAME": "",
+            "USER_STATUS": user_status,
+            "PJ_NAME": project_name,
             "TASK_NAME": "",
             "EFFORT_WORK": "",
             "ROLE_NAME": "",

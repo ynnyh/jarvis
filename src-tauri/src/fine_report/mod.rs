@@ -17,5 +17,5 @@ pub mod commands;
 pub mod credentials;
 pub mod html_parser;
 
-// Re-export for crate-internal callers (e.g. tools::effort_report)
-pub use commands::finereport_get_efforts;
+// Re-export for crate-internal callers (e.g. tools::effort_report, cost_rates)
+pub use commands::{finereport_get_efforts, finereport_get_efforts_raw};

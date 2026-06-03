@@ -13,6 +13,11 @@ interface PersonRate {
   displayName: string
 }
 
+interface MemberBrief {
+  account: string
+  realname: string
+}
+
 const store = useConfigStore()
 const projects = ref<ProjectInfo[]>([])
 const projectSearch = ref('')
@@ -23,7 +28,7 @@ const filteredProjects = computed(() => {
   if (!q) return projects.value
   return projects.value.filter(p => p.name.toLowerCase().includes(q))
 })
-const members = ref<string[]>([])
+const members = ref<MemberBrief[]>([])
 const rates = ref<Record<string, PersonRate>>({})
 const loadingProjects = ref(false)
 const loadingMembers = ref(false)
@@ -54,11 +59,11 @@ async function loadMembers() {
   loadingMembers.value = true
   error.value = null
   try {
-    const [names, allRates] = await Promise.all([
-      invoke<string[]>('cost_team_members', { projectName: proj }),
+    const [brief, allRates] = await Promise.all([
+      invoke<MemberBrief[]>('cost_team_members', { projectName: proj }),
       invoke<Record<string, PersonRate>>('cost_rates_load'),
     ])
-    members.value = names
+    members.value = brief
     rates.value = allRates
   } catch (e) {
     error.value = `加载人员失败: ${e instanceof Error ? e.message : String(e)}`
@@ -67,16 +72,22 @@ async function loadMembers() {
   }
 }
 
-function getRate(name: string): number {
-  return rates.value[name]?.hourlyRate ?? 0
+/** 姓名列显示：禅道中文名（空则账号） */
+function displayName(m: MemberBrief): string {
+  return m.realname && m.realname !== m.account ? m.realname : m.account
 }
 
-function setRate(name: string, val: number) {
+function getRate(account: string): number {
+  return rates.value[account]?.hourlyRate ?? 0
+}
+
+function setRate(m: MemberBrief, val: number) {
   rates.value = {
     ...rates.value,
-    [name]: {
+    [m.account]: {
       hourlyRate: val,
-      displayName: name,
+      // 存真名作为 displayName，空则回退账号
+      displayName: m.realname || m.account,
     },
   }
 }
@@ -85,10 +96,10 @@ function setRate(name: string, val: number) {
 function applyUnifiedRate() {
   if (unifiedRate.value <= 0) return
   const updated = { ...rates.value }
-  for (const name of members.value) {
-    updated[name] = {
+  for (const m of members.value) {
+    updated[m.account] = {
       hourlyRate: unifiedRate.value,
-      displayName: name,
+      displayName: m.realname || m.account,
     }
   }
   rates.value = updated
@@ -190,16 +201,16 @@ onMounted(() => { if (featureEnabled.value) loadProjects() })
             </tr>
           </thead>
           <tbody>
-            <tr v-for="name in members" :key="name">
-              <td class="cost-name">{{ name }}</td>
+            <tr v-for="m in members" :key="m.account">
+              <td class="cost-name">{{ displayName(m) }}</td>
               <td>
                 <input
                   type="number"
                   class="cost-rate-input"
-                  :value="getRate(name)"
+                  :value="getRate(m.account)"
                   min="0"
                   step="1"
-                  @input="setRate(name, Number(($event.target as HTMLInputElement).value))"
+                  @input="setRate(m, Number(($event.target as HTMLInputElement).value))"
                 />
               </td>
             </tr>
@@ -301,6 +312,11 @@ onMounted(() => { if (featureEnabled.value) loadProjects() })
 .cost-table td { padding: 6px 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.04); }
 .cost-name {
   color: rgba(255, 255, 255, 0.85);
+}
+.cost-account {
+  color: rgba(255, 255, 255, 0.4);
+  font-family: monospace;
+  font-size: 11.5px;
 }
 .cost-rate-input {
   width: 80px;

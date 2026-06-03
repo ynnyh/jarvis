@@ -95,7 +95,7 @@ pub async fn finereport_get_efforts(
 
     let t = Instant::now();
     client
-        .submit_filter(&auth.jwt, &session_id, &begin, &end, &effective_real_name)
+        .submit_filter(&auth.jwt, &session_id, &begin, &end, &effective_real_name, "", "0")
         .await
         .map_err(|e| {
             eprintln!(
@@ -175,11 +175,18 @@ pub async fn finereport_get_efforts(
 
 /// 内部调用：拉工时明细（仅返回 records）。
 /// `all_people = true` 时不传 realName 过滤，拉全部门数据（成本分析用）。
+/// `project_name` 填进帆软 PJ_NAME 做项目粗筛；None/空 = 不按项目过滤（日报路径）。
+/// `user_status` 填进帆软 USER_STATUS：`"0"`=仅在职、`""`=含离职。
+///
+/// 成本/团队人员这类大报表（all_people + 长周期）数据量大，10s 扛不住，
+/// 这里固定用 60s 超时构建 client。日报路径仍走 `finereport_get_efforts` 的 10s。
 pub async fn finereport_get_efforts_raw(
     begin: String,
     end: String,
     real_name: Option<String>,
     all_people: bool,
+    project_name: Option<String>,
+    user_status: &str,
 ) -> Result<Vec<EffortRecord>, String> {
     let cred = get_fine_report_credentials();
     // all_people 模式：不传 realName → 帆软返回全部门数据
@@ -188,14 +195,23 @@ pub async fn finereport_get_efforts_raw(
     } else {
         real_name.unwrap_or(cred.real_name)
     };
-    let client = FineReportClient::new(cred.base_url, cred.account, cred.password)?;
+    let effective_project = project_name.unwrap_or_default();
+    let client = FineReportClient::new_with_timeout(cred.base_url, cred.account, cred.password, 60)?;
     let auth = client.ensure_valid_auth().await?;
     let session_id = client
         .open_report_and_get_session(&auth.jwt, DEFAULT_VIEWLET)
         .await?;
     let cid = FineReportClient::generate_cid(&session_id);
     client
-        .submit_filter(&auth.jwt, &session_id, &begin, &end, &effective_real_name)
+        .submit_filter(
+            &auth.jwt,
+            &session_id,
+            &begin,
+            &end,
+            &effective_real_name,
+            &effective_project,
+            user_status,
+        )
         .await?;
     client
         .fetch_report_html(&auth.jwt, &session_id, &cid, 1)
