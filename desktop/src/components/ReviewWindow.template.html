@@ -138,11 +138,22 @@
             <p class="iw-hint">建议 ~{{ inlineWrite.suggestedHours || '—' }}h</p>
           </div>
           <div class="iw-row iw-row-grow">
-            <label class="iw-label">工作内容</label>
+            <div class="iw-label-row">
+              <label class="iw-label">工作内容</label>
+              <button
+                class="iw-summarize-btn"
+                :disabled="summarizing || inlineSubmitting || inlineResult === 'ok' || !inlineContent.trim()"
+                @click="summarizeContent"
+                title="用 AI 精简工作内容"
+              >
+                <span v-if="summarizing" class="iw-summarize-spinner">⟳</span>
+                <span v-else>精简</span>
+              </button>
+            </div>
             <textarea
               v-model="inlineContent"
               class="iw-textarea"
-              :disabled="inlineSubmitting || inlineResult === 'ok'"
+              :disabled="inlineSubmitting || inlineResult === 'ok' || summarizing"
               placeholder="给禅道看的工作记录文本"
             ></textarea>
           </div>

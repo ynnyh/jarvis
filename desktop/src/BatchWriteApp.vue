@@ -92,6 +92,7 @@ const loadError = ref('')
 const reviewData = ref<DailyReviewData | null>(null)
 const planData = ref<TodayPlanData | null>(null)
 const entries = ref<WriteEntry[]>([])
+const summarizingKeys = ref<Set<string>>(new Set())
 const writing = ref(false)
 const writeProgress = ref(0)
 const writeTotal = ref(0)
@@ -309,6 +310,21 @@ function removeEntry(key: string) {
   entries.value = entries.value.filter(e => e.key !== key)
 }
 
+async function summarizeEntry(entry: WriteEntry) {
+  if (summarizingKeys.value.has(entry.key) || !entry.workContent.trim()) return
+  summarizingKeys.value = new Set([...summarizingKeys.value, entry.key])
+  try {
+    const result = await invoke<string>('summarize_work_content', { text: entry.workContent })
+    entry.workContent = result
+  } catch (e: any) {
+    console.error('[summarize]', e)
+  } finally {
+    const next = new Set(summarizingKeys.value)
+    next.delete(entry.key)
+    summarizingKeys.value = next
+  }
+}
+
 async function closeWindow() {
   await invoke('batch_write_close')
 }
@@ -404,14 +420,25 @@ onUnmounted(() => {
               />h
             </div>
 
-            <textarea
-              class="bw-content"
-              rows="2"
-              :value="entry.workContent"
-              @input="entry.workContent = ($event.target as HTMLTextAreaElement).value"
-              :disabled="entry.written"
-              placeholder="工作内容..."
-            ></textarea>
+            <div class="bw-content-row">
+              <textarea
+                class="bw-content"
+                rows="2"
+                :value="entry.workContent"
+                @input="entry.workContent = ($event.target as HTMLTextAreaElement).value"
+                :disabled="entry.written || summarizingKeys.has(entry.key)"
+                placeholder="工作内容..."
+              ></textarea>
+              <button
+                class="bw-summarize-btn"
+                :disabled="entry.written || summarizingKeys.has(entry.key) || !entry.workContent.trim()"
+                @click="summarizeEntry(entry)"
+                title="用 AI 精简工作内容"
+              >
+                <span v-if="summarizingKeys.has(entry.key)" class="bw-summarize-spinner">⟳</span>
+                <span v-else>精简</span>
+              </button>
+            </div>
 
             <div v-if="entry.commits.length > 0" class="bw-commits">
               <div v-for="c in entry.commits.slice(0, 4)" :key="c.shortSha" class="bw-commit-line">
@@ -473,8 +500,35 @@ onUnmounted(() => {
 .bw-orphan-label { font-size: 11px; color: rgba(251,191,36,.85); white-space: nowrap; }
 .bw-task-input { flex: 1; padding: 3px 6px; font-size: 12px; color: rgba(255,255,255,.9); background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1); border-radius: 4px; }
 .bw-hours { width: 48px; padding: 3px 6px; font-size: 12px; color: rgba(255,255,255,.9); background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1); border-radius: 4px; text-align: center; }
-.bw-content { width: 100%; padding: 6px 8px; font-size: 12px; color: rgba(255,255,255,.85); background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.08); border-radius: 5px; resize: vertical; font-family: inherit; }
+.bw-content-row { display: flex; gap: 6px; align-items: flex-start; }
+.bw-content { flex: 1; min-width: 0; padding: 6px 8px; font-size: 12px; color: rgba(255,255,255,.85); background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.08); border-radius: 5px; resize: vertical; font-family: inherit; }
 .bw-content:disabled { opacity: .5; }
+.bw-summarize-btn {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 11px;
+  color: rgba(147,197,253,.85);
+  background: rgba(59,130,246,.12);
+  border: 1px solid rgba(59,130,246,.3);
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+.bw-summarize-btn:hover:not(:disabled) {
+  background: rgba(59,130,246,.25);
+  border-color: rgba(59,130,246,.5);
+}
+.bw-summarize-btn:disabled { opacity: .4; cursor: not-allowed; }
+.bw-summarize-spinner {
+  display: inline-block;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes bw-spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+.bw-summarize-spinner { animation: bw-spin 0.8s linear infinite; }
 .bw-task-search { position: relative; flex: 1; min-width: 0; }
 .bw-search-input { width: 100%; padding: 3px 6px; font-size: 11px; color: rgba(255,255,255,.85); background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1); border-radius: 4px; }
 .bw-dropdown { position: absolute; top: 100%; left: 0; right: 0; max-height: 180px; overflow-y: auto; background: rgba(17,24,39,.98); border: 1px solid rgba(255,255,255,.12); border-radius: 4px; z-index: 10; }

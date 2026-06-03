@@ -460,6 +460,39 @@ details[open] > .commits-summary::before { transform: rotate(90deg); }
 .iw-input:focus { border-color: rgba(59, 130, 246, 0.6); }
 .iw-input-narrow { max-width: 140px; }
 .iw-input:disabled { opacity: 0.55; cursor: not-allowed; }
+.iw-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.iw-summarize-btn {
+  height: 20px;
+  padding: 0 8px;
+  font-size: 10px;
+  color: rgba(147, 197, 253, 0.85);
+  background: rgba(59, 130, 246, 0.12);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  border-radius: 3px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.iw-summarize-btn:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.25);
+  border-color: rgba(59, 130, 246, 0.5);
+}
+.iw-summarize-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.iw-summarize-spinner {
+  display: inline-block;
+  animation: spin 0.8s linear infinite;
+}
 .iw-textarea {
   padding: 6px 8px;
   font-size: 12px;

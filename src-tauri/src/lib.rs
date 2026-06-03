@@ -234,6 +234,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             commands::cursor_pos_in_window,
             commands::tool_execute,
             commands::chat_send_stream,
+            commands::summarize_work_content,
             commands::get_proactive_reminders,
             commands::fetch_task_alerts,
             commands::list_projects,

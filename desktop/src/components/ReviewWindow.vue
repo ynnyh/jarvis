@@ -52,6 +52,7 @@ const inlineSearchFocus = ref(false)
 const inlineHours = ref('')
 const inlineContent = ref('')
 const inlineSubmitting = ref(false)
+const summarizing = ref(false)
 const inlineError = ref('')
 const inlineResult = ref<'idle' | 'ok' | 'fail'>('idle')
 const inlineSearchEl = ref<HTMLInputElement | null>(null)
@@ -174,6 +175,20 @@ async function submitInlineWrite() {
     inlineError.value = e?.message ?? String(e)
   } finally {
     inlineSubmitting.value = false
+  }
+}
+
+async function summarizeContent() {
+  if (summarizing.value || !inlineContent.value.trim()) return
+  summarizing.value = true
+  inlineError.value = ''
+  try {
+    const result = await invoke<string>('summarize_work_content', { text: inlineContent.value })
+    inlineContent.value = result
+  } catch (e: any) {
+    inlineError.value = e?.message ?? String(e)
+  } finally {
+    summarizing.value = false
   }
 }
 

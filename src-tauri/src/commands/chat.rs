@@ -212,6 +212,47 @@ pub async fn chat_send_stream(
     }))
 }
 
+/// 将 commit 工作记录压缩为简洁的工时描述（调用 LLM，非流式）。
+#[tauri::command]
+pub async fn summarize_work_content(text: String) -> Result<String, String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err("工作内容为空，无需精简".into());
+    }
+
+    let prompt = format!(
+        "你是一个工时记录精简助手。请将以下 commit 工作记录压缩为简洁的工时描述。\n\n\
+         要求：\n\
+         - 保留关键工作内容和成果\n\
+         - 去除重复、冗余信息\n\
+         - 合并同类项\n\
+         - 控制在 200 字以内\n\
+         - 输出纯文本，不要 markdown 格式\n\n\
+         原始记录：\n{}",
+        trimmed
+    );
+
+    let req = crate::llm::ChatRequest::new(vec![
+        crate::llm::ChatMessage {
+            role: crate::llm::Role::System,
+            content: "你是一个工时记录精简助手，只输出精简后的工时描述文本，不加任何前缀或解释。".to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+        },
+        crate::llm::ChatMessage {
+            role: crate::llm::Role::User,
+            content: prompt,
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+        },
+    ]);
+
+    let resp = crate::llm::chat(req).await?;
+    Ok(resp.text.trim().to_string())
+}
+
 /// 从输入消息和输出消息中提取最后一轮 user-assistant 对话。
 fn extract_last_exchange(
     input_messages: &[ChatSendMessage],
