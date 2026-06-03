@@ -248,6 +248,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             commands::llm_profile_delete,
             commands::llm_profile_upsert,
             commands::llm_profile_test,
+            commands::cc_switch_list_providers,
+            commands::cc_switch_import_provider,
             commands::chat_open,
             commands::chat_close,
             commands::settings_open,

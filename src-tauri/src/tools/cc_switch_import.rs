@@ -1,3 +1,5 @@
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 
 use serde::Serialize;
@@ -196,6 +198,247 @@ fn match_string(text: &str, pattern: &str) -> Option<String> {
     let re = regex::Regex::new(pattern).ok()?;
     re.captures(text)
         .and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
+}
+
+// ============================================================================
+// CC Switch 全量 provider 扫描 + 批量导入
+// ============================================================================
+
+#[derive(Debug, Serialize)]
+pub(crate) struct CcSwitchProviderSummary {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "appType")]
+    pub app_type: String,
+    #[serde(rename = "baseUrl")]
+    pub base_url: String,
+    pub model: String,
+    #[serde(rename = "wireApi")]
+    pub wire_api: String,
+    #[serde(rename = "hasApiKey")]
+    pub has_api_key: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct CcSwitchImportResult {
+    pub id: String,
+    pub name: String,
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(rename = "alreadyExists", skip_serializing_if = "Option::is_none")]
+    pub already_exists: Option<bool>,
+}
+
+/// 扫描 CC Switch SQLite 中全部 providers，按 app_type 返回摘要列表。
+pub(crate) fn list_cc_switch_providers() -> Result<Vec<CcSwitchProviderSummary>, String> {
+    let db_path = home_dir().join(".cc-switch").join("cc-switch.db");
+    if !db_path.exists() {
+        return Ok(vec![]);
+    }
+
+    let conn = rusqlite::Connection::open(&db_path)
+        .map_err(|e| format!("打开 CC Switch 数据库失败: {}", e))?;
+
+    let mut stmt = conn
+        .prepare("SELECT id, name, app_type, settings_config FROM providers")
+        .map_err(|e| format!("准备查询语句失败: {}", e))?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(|e| format!("查询 CC Switch providers 失败: {}", e))?;
+
+    let mut providers = Vec::new();
+    for row in rows {
+        let (id, name, app_type, settings_config) =
+            row.map_err(|e| format!("读取行失败: {}", e))?;
+
+        let config: Value = match serde_json::from_str(&settings_config) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let has_api_key = extract_api_key_from_config(&config).is_some();
+        let toml_text = config
+            .get("config")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let parsed = parse_codex_toml(toml_text);
+
+        let (base_url, model, wire_api) = if app_type == "claude" {
+            (
+                parsed.base_url.unwrap_or_default(),
+                parsed.model.unwrap_or_else(|| "claude-sonnet-4-20250514".into()),
+                "chat".to_string(),
+            )
+        } else {
+            (
+                parsed.base_url.unwrap_or_default(),
+                parsed.model.unwrap_or_else(|| "gpt-4o-mini".into()),
+                parsed
+                    .wire_api
+                    .filter(|w| w == "responses")
+                    .unwrap_or_else(|| "chat".to_string()),
+            )
+        };
+
+        providers.push(CcSwitchProviderSummary {
+            id,
+            name,
+            app_type,
+            base_url,
+            model,
+            wire_api,
+            has_api_key,
+        });
+    }
+
+    Ok(providers)
+}
+
+/// 从 settings_config JSON 中提取 apiKey（先 OPENAI_API_KEY 再 ANTHROPIC_API_KEY）。
+fn extract_api_key_from_config(config: &Value) -> Option<String> {
+    let auth = config.get("auth")?;
+    auth.get("OPENAI_API_KEY")
+        .or_else(|| auth.get("ANTHROPIC_API_KEY"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// 为 provider 生成确定性 profile ID。
+fn cc_provider_profile_id(provider_id: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    provider_id.hash(&mut hasher);
+    format!("lp-cc-{:016x}", hasher.finish())
+}
+
+/// 按 ID 导入单个 CC Switch provider 为 llmProfile。
+pub(crate) async fn import_cc_switch_provider_by_id(
+    provider_id: &str,
+) -> Result<CcSwitchImportResult, String> {
+    let db_path = home_dir().join(".cc-switch").join("cc-switch.db");
+    let conn = rusqlite::Connection::open(&db_path)
+        .map_err(|e| format!("打开 CC Switch 数据库失败: {}", e))?;
+
+    let (id, name, app_type, settings_config): (String, String, String, String) = conn
+        .query_row(
+            "SELECT id, name, app_type, settings_config FROM providers WHERE id = ?1",
+            rusqlite::params![provider_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => {
+                format!("CC Switch 中找不到 provider: {}", provider_id)
+            }
+            other => format!("查询 CC Switch provider 失败: {}", other),
+        })?;
+
+    let config: Value = serde_json::from_str(&settings_config)
+        .map_err(|e| format!("settings_config 解析失败: {}", e))?;
+
+    let api_key = extract_api_key_from_config(&config).unwrap_or_default();
+
+    let toml_text = config
+        .get("config")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let parsed = parse_codex_toml(toml_text);
+    let base_url = parsed.base_url.unwrap_or_default();
+    let model = parsed.model.unwrap_or_else(|| "gpt-4o-mini".into());
+
+    let profile_id = cc_provider_profile_id(&id);
+
+    // 复用现有 upsert 逻辑创建 profile
+    let mut profile = serde_json::json!({
+        "id": profile_id,
+        "name": name,
+        "provider": "custom",
+        "baseUrl": base_url,
+        "model": model,
+    });
+    let wire_api_str = if app_type == "claude" {
+        "chat".to_string()
+    } else {
+        parsed
+            .wire_api
+            .filter(|w| w == "responses")
+            .unwrap_or_else(|| "chat".to_string())
+    };
+    profile
+        .as_object_mut()
+        .unwrap()
+        .insert("wireApi".into(), serde_json::Value::String(wire_api_str));
+
+    if !api_key.is_empty() {
+        let keychain_key = format!("llm.profile.{}.apiKey", profile_id);
+        let _ = crate::settings::secret_set(&keychain_key, &api_key);
+    }
+
+    let path = crate::commands::config_path();
+    let mut cfg: serde_json::Value = if path.exists() {
+        let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        serde_json::from_str(&content).unwrap_or_default()
+    } else {
+        serde_json::json!({})
+    };
+
+    if cfg.get("llmProfiles").is_none() {
+        cfg.as_object_mut()
+            .ok_or("配置文件顶层不是 JSON 对象")?
+            .insert("llmProfiles".into(), serde_json::json!([]));
+    }
+    let profiles = cfg
+        .get_mut("llmProfiles")
+        .and_then(|v| v.as_array_mut())
+        .unwrap();
+
+    // 检查是否已存在（按 ID 去重，或按 baseUrl+model 去重）
+    let already_exists = profiles.iter().any(|p| {
+        p.get("id").and_then(|v| v.as_str()) == Some(&profile_id)
+            || (p.get("baseUrl").and_then(|v| v.as_str()) == Some(&base_url)
+                && p.get("model").and_then(|v| v.as_str()) == Some(&model))
+    });
+
+    if already_exists {
+        // 更新已有 profile
+        if let Some(idx) = profiles
+            .iter()
+            .position(|p| p.get("id").and_then(|v| v.as_str()) == Some(&profile_id))
+        {
+            profiles[idx] = profile;
+        } else if let Some(idx) = profiles.iter().position(|p| {
+            p.get("baseUrl").and_then(|v| v.as_str()) == Some(&base_url)
+                && p.get("model").and_then(|v| v.as_str()) == Some(&model)
+        }) {
+            profiles[idx] = profile;
+        }
+    } else {
+        profiles.push(profile);
+    }
+
+    crate::commands::strip_secrets_for_save(&mut cfg)?;
+    let content = serde_json::to_string_pretty(&cfg).unwrap_or_default();
+    crate::util::write_atomic(&path, &content).map_err(|e| e.to_string())?;
+
+    crate::commands::hydrate_secret_placeholders(&mut cfg);
+    let defaults = crate::commands::default_config();
+    crate::commands::merge_defaults(&mut cfg, &defaults);
+
+    Ok(CcSwitchImportResult {
+        id,
+        name,
+        success: true,
+        error: None,
+        already_exists: Some(already_exists),
+    })
 }
 
 fn home_dir() -> PathBuf {

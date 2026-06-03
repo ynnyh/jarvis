@@ -120,12 +120,12 @@ fn jarvis_dir() -> PathBuf {
     PathBuf::from(home).join(".jarvis")
 }
 
-fn config_path() -> PathBuf {
+pub(crate) fn config_path() -> PathBuf {
     jarvis_dir().join("config.json")
 }
 
 /// 默认配置（与用户的实际作息一致：8-12 / 14-18，周一到周五）
-fn default_config() -> serde_json::Value {
+pub(crate) fn default_config() -> serde_json::Value {
     serde_json::json!({
         "assistantName": "Jarvis",
         "workSchedule": {
@@ -248,7 +248,7 @@ fn extract_secret_to_keychain(
     Ok(())
 }
 
-fn hydrate_secret_placeholders(value: &mut serde_json::Value) {
+pub(crate) fn hydrate_secret_placeholders(value: &mut serde_json::Value) {
     mark_secret_if_saved(value, &["llm", "apiKey"], "llm.apiKey");
     mark_secret_if_saved(value, &["zentao", "sessionCookie"], "zentao.sessionCookie");
     mark_secret_if_saved(
@@ -271,7 +271,7 @@ fn hydrate_secret_placeholders(value: &mut serde_json::Value) {
     }
 }
 
-fn strip_secrets_for_save(value: &mut serde_json::Value) -> Result<(), String> {
+pub(crate) fn strip_secrets_for_save(value: &mut serde_json::Value) -> Result<(), String> {
     extract_secret_to_keychain(value, &["llm", "apiKey"], "llm.apiKey")?;
     extract_secret_to_keychain(value, &["zentao", "sessionCookie"], "zentao.sessionCookie")?;
     extract_secret_to_keychain(
@@ -296,7 +296,7 @@ fn strip_secrets_for_save(value: &mut serde_json::Value) -> Result<(), String> {
 }
 
 /// 递归把缺失的字段从默认值补齐
-fn merge_defaults(user: &mut serde_json::Value, defaults: &serde_json::Value) {
+pub(crate) fn merge_defaults(user: &mut serde_json::Value, defaults: &serde_json::Value) {
     if let (Some(u), Some(d)) = (user.as_object_mut(), defaults.as_object()) {
         for (k, v) in d {
             if !u.contains_key(k) {

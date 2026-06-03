@@ -388,3 +388,19 @@ pub async fn llm_profile_test(
         "model": resp.model,
     }))
 }
+
+// ===== CC Switch 全量导入 =====
+
+/// 扫描 CC Switch 数据库中全部 providers，返回摘要列表（不含 apiKey）。
+#[tauri::command]
+pub async fn cc_switch_list_providers() -> Result<serde_json::Value, String> {
+    let providers = crate::tools::cc_switch_import::list_cc_switch_providers()?;
+    serde_json::to_value(&providers).map_err(|e| e.to_string())
+}
+
+/// 按 provider ID 导入单个 CC Switch provider 为 llmProfile。
+#[tauri::command]
+pub async fn cc_switch_import_provider(provider_id: String) -> Result<serde_json::Value, String> {
+    let result = crate::tools::cc_switch_import::import_cc_switch_provider_by_id(&provider_id).await?;
+    serde_json::to_value(&result).map_err(|e| e.to_string())
+}
