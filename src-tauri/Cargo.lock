@@ -2142,7 +2142,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jarvis"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "base64 0.22.1",
  "chinese_holiday",
@@ -2160,6 +2160,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sqlite-vec",
  "tauri",
  "tauri-build",
  "tauri-plugin-autostart",
@@ -2170,6 +2171,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "urlencoding",
+ "zerocopy",
 ]
 
 [[package]]
@@ -4283,6 +4285,15 @@ dependencies = [
  "gobject-sys",
  "libc",
  "system-deps",
+]
+
+[[package]]
+name = "sqlite-vec"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0ba424237a9a5db2f6071f193319e2b6a32f7f3961debb2fbbfe67067abce3f"
+dependencies = [
+ "cc",
 ]
 
 [[package]]

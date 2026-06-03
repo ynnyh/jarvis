@@ -2,5 +2,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 fn main() {
-    jarvis_lib::run();
+    if let Err(e) = jarvis_lib::run() {
+        eprintln!("Jarvis 启动失败: {}", e);
+    }
 }

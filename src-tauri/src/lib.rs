@@ -10,6 +10,7 @@ mod daily_review;
 mod fine_report;
 mod git_scan;
 mod llm;
+mod memory;
 mod repo_recommender;
 mod settings;
 mod settings_extras;
@@ -26,7 +27,7 @@ use tauri::Emitter;
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
+pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -37,6 +38,7 @@ pub fn run() {
         ))
         .manage(commands::WriteHoursState::default())
         .manage(channels::ChannelServiceState::default())
+        .manage(memory::MemoryState::new(&memory::default_db_path()))
         .setup(|app| {
             // ===== 系统托盘 =====
             let show_i = MenuItem::with_id(app, "tray_show", "显示小人", true, None::<&str>)?;
@@ -306,4 +308,5 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app_handle, _event| {});
+    Ok(())
 }

@@ -290,6 +290,7 @@ async function sendMessage() {
           messages: llmMessages,
           assistantName: configStore.config.assistantName,
           userTitle: configStore.config.userTitle,
+          conversationId: conv.id,
         },
       })
 

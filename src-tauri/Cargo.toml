@@ -35,6 +35,8 @@ hex = "0.4"
 base64 = "0.22"
 urlencoding = "2.1"
 rusqlite = { version = "0.32", features = ["bundled"] }
+sqlite-vec = "0.1"
+zerocopy = "0.8"
 regex = "1"
 chinese_holiday = "2026.0.1"
 futures-util = "0.3"

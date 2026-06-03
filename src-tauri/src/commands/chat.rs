@@ -7,10 +7,11 @@ use std::sync::Arc;
 
 use serde::Deserialize;
 use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, State};
 
 use crate::chat_agent::{self, StreamEvent};
 use crate::llm::{ChatMessage, Role};
+use crate::memory::MemoryState;
 
 #[derive(Debug, Deserialize)]
 struct ChatSendInput {
@@ -25,6 +26,8 @@ struct ChatSendInput {
     temperature: Option<f32>,
     #[serde(default, rename = "allowedTools")]
     allowed_tools: Option<Vec<String>>,
+    #[serde(default, rename = "conversationId")]
+    conversation_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -42,6 +45,7 @@ struct ChatSendMessage {
 #[tauri::command]
 pub async fn chat_send_stream(
     app: AppHandle,
+    memory_state: State<'_, MemoryState>,
     input: Value,
 ) -> Result<Value, String> {
     let parsed: ChatSendInput =
@@ -65,18 +69,18 @@ pub async fn chat_send_stream(
         .first()
         .map(|m| m.role == "system")
         .unwrap_or(false);
-    let system_prompt = if has_system {
-        None
+    let base_prompt = if has_system {
+        String::new()
     } else {
-        Some(chat_agent::default_system_prompt(
+        chat_agent::default_system_prompt(
             parsed.assistant_name.as_deref().unwrap_or("Jarvis"),
             parsed.user_title.as_deref().unwrap_or("主人"),
-        ))
+        )
     };
 
     let messages: Vec<ChatMessage> = parsed
         .messages
-        .into_iter()
+        .iter()
         .map(|m| ChatMessage {
             role: match m.role.as_str() {
                 "system" => Role::System,
@@ -84,20 +88,65 @@ pub async fn chat_send_stream(
                 "tool" => Role::Tool,
                 _ => Role::User,
             },
-            content: m.content,
+            content: m.content.clone(),
             tool_calls: m
                 .tool_calls
-                .and_then(|tc| serde_json::from_value(Value::Array(tc)).ok()),
-            tool_call_id: m.tool_call_id,
-            name: m.name,
+                .as_ref()
+                .and_then(|tc| serde_json::from_value(Value::Array(tc.clone())).ok()),
+            tool_call_id: m.tool_call_id.clone(),
+            name: m.name.clone(),
         })
         .collect();
+
+    // 动态注入记忆到 system prompt
+    let last_user_msg = messages
+        .iter()
+        .rev()
+        .find(|m| matches!(m.role, Role::User))
+        .map(|m| m.content.clone())
+        .unwrap_or_default();
+
+    // 1. 同步读 Core Memory
+    let core_section = memory_state
+        .db
+        .as_ref()
+        .and_then(|m| m.lock().ok())
+        .map(|db| crate::memory::build_core_prompt(&db))
+        .unwrap_or_default();
+
+    // 2. 异步计算嵌入（不持锁）
+    let query_embedding = crate::memory::compute_query_embedding(&last_user_msg).await;
+
+    // 3. 用嵌入检索 Long-term Memory（短暂持锁）
+    let longterm_section = match (&memory_state.db, &query_embedding) {
+        (Some(m), Some(emb)) => m
+            .lock()
+            .ok()
+            .map(|db| crate::memory::search_longterm_prompt(&db, emb, &last_user_msg, 5))
+            .unwrap_or_default(),
+        _ => String::new(),
+    };
+
+    let mut memory_prompt = core_section;
+    if !longterm_section.is_empty() {
+        if !memory_prompt.is_empty() {
+            memory_prompt.push('\n');
+        }
+        memory_prompt.push_str(&longterm_section);
+    }
+
+    let system_prompt = if base_prompt.is_empty() {
+        None
+    } else if memory_prompt.is_empty() {
+        Some(base_prompt)
+    } else {
+        Some(format!("{}\n\n{}", base_prompt, memory_prompt))
+    };
 
     // Build the event emitter callback (Arc<dyn Fn>)
     let on_event: Arc<dyn Fn(StreamEvent) + Send + Sync> = {
         let app = app.clone();
         Arc::new(move |event| {
-            // 事件名固定为 chat:stream；前端用 listen('chat:stream', ...) 监听
             let _ = app.emit("chat:stream", &event);
         })
     };
@@ -125,6 +174,34 @@ pub async fn chat_send_stream(
         },
     );
 
+    // 异步提取记忆（分步：先提取事实 + 算嵌入，再持锁存储）
+    if let Some((user_text, assistant_text)) =
+        extract_last_exchange(&parsed.messages, &result.new_messages)
+    {
+        // 1. 提取事实（async，不持锁）
+        let facts = crate::memory::extractor::extract_facts_only(&user_text, &assistant_text).await;
+
+        // 2. 计算嵌入（async，不持锁）
+        let mut fact_embeddings: Vec<(crate::memory::extractor::ExtractedFact, Vec<f32>)> = Vec::new();
+        for fact in facts {
+            if let Some(pair) = crate::memory::extractor::compute_fact_embedding(&fact).await {
+                fact_embeddings.push(pair);
+            }
+        }
+
+        // 3. 持锁存储（sync，短暂）
+        if !fact_embeddings.is_empty() {
+            if let Some(Ok(db)) = memory_state.db.as_ref().map(|m| m.lock()) {
+                let conv_id = parsed.conversation_id.as_deref();
+                for (fact, emb) in &fact_embeddings {
+                    if let Err(e) = crate::memory::extractor::store_fact_sync(fact, emb, conv_id, &db) {
+                        eprintln!("[memory] 存储失败: {}", e);
+                    }
+                }
+            }
+        }
+    }
+
     Ok(json!({
         "newMessages": result.new_messages,
         "steps": result.steps,
@@ -133,4 +210,42 @@ pub async fn chat_send_stream(
         "truncated": result.truncated,
         "allowedTools": allowed_tools,
     }))
+}
+
+/// 从输入消息和输出消息中提取最后一轮 user-assistant 对话。
+fn extract_last_exchange(
+    input_messages: &[ChatSendMessage],
+    new_messages: &[ChatMessage],
+) -> Option<(String, String)> {
+    // 找最后一条 user 消息
+    let user_text = input_messages
+        .iter()
+        .rev()
+        .find(|m| m.role == "user")
+        .map(|m| m.content.clone())?;
+
+    // 找第一条 assistant 文本回复（不含 tool_calls 的）
+    let assistant_text = new_messages
+        .iter()
+        .find(|m| matches!(m.role, Role::Assistant) && m.tool_calls.is_none() && !m.content.is_empty())
+        .map(|m| m.content.clone())
+        .or_else(|| {
+            // fallback: 拼所有 assistant 消息（跳过 tool_calls 请求，只取有文本内容的）
+            let texts: Vec<String> = new_messages
+                .iter()
+                .filter(|m| matches!(m.role, Role::Assistant) && m.tool_calls.is_none())
+                .map(|m| m.content.clone())
+                .filter(|c| !c.is_empty())
+                .collect();
+            if texts.is_empty() {
+                None
+            } else {
+                Some(texts.join("\n"))
+            }
+        })?;
+
+    if user_text.is_empty() || assistant_text.is_empty() {
+        return None;
+    }
+    Some((user_text, assistant_text))
 }
