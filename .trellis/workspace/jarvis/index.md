@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 2
-- **Last Active**: 2026-06-02
+- **Total Sessions**: 3
+- **Last Active**: 2026-06-03
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~73 | Active |
+| `journal-1.md` | ~106 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 3 | 2026-06-03 | 项目成本分析 v3：数据源改帆软 + 渠道机器人接成本 | `627231a` | `main` |
 | 2 | 2026-06-02 | 设置页改造：单窗口 + 侧边栏，10页合并为6页 | `8111746` | `main` |
 | 1 | 2026-06-02 | 批量写工时窗口 + 今日计划工时估算与任务搜索 | `3250e12` | `main` |
 <!-- @@@/auto:session-history -->
