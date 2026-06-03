@@ -47,7 +47,7 @@ export function useReviewWriteHours() {
     const seen = new Set<string>()
     const lines: string[] = []
     for (const c of commits) {
-      const cleaned = cleanCommitTitle(c.title)
+      const cleaned = cleanCommitTitle(c.title, 200)
       if (!cleaned || seen.has(cleaned)) continue
       seen.add(cleaned)
       lines.push(`- ${cleaned}`)

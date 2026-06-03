@@ -492,7 +492,7 @@ fn evidence_from_commits(commits: &[CommitLink]) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut lines = Vec::new();
     for c in commits {
-        let cleaned = crate::git_scan::clean_commit_title(&c.title, 80);
+        let cleaned = crate::git_scan::clean_commit_title(&c.title, 200);
         if cleaned.is_empty() || seen.contains(&cleaned) {
             continue;
         }

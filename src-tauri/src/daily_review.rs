@@ -123,7 +123,7 @@ fn build_default_work_content(commits: &[CommitLink]) -> String {
     let mut seen: HashSet<String> = HashSet::new();
     let mut items: Vec<String> = Vec::new();
     for c in commits {
-        let cleaned = clean_commit_title(&c.title, 80);
+        let cleaned = clean_commit_title(&c.title, 200);
         if cleaned.is_empty() || seen.contains(&cleaned) {
             continue;
         }
