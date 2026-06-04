@@ -11,6 +11,14 @@ use serde::{Deserialize, Serialize};
 
 const EMBEDDING_DIM: usize = 384;
 
+static EMBEDDING_DISABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 嵌入是否已被标记为不可用：服务商返回 404 / model_not_found 后置位，
+/// 之后 embed() 直接短路返回 Err（不再发 HTTP），避免每轮对话白等往返阻塞首字。
+pub fn embedding_disabled() -> bool {
+    EMBEDDING_DISABLED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 #[derive(Debug, Serialize)]
 struct EmbedRequest {
     model: String,
@@ -37,12 +45,37 @@ fn get_embedding_base_url() -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// 从 config.json 读取 embeddingModel；未配置时回退默认 text-embedding-3-small。
+/// DeepSeek 等无 /embeddings 端点的服务商需把 embeddingBaseUrl/embeddingModel 指向
+/// 兼容服务（如本地 Ollama 的 nomic-embed-text），否则嵌入会失败、记忆降级为纯 FTS。
+fn get_embedding_model() -> String {
+    crate::settings::load_raw_config()
+        .and_then(|v| v.get("embeddingModel")?.as_str().map(|s| s.trim().to_string()))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "text-embedding-3-small".to_string())
+}
+
+/// 嵌入不可用时只提示一次（避免每轮对话刷屏），引导用户配置嵌入服务。
+pub fn warn_unavailable_once(reason: &str) {
+    static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        eprintln!(
+            "[memory] ⚠ 嵌入服务不可用（{}）：长期记忆已降级为纯关键词(FTS)检索。\
+             如需向量检索，请在设置中配置 embeddingBaseUrl + embeddingModel（如指向本地 Ollama）。",
+            reason
+        );
+    }
+}
+
 /// 对文本生成嵌入向量。
 ///
 /// 使用当前配置的 LLM 服务商的 /embeddings 端点。
 /// 若配置了 embeddingBaseUrl，则优先使用该地址（可指向本地 Ollama 等）。
 /// 若服务商不支持 embeddings，返回错误，由调用方跳过向量检索。
 pub async fn embed(text: &str) -> Result<Vec<f32>, String> {
+    if embedding_disabled() {
+        return Err("嵌入服务不可用（服务商无 /embeddings 端点）".into());
+    }
     let cred = get_llm_credentials();
     if cred.api_key.is_empty() || cred.base_url.is_empty() {
         return Err("LLM 凭证未配置".into());
@@ -57,11 +90,10 @@ pub async fn embed(text: &str) -> Result<Vec<f32>, String> {
         .build()
         .map_err(|e| format!("embed client 构造失败: {}", e))?;
 
-    // text-embedding-3-small 或 text-embedding-v3 等，取决于提供商。
-    // 这里用通用的 text-embedding-3-small，大多数服务商兼容。
+    // 模型名可配置（embeddingModel），缺省 text-embedding-3-small。
     // 传 dimensions 参数让模型直接返回目标维度，避免事后截断丢信息。
     let body = EmbedRequest {
-        model: "text-embedding-3-small".into(),
+        model: get_embedding_model(),
         input: vec![text.to_string()],
         dimensions: Some(EMBEDDING_DIM),
     };
@@ -79,6 +111,8 @@ pub async fn embed(text: &str) -> Result<Vec<f32>, String> {
         let text = resp.text().await.unwrap_or_default();
         // 模型不存在时返回错误，让调用方跳过向量检索
         if status.as_u16() == 404 || text.contains("model_not_found") {
+            // 服务商不支持 embeddings：永久短路，避免后续每轮白发请求阻塞首字。
+            EMBEDDING_DISABLED.store(true, std::sync::atomic::Ordering::Relaxed);
             return Err("embed 模型不可用".into());
         }
         return Err(format!("embed HTTP {}: {}", status.as_u16(), crate::util::truncate_chars(&text, 300)));

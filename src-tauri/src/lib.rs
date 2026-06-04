@@ -308,8 +308,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             worklog::worklog_session_write_confirmed,
             repo_recommender::recommend_repos_for_task,
         ])
-        .build(tauri::generate_context!())
-        .expect("error while building tauri application")
+        .build(tauri::generate_context!())?
         .run(|_app_handle, _event| {});
     Ok(())
 }

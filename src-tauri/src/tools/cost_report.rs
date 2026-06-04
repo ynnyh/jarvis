@@ -133,8 +133,6 @@ fn fmt_hours(v: f64) -> String {
 fn fmt_money(v: f64) -> String {
     if v >= 10000.0 {
         format!("{:.1}万", v / 10000.0)
-    } else if v >= 1000.0 {
-        format!("{:.0}", v)
     } else {
         format!("{:.0}", v)
     }

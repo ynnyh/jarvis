@@ -135,12 +135,12 @@ pub async fn chat_send_stream(
         memory_prompt.push_str(&longterm_section);
     }
 
-    let system_prompt = if base_prompt.is_empty() {
-        None
-    } else if memory_prompt.is_empty() {
-        Some(base_prompt)
-    } else {
-        Some(format!("{}\n\n{}", base_prompt, memory_prompt))
+    // base_prompt 为空 = 前端已传 system 消息；此时记忆仍作为附加 system 注入（不再丢弃）。
+    let system_prompt = match (base_prompt.is_empty(), memory_prompt.is_empty()) {
+        (false, false) => Some(format!("{}\n\n{}", base_prompt, memory_prompt)),
+        (false, true) => Some(base_prompt),
+        (true, false) => Some(memory_prompt),
+        (true, true) => None,
     };
 
     // Build the event emitter callback (Arc<dyn Fn>)
@@ -174,32 +174,44 @@ pub async fn chat_send_stream(
         },
     );
 
-    // 异步提取记忆（分步：先提取事实 + 算嵌入，再持锁存储）
+    // 异步提取记忆：spawn 独立后台任务，emit Done 后立即返回，不阻塞命令的 Promise。
     if let Some((user_text, assistant_text)) =
         extract_last_exchange(&parsed.messages, &result.new_messages)
     {
-        // 1. 提取事实（async，不持锁）
-        let facts = crate::memory::extractor::extract_facts_only(&user_text, &assistant_text).await;
-
-        // 2. 计算嵌入（async，不持锁）
-        let mut fact_embeddings: Vec<(crate::memory::extractor::ExtractedFact, Vec<f32>)> = Vec::new();
-        for fact in facts {
-            if let Some(pair) = crate::memory::extractor::compute_fact_embedding(&fact).await {
-                fact_embeddings.push(pair);
+        let db_arc = memory_state.db.clone();
+        let conv_id = parsed.conversation_id.clone();
+        tauri::async_runtime::spawn(async move {
+            // 1. 提取事实（async，不持锁）
+            let facts =
+                crate::memory::extractor::extract_facts_only(&user_text, &assistant_text).await;
+            if facts.is_empty() {
+                return;
             }
-        }
 
-        // 3. 持锁存储（sync，短暂）
-        if !fact_embeddings.is_empty() {
-            if let Some(Ok(db)) = memory_state.db.as_ref().map(|m| m.lock()) {
-                let conv_id = parsed.conversation_id.as_deref();
-                for (fact, emb) in &fact_embeddings {
-                    if let Err(e) = crate::memory::extractor::store_fact_sync(fact, emb, conv_id, &db) {
-                        eprintln!("[memory] 存储失败: {}", e);
-                    }
+            // 2. 并发计算嵌入（不持锁）；嵌入不可用时为 None，降级 FTS-only 写入。
+            let embeddings: Vec<Option<Vec<f32>>> = futures_util::future::join_all(
+                facts
+                    .iter()
+                    .map(|f| crate::memory::extractor::compute_fact_embedding(f)),
+            )
+            .await;
+
+            // 3. 持锁存储（sync，短暂）
+            let Some(db_arc) = db_arc else {
+                return;
+            };
+            let Ok(db) = db_arc.lock() else {
+                return;
+            };
+            let conv = conv_id.as_deref();
+            for (fact, emb) in facts.iter().zip(embeddings.iter()) {
+                if let Err(e) =
+                    crate::memory::extractor::store_fact_sync(fact, emb.as_deref(), conv, &db)
+                {
+                    eprintln!("[memory] 存储失败: {}", e);
                 }
             }
-        }
+        });
     }
 
     Ok(json!({

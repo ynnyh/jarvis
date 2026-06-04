@@ -15,11 +15,13 @@ use zerocopy::IntoBytes;
 
 /// 注册 sqlite-vec 扩展。必须在第一次 Connection::open 之前调用。
 pub fn register_vec_extension() {
-    unsafe {
+    // 全局 auto extension 只需注册一次，避免每次 MemoryState::new 重复注册。
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| unsafe {
         rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
             sqlite_vec::sqlite3_vec_init as *const (),
         )));
-    }
+    });
 }
 
 pub struct MemoryDb {
@@ -27,13 +29,6 @@ pub struct MemoryDb {
 }
 
 // ===== 数据结构 =====
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CoreMemory {
-    pub key: String,
-    pub value: String,
-    pub updated_at: String,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Memory {
@@ -57,12 +52,6 @@ pub struct MemoryHit {
 // ===== 初始化 =====
 
 const SCHEMA: &str = "
-CREATE TABLE IF NOT EXISTS core_memory (
-    key   TEXT PRIMARY KEY,
-    value TEXT NOT NULL,
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
 CREATE TABLE IF NOT EXISTS memories (
     id                    INTEGER PRIMARY KEY,
     content               TEXT NOT NULL,
@@ -100,50 +89,6 @@ impl MemoryDb {
         Ok(Self { conn })
     }
 
-    // ===== Core Memory =====
-
-    pub fn core_get_all(&self) -> SqlResult<Vec<CoreMemory>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT key, value, updated_at FROM core_memory ORDER BY key",
-        )?;
-        let rows = stmt.query_map([], |row| {
-            Ok(CoreMemory {
-                key: row.get(0)?,
-                value: row.get(1)?,
-                updated_at: row.get(2)?,
-            })
-        })?;
-        rows.collect()
-    }
-
-    #[allow(dead_code)]
-    pub fn core_set(&self, key: &str, value: &str) -> SqlResult<()> {
-        self.conn.execute(
-            "INSERT INTO core_memory(key, value, updated_at) VALUES (?1, ?2, datetime('now'))
-             ON CONFLICT(key) DO UPDATE SET value = ?2, updated_at = datetime('now')",
-            params![key, value],
-        )?;
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    pub fn core_delete(&self, key: &str) -> SqlResult<()> {
-        self.conn.execute("DELETE FROM core_memory WHERE key = ?1", params![key])?;
-        Ok(())
-    }
-
-    pub fn core_as_prompt_section(&self) -> String {
-        let entries = self.core_get_all().unwrap_or_default();
-        if entries.is_empty() {
-            return String::new();
-        }
-        let mut s = String::from("## 关于用户的已知信息\n\n");
-        for e in &entries {
-            s.push_str(&format!("- **{}**: {}\n", e.key, e.value));
-        }
-        s
-    }
-
     // ===== Long-term Memory 写入 =====
 
     pub fn insert_memory(
@@ -154,25 +99,50 @@ impl MemoryDb {
         importance: f32,
         embedding: &[f32],
     ) -> SqlResult<i64> {
-        let rowid = {
-            let mut stmt = self.conn.prepare(
-                "INSERT INTO memories(content, category, source_conversation_id, importance)
-                 VALUES (?1, ?2, ?3, ?4)",
-            )?;
-            stmt.execute(params![content, category, source_conversation_id, importance])?;
-            self.conn.last_insert_rowid()
-        };
+        // 三表（memories/memory_vecs/memory_fts）写入用事务包裹，避免中途失败导致脱节。
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT INTO memories(content, category, source_conversation_id, importance)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![content, category, source_conversation_id, importance],
+        )?;
+        let rowid = tx.last_insert_rowid();
 
-        self.conn.execute(
+        tx.execute(
             "INSERT INTO memory_vecs(rowid, embedding) VALUES (?1, ?2)",
             params![rowid, embedding.as_bytes()],
         )?;
 
-        self.conn.execute(
+        tx.execute(
             "INSERT INTO memory_fts(rowid, content) VALUES (?1, ?2)",
             params![rowid, content],
         )?;
 
+        tx.commit()?;
+        Ok(rowid)
+    }
+
+    /// 无向量降级写入（嵌入服务不可用时）：只写 memories + memory_fts，跳过 memory_vecs。
+    /// 记忆仍可被 FTS 关键词检索，只是不参与向量 KNN。
+    pub fn insert_memory_fts_only(
+        &self,
+        content: &str,
+        category: &str,
+        source_conversation_id: Option<&str>,
+        importance: f32,
+    ) -> SqlResult<i64> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT INTO memories(content, category, source_conversation_id, importance)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![content, category, source_conversation_id, importance],
+        )?;
+        let rowid = tx.last_insert_rowid();
+        tx.execute(
+            "INSERT INTO memory_fts(rowid, content) VALUES (?1, ?2)",
+            params![rowid, content],
+        )?;
+        tx.commit()?;
         Ok(rowid)
     }
 
@@ -193,24 +163,33 @@ impl MemoryDb {
         new_content: &str,
         new_embedding: &[f32],
     ) -> SqlResult<()> {
-        self.conn.execute(
+        // 三表写入用事务包裹，保证原子性。
+        let tx = self.conn.unchecked_transaction()?;
+
+        // memory_fts 是 external content 表（content='memories'），DELETE 时 FTS5 会回查
+        // memories 当前 content 反算待删 token。必须在 UPDATE memories 之前删除，否则会用
+        // 新内容反算 → 旧 token 残留、索引腐化（旧文本仍能被搜到）。
+        tx.execute("DELETE FROM memory_fts WHERE rowid = ?1", params![id])?;
+
+        tx.execute(
             "UPDATE memories SET content = ?2, updated_at = datetime('now') WHERE id = ?1",
             params![id, new_content],
         )?;
 
         // 向量表没有 UPDATE，需要删旧插新
-        self.conn.execute("DELETE FROM memory_vecs WHERE rowid = ?1", params![id])?;
-        self.conn.execute(
+        tx.execute("DELETE FROM memory_vecs WHERE rowid = ?1", params![id])?;
+        tx.execute(
             "INSERT INTO memory_vecs(rowid, embedding) VALUES (?1, ?2)",
             params![id, new_embedding.as_bytes()],
         )?;
 
-        // FTS 也要更新
-        self.conn.execute("DELETE FROM memory_fts WHERE rowid = ?1", params![id])?;
-        self.conn.execute(
+        // FTS 插入新内容
+        tx.execute(
             "INSERT INTO memory_fts(rowid, content) VALUES (?1, ?2)",
             params![id, new_content],
         )?;
+
+        tx.commit()?;
         Ok(())
     }
 
@@ -280,6 +259,12 @@ impl MemoryDb {
 
     /// FTS5 全文搜索（仅活跃记忆）
     pub fn search_by_text(&self, query: &str, limit: usize) -> SqlResult<Vec<MemoryHit>> {
+        if query.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        // 转义为 FTS5 phrase：内部 " 转义为 ""，再整体用引号包裹，
+        // 避免用户输入里的 " * : ^ 或 AND/OR/NEAR 等被当成查询语法导致 MATCH 报错。
+        let safe_query = format!("\"{}\"", query.replace('"', "\"\""));
         let mut stmt = self.conn.prepare(
             "SELECT f.rowid, f.rank, m.content, m.category,
                     m.source_conversation_id, m.importance,
@@ -291,7 +276,7 @@ impl MemoryDb {
              ORDER BY f.rank
              LIMIT ?2",
         )?;
-        let rows = stmt.query_map(params![query, limit], |row| {
+        let rows = stmt.query_map(params![safe_query, limit], |row| {
             Ok(MemoryHit {
                 score: row.get(1)?,
                 memory: Memory {
@@ -371,6 +356,32 @@ impl MemoryDb {
             })?;
         Ok(count)
     }
+
+    /// 取 importance 最高的活跃记忆，用于常驻"核心画像"注入。
+    pub fn top_important(&self, limit: usize) -> SqlResult<Vec<Memory>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, content, category, source_conversation_id, importance,
+                    valid_from, valid_to, created_at, updated_at
+             FROM memories
+             WHERE valid_to IS NULL
+             ORDER BY importance DESC, updated_at DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], |row| {
+            Ok(Memory {
+                id: row.get(0)?,
+                content: row.get(1)?,
+                category: row.get(2)?,
+                source_conversation_id: row.get(3)?,
+                importance: row.get(4)?,
+                valid_from: row.get(5)?,
+                valid_to: row.get(6)?,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+            })
+        })?;
+        rows.collect()
+    }
 }
 
 #[cfg(test)]
@@ -391,25 +402,6 @@ mod tests {
 
     fn dummy_embedding(seed: f32) -> Vec<f32> {
         vec![seed; 384]
-    }
-
-    #[test]
-    fn core_memory_crud() {
-        let db = test_db();
-        db.core_set("user_name", "张三").unwrap();
-        db.core_set("role", "开发者").unwrap();
-
-        let all = db.core_get_all().unwrap();
-        assert_eq!(all.len(), 2);
-        assert_eq!(all[0].key, "role");
-        assert_eq!(all[1].key, "user_name");
-
-        db.core_delete("role").unwrap();
-        let all = db.core_get_all().unwrap();
-        assert_eq!(all.len(), 1);
-
-        let section = db.core_as_prompt_section();
-        assert!(section.contains("张三"));
     }
 
     #[test]
@@ -452,6 +444,41 @@ mod tests {
         let new = db.search_by_vector(&dummy_embedding(0.35), 5).unwrap();
         assert!(!new.is_empty());
         assert_eq!(new[0].memory.content, "用户改用 Claude");
+    }
+
+    #[test]
+    fn update_memory_content_refreshes_fts() {
+        // 回归：external content FTS 表必须在 UPDATE memories 之前删除旧索引项，
+        // 否则旧 token 残留、更新后仍能搜到旧内容。
+        let db = test_db();
+        let id = db
+            .insert_memory("user likes apple", "preference", None, 0.5, &dummy_embedding(0.4))
+            .unwrap();
+        assert!(!db.search_by_text("apple", 5).unwrap().is_empty());
+
+        db.update_memory_content(id, "user likes banana", &dummy_embedding(0.45))
+            .unwrap();
+
+        assert!(
+            db.search_by_text("apple", 5).unwrap().is_empty(),
+            "更新后旧内容 token 不应残留在 FTS 索引中"
+        );
+        assert!(
+            !db.search_by_text("banana", 5).unwrap().is_empty(),
+            "更新后新内容应可被 FTS 搜到"
+        );
+    }
+
+    #[test]
+    fn search_by_text_handles_special_chars() {
+        // 回归：含 FTS5 语法字符的 query 不应导致 MATCH 报错。
+        let db = test_db();
+        db.insert_memory("project uses Rust", "project", None, 0.5, &dummy_embedding(0.5))
+            .unwrap();
+        // 这些 query 含 " : * 等特殊字符，转义前会让 MATCH 抛错
+        for q in ["\"unbalanced", "a:b", "foo*", "AND OR"] {
+            assert!(db.search_by_text(q, 5).is_ok(), "query {:?} 不应报错", q);
+        }
     }
 
     #[test]

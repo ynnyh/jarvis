@@ -35,35 +35,45 @@ pub async fn extract_facts_only(
     }
 }
 
-/// 计算事实的嵌入向量（纯 async，不涉及 DB）。
-pub async fn compute_fact_embedding(fact: &ExtractedFact) -> Option<(ExtractedFact, Vec<f32>)> {
+/// 计算事实的嵌入向量（纯 async，不涉及 DB）。嵌入不可用时返回 None（降级为 FTS-only）。
+pub async fn compute_fact_embedding(fact: &ExtractedFact) -> Option<Vec<f32>> {
     match crate::memory::embedding::embed(&fact.content).await {
-        Ok(emb) => Some((fact.clone(), emb)),
+        Ok(emb) => Some(emb),
         Err(e) => {
-            eprintln!("[memory] 嵌入计算失败: {}", e);
+            crate::memory::embedding::warn_unavailable_once(&e);
             None
         }
     }
 }
 
 /// 将事实存入数据库（纯同步，短暂持锁）。
+/// `embedding` 为 None 时降级为 FTS-only 写入（不做向量去重）。
 pub fn store_fact_sync(
     fact: &ExtractedFact,
-    embedding: &[f32],
+    embedding: Option<&[f32]>,
     conversation_id: Option<&str>,
     db: &MemoryDb,
 ) -> Result<(), String> {
+    let Some(embedding) = embedding else {
+        // 嵌入不可用：FTS-only 降级写入（无法向量去重，直接写）。
+        db.insert_memory_fts_only(&fact.content, &fact.category, conversation_id, fact.importance)
+            .map_err(|e| format!("插入记忆失败(FTS-only): {}", e))?;
+        return Ok(());
+    };
+
     let similar = db
         .find_similar(embedding, 0.85, 3)
         .map_err(|e| format!("查找相似记忆失败: {}", e))?;
 
     if let Some((existing_id, distance, _existing_content)) = similar.first() {
         if *distance < 0.3 {
+            // 几乎重复：用最新表述更新已有记忆（刷新内容+时间戳），不新增。
+            db.update_memory_content(*existing_id, &fact.content, embedding)
+                .map_err(|e| format!("更新记忆失败: {}", e))?;
             return Ok(());
         }
-        db.update_memory_content(*existing_id, &fact.content, embedding)
-            .map_err(|e| format!("更新记忆失败: {}", e))?;
-        return Ok(());
+        // distance ∈ [0.3, 0.85)：相似但可能是不同事实（如"喜欢Python"vs"喜欢Java"），
+        // 不再覆盖旧记忆（否则会误删），改为新增。
     }
 
     db.insert_memory(
@@ -275,6 +285,45 @@ mod tests {
         assert_eq!(
             find_matching_bracket(r#"[{"a": "b"}]"#),
             Some(11)
+        );
+    }
+
+    #[test]
+    fn store_similar_but_different_facts_not_overwritten() {
+        use crate::memory::db::{register_vec_extension, MemoryDb};
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static C: AtomicU64 = AtomicU64::new(0);
+
+        register_vec_extension();
+        let id = C.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("jarvis_extractor_test_{}", id));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = MemoryDb::open(&dir.join("t.db")).unwrap();
+
+        let emb_at = |x: f32, y: f32| {
+            let mut v = vec![0.0f32; 384];
+            v[0] = x;
+            v[1] = y;
+            v
+        };
+        let f1 = ExtractedFact {
+            content: "用户喜欢 Python".into(),
+            category: "preference".into(),
+            importance: 0.7,
+        };
+        let f2 = ExtractedFact {
+            content: "用户喜欢 Java".into(),
+            category: "preference".into(),
+            importance: 0.7,
+        };
+        // emb1/emb2 的 L2 距离≈0.7（L2²≈0.49），落在 [0.3,0.85) —— 相似但非极近。
+        store_fact_sync(&f1, Some(&emb_at(1.0, 0.0)), None, &db).unwrap();
+        store_fact_sync(&f2, Some(&emb_at(0.755, 0.656)), None, &db).unwrap();
+        assert_eq!(
+            db.count_active().unwrap(),
+            2,
+            "相似但不同的事实不应互相覆盖"
         );
     }
 }

@@ -72,8 +72,12 @@ pub struct MemberBrief {
 /// 从帆软拉指定项目（全周期）的工时明细，提取 distinct 员工中文名作为人员列表。
 /// account 与 realname 都填员工中文名（帆软无禅道账号，成本聚合一律以中文名为 key）。
 pub async fn cost_team_members_inner(project_name: &str) -> Result<Vec<MemberBrief>, String> {
-    let begin = "2020-01-01".to_string();
-    let end = chrono::Local::now().format("%Y-%m-%d").to_string();
+    // 预览仅为枚举项目成员，限定近 1 年窗口即可，避免全周期（2020~今）数据量过大拉崩帆软（易撞 60s 超时，导致两步确认第一步就失败）。
+    let now = chrono::Local::now();
+    let begin = (now - chrono::Duration::days(365))
+        .format("%Y-%m-%d")
+        .to_string();
+    let end = now.format("%Y-%m-%d").to_string();
     let records = crate::fine_report::finereport_get_efforts_raw(
         begin,
         end,
@@ -139,6 +143,10 @@ fn daily_work_hours_from_config() -> f64 {
         if let (Some(s), Some(e)) = (start, end) {
             if e > s {
                 minutes += e - s;
+            } else if e < s {
+                // 跨午夜班次（如 22:00→06:00，e<s）按 +24h 处理，
+                // 否则该时段被静默丢弃 → 每日阈值偏小 → 加班被高估。
+                minutes += e + 1440.0 - s;
             }
         }
     }
@@ -219,6 +227,15 @@ pub async fn project_cost_summary_inner(
         .map(|s| s.to_string())
         .unwrap_or_else(|| now.format("%Y-%m-%d").to_string());
 
+    // 自定义区间合法性校验：起 > 止 直接报错，避免把畸形区间发给帆软得空结果却无明确提示。
+    // begin/end 均为定长 "YYYY-MM-DD"，字符串字典序等价于日期序。
+    if begin > end {
+        return Err(format!(
+            "日期区间不合法：开始日期 {} 晚于结束日期 {}",
+            begin, end
+        ));
+    }
+
     // 员工状态：含离职 → 不筛（""）；否则仅在职（"0"）。
     let user_status = if include_resigned { "" } else { "0" };
 
@@ -277,10 +294,18 @@ pub async fn project_cost_summary_inner(
     let threshold = daily_work_hours_from_config();
     let mut split_map: HashMap<String, (f64, f64)> = HashMap::new(); // employee -> (normal, overtime)
     for ((employee, date), hours) in &daily_map {
-        let is_workday = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
-            .ok()
-            .map(|d| chinese_holiday::chinese_holiday(&d).is_workday())
-            .unwrap_or(true); // 解析失败默认当工作日
+        let is_workday = match chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d") {
+            Ok(d) => chinese_holiday::chinese_holiday(&d).is_workday(),
+            Err(_) => {
+                // 帆软日期格式异常时不静默：记录后按工作日处理
+                // （不变式 总工时==normal+overtime 仍成立，仅该日加班可能少算）。
+                eprintln!(
+                    "[cost] 日期 {:?} 无法解析为 YYYY-MM-DD，加班拆分按工作日处理",
+                    date
+                );
+                true
+            }
+        };
 
         let (normal, overtime) = if is_workday {
             (hours.min(threshold), (*hours - threshold).max(0.0))

@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端质量检查项"}
+{"file": ".trellis/spec/backend/cost-analysis.md", "reason": "核对成本契约不变式(总工时==normal+overtime、聚合key、渠道4处注册)未被破坏"}
+{"file": ".trellis/spec/backend/fine-report-integration.md", "reason": "核对帆软 60s 超时/REAL_NAME数组/时间边界/cid 契约未被破坏"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端质量检查入口"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端质量规范——CostApp 改动检查"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "类型安全检查——invoke 参数命名(C1)"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层数据流一致性检查"}

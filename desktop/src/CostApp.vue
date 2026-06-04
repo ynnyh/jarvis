@@ -72,9 +72,8 @@ const effectiveRange = computed<{ start: string; end: string }>(() => {
       return { start: ymd(new Date(y, qStart, 1)), end: ymd(new Date(y, qStart + 3, 0)) }
     }
     case 'halfYear': {
-      const start = new Date(now)
-      start.setMonth(start.getMonth() - 6)
-      return { start: ymd(start), end: ymd(now) }
+      // 对齐 spec §7 与后端 resolve_range：含当前月往前共 6 个月，起点 = (当前月-5) 月 1 号
+      return { start: ymd(new Date(y, m - 5, 1)), end: ymd(now) }
     }
     case 'thisYear':
       return { start: ymd(new Date(y, 0, 1)), end: ymd(new Date(y, 11, 31)) }
@@ -163,7 +162,7 @@ async function runQuery() {
     const { start, end } = effectiveRange.value
     result.value = await invoke<CostSummaryResult>('project_cost_summary', {
       projectName: projectSearch.value,
-      include_overtime: true,
+      includeOvertime: true,
       startDate: start || null,
       endDate: end || null,
       includeResigned: includeResigned.value,

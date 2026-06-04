@@ -15,12 +15,13 @@ pub mod extractor;
 
 use db::MemoryDb;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// 记忆系统全局状态，由 Tauri manage。
 /// db 为 None 表示记忆系统不可用（初始化失败），所有操作降级为空。
+/// 用 Arc 包裹以便记忆提取在 spawn 的后台任务中共享 db。
 pub struct MemoryState {
-    pub db: Option<Mutex<MemoryDb>>,
+    pub db: Option<Arc<Mutex<MemoryDb>>>,
 }
 
 impl MemoryState {
@@ -28,7 +29,7 @@ impl MemoryState {
         db::register_vec_extension();
         match MemoryDb::open(db_path) {
             Ok(db) => Self {
-                db: Some(Mutex::new(db)),
+                db: Some(Arc::new(Mutex::new(db))),
             },
             Err(e) => {
                 eprintln!("[memory] 记忆数据库打开失败，记忆系统不可用: {}", e);
@@ -46,9 +47,22 @@ pub fn default_db_path() -> PathBuf {
     PathBuf::from(home).join(".jarvis").join("memory.db")
 }
 
-/// 同步读取 Core Memory 区段（不涉及 await，可在持有 MutexGuard 时调用）。
+/// 构建常驻"核心画像"区段：取 importance 最高的几条活跃记忆（不涉及 await，可持锁调用）。
 pub fn build_core_prompt(db: &MemoryDb) -> String {
-    db.core_as_prompt_section()
+    let top: Vec<_> = db
+        .top_important(5)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|m| m.importance >= 0.8)
+        .collect();
+    if top.is_empty() {
+        return String::new();
+    }
+    let mut s = String::from("## 关于用户的已知信息\n\n");
+    for m in &top {
+        s.push_str(&format!("- {}\n", m.content));
+    }
+    s
 }
 
 /// 计算查询文本的嵌入向量（纯 async，不涉及 DB 锁）。
@@ -56,7 +70,13 @@ pub async fn compute_query_embedding(query: &str) -> Option<Vec<f32>> {
     if query.is_empty() {
         return None;
     }
-    embedding::embed(query).await.ok()
+    match embedding::embed(query).await {
+        Ok(v) => Some(v),
+        Err(e) => {
+            embedding::warn_unavailable_once(&e);
+            None
+        }
+    }
 }
 
 /// 用已计算好的嵌入向量检索 Long-term Memory（纯同步，短暂持锁）。
