@@ -103,6 +103,7 @@ const writing = ref(false)
 const writeProgress = ref(0)
 const writeTotal = ref(0)
 const writeErrors = ref<string[]>([])
+const shortContentWarning = ref('')  // 内容过短警告，再点一次写入则跳过
 
 // task search for orphan assignment
 const taskSearch = ref<Record<string, string>>({})
@@ -284,6 +285,18 @@ async function writeAll() {
     }
     return
   }
+
+  // 内容质量检测：首次发现过短内容时警告，再点一次则跳过
+  if (!shortContentWarning.value) {
+    const shortOnes = pending.filter(e => e.workContent.trim().length < 12)
+    if (shortOnes.length > 0) {
+      const names = shortOnes.map(e => e.taskName || `#${e.taskId}`).join('、')
+      shortContentWarning.value = `${shortOnes.length} 条工作内容不足 12 字（${names}），内容太简略可能被退回。建议补充具体做了什么，如"新增 XX 接口并完成联调测试"。再点一次写入将跳过此检查。`
+      return
+    }
+  }
+  shortContentWarning.value = ''
+
   writing.value = true
   writeErrors.value = []
   writeTotal.value = pending.length
@@ -475,6 +488,11 @@ onUnmounted(() => {
       </template>
     </main>
 
+    <div v-if="shortContentWarning" class="bw-quality-warn">
+      <span>{{ shortContentWarning }}</span>
+      <button class="bw-quality-dismiss" @click="shortContentWarning = ''">知道了</button>
+    </div>
+
     <footer class="bw-footer">
       <div class="bw-footer-left">
         <span v-if="hasTried">{{ writtenCount }}/{{ writeTotal }} 已完成</span>
@@ -564,4 +582,26 @@ onUnmounted(() => {
 .bw-btn { padding: 10px 24px; font-size: 13px; border-radius: 6px; border: 1px solid transparent; cursor: pointer; font-weight: 600; }
 .bw-btn.primary { background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 90%, transparent), color-mix(in srgb, var(--accent) 70%, transparent)); color: white; }
 .bw-btn:disabled { opacity: .4; cursor: not-allowed; }
+.bw-quality-warn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px;
+  font-size: 12px;
+  color: var(--yellow-text);
+  background: var(--yellow-bg);
+  border-top: 1px solid color-mix(in srgb, var(--yellow-text) 20%, transparent);
+}
+.bw-quality-warn span { flex: 1; line-height: 1.5; }
+.bw-quality-dismiss {
+  flex-shrink: 0;
+  padding: 4px 12px;
+  font-size: 11px;
+  color: var(--yellow-text);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--yellow-text) 30%, transparent);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.bw-quality-dismiss:hover { background: color-mix(in srgb, var(--yellow-text) 10%, transparent); }
 </style>
