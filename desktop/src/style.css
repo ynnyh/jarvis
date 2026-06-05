@@ -655,8 +655,8 @@ select option {
   --input-border: 1px solid rgba(255, 255, 255, 0.10);
   --input-focus-border: 1px solid rgba(255, 255, 255, 0.25);
   --input-text: rgba(255, 255, 255, 0.70);
-  --btn-primary-bg: rgba(255, 255, 255, 0.12);
-  --btn-primary-color: rgba(255, 255, 255, 0.90);
+  --btn-primary-bg: rgba(226, 232, 240, 0.28);
+  --btn-primary-color: rgba(255, 255, 255, 0.95);
   --btn-primary-shadow: none;
   --surface-item-hover: rgba(255, 255, 255, 0.06);
   --surface-item-active: rgba(255, 255, 255, 0.10);

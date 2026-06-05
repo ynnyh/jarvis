@@ -539,7 +539,7 @@ onUnmounted(() => {
 .bw-task-name { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bw-orphan-label { font-size: 11px; color: var(--yellow-text); white-space: nowrap; }
 .bw-task-input { flex: 1; padding: 3px 6px; font-size: 12px; color: var(--text); background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 4px; }
-.bw-hours { width: 48px; padding: 3px 6px; font-size: 12px; color: var(--text); background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 4px; text-align: center; }
+.bw-hours { width: 60px; padding: 3px 6px; font-size: 12px; color: var(--text); background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 4px; text-align: center; }
 .bw-content-row { display: flex; gap: 6px; align-items: flex-start; }
 .bw-content { flex: 1; min-width: 0; padding: 6px 8px; font-size: 12px; color: var(--text); background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 5px; resize: vertical; font-family: inherit; }
 .bw-content:disabled { opacity: .5; }
@@ -571,7 +571,7 @@ onUnmounted(() => {
 .bw-summarize-spinner { animation: bw-spin 0.8s linear infinite; }
 .bw-task-search { position: relative; flex: 1; min-width: 0; }
 .bw-search-input { width: 100%; padding: 3px 6px; font-size: 11px; color: var(--text); background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 4px; }
-.bw-dropdown { position: absolute; top: 100%; left: 0; right: 0; max-height: 180px; overflow-y: auto; background: var(--panel-bg); border: 1px solid var(--border); border-radius: 4px; z-index: 10; }
+.bw-dropdown { position: absolute; top: 100%; left: 0; right: 0; max-height: 180px; overflow-y: auto; background: var(--popup-bg); border: 1px solid var(--border); border-radius: 4px; z-index: 10; }
 .bw-dropdown-item { display: block; width: 100%; padding: 5px 8px; font-size: 11px; color: var(--text); background: transparent; border: none; text-align: left; cursor: pointer; }
 .bw-dropdown-item:hover { background: var(--blue-bg); }
 .bw-dropdown-empty { padding: 5px 8px; font-size: 11px; color: var(--text-muted); }
@@ -588,8 +588,9 @@ onUnmounted(() => {
 .bw-footer-left { flex: 1; font-size: 11px; color: var(--text-ghost); }
 .bw-error-count { color: var(--red-text); }
 .bw-total { font-size: 12px; color: var(--text-dim); }
-.bw-btn { padding: 10px 24px; font-size: 13px; border-radius: 6px; border: 1px solid transparent; cursor: pointer; font-weight: 600; }
-.bw-btn.primary { background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 90%, transparent), color-mix(in srgb, var(--accent) 70%, transparent)); color: white; }
+.bw-btn { padding: 10px 24px; font-size: 13px; border-radius: 6px; border: 1px solid transparent; cursor: pointer; font-weight: 600; transition: filter 0.15s; }
+.bw-btn.primary { background: var(--btn-primary-bg); color: var(--btn-primary-color); }
+.bw-btn.primary:hover:not(:disabled) { filter: brightness(1.2); }
 .bw-btn:disabled { opacity: .4; cursor: not-allowed; }
 .bw-quality-warn {
   display: flex;
