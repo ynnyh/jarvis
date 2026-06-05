@@ -407,11 +407,13 @@ onUnmounted(() => {
               <div class="bw-task-label">
                 <template v-if="entry.kind === 'orphan'">
                   <span class="bw-orphan-label">未关联 · {{ entry.commits.length }} commits</span>
+                </template>
+                <template v-if="entry.kind === 'orphan' || (entry.kind === 'plan-only' && !entry.taskId)">
                   <div class="bw-task-search">
                     <input
                       class="bw-search-input"
                       type="text"
-                      placeholder="搜索禅道任务..."
+                      :placeholder="entry.kind === 'orphan' ? '搜索禅道任务...' : '搜索选择任务...'"
                       :value="taskSearch[entry.key] || ''"
                       @input="taskSearch[entry.key] = ($event.target as HTMLInputElement).value"
                       :disabled="entry.written"
@@ -430,16 +432,6 @@ onUnmounted(() => {
                 <template v-else-if="entry.taskId">
                   <span class="bw-task-id">#{{ entry.taskId }}</span>
                   <span class="bw-task-name">{{ entry.taskName }}</span>
-                </template>
-                <template v-else>
-                  <input
-                    class="bw-task-input"
-                    type="text"
-                    placeholder="输入任务名..."
-                    :value="entry.taskName"
-                    @input="entry.taskName = ($event.target as HTMLInputElement).value"
-                    :disabled="entry.written"
-                  />
                 </template>
               </div>
 
