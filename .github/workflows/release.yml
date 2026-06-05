@@ -229,6 +229,8 @@ jobs:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
           GITEE_OWNER: ynnyh
           GITEE_REPO: jarvis
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
           RELEASE_NOTES: ${{ github.event.head_commit.message }}
           ARTIFACTS_DIR: artifacts
         run: node scripts/publish-to-gitee.mjs

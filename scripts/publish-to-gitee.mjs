@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 /**
- * 把 build matrix 各平台的产物推到 Gitee Releases，
+ * 把 build matrix 各平台的产物推到 Gitee Releases + GitHub Releases，
  * 同时把 latest.json 写到 Gitee 仓库 main 分支根目录（供 tauri-plugin-updater 拉取）。
+ *
+ * 发布策略（双保险）：
+ *   1. 先上传所有产物到 GitHub Release（同区域，快且稳）
+ *   2. 再上传到 Gitee Release（跨太平洋，可能超时）
+ *   3. latest.json 的下载 URL 优先用 Gitee；Gitee 失败时回退到 GitHub URL
  *
  * 输入：
  *   ARTIFACTS_DIR        必填，目录里每个子目录是一个 actions artifact（每个 artifact 来自一个 platform 的 build job）
@@ -9,12 +14,14 @@
  *   GITEE_TOKEN          必填，Gitee 私人访问令牌
  *   GITEE_OWNER          可选，默认 ynnyh
  *   GITEE_REPO           可选，默认 jarvis
+ *   GITHUB_TOKEN         可选，GitHub Token（用于 Release 备份）
+ *   GITHUB_REPO          可选，GitHub 仓库（owner/repo）
  *   RELEASE_NOTES        可选
  *
  * 行为：
  *   - 扫所有子目录，按 PLATFORM_ID 区分平台
  *   - 安装包文件 = 任意非 .sig 非 PLATFORM_ID 文件；签名 = 同名 .sig
- *   - 全部上传到 release，写一个含所有平台的 latest.json
+ *   - 全部上传到 GitHub Release + Gitee Release，写一个含所有平台的 latest.json
  *
  * 兼容旧调用：未给 ARTIFACTS_DIR 时回退到只扫 src-tauri/target/release/bundle/nsis（保留本机一键发布能力）。
  */
@@ -28,8 +35,8 @@ import { Agent, setGlobalDispatcher } from 'undici'
 // Gitee 上传大文件（macOS .app.tar.gz + .dmg 加起来 ~70MB）从 GH Actions
 // 上行 + 服务端处理可能超过 5 分钟，需把超时拉长
 setGlobalDispatcher(new Agent({
-  headersTimeout: 15 * 60 * 1000,
-  bodyTimeout: 15 * 60 * 1000,
+  headersTimeout: 30 * 60 * 1000,
+  bodyTimeout: 30 * 60 * 1000,
   connectTimeout: 30 * 1000,
 }))
 
@@ -46,6 +53,102 @@ const ARTIFACTS_DIR = process.env.ARTIFACTS_DIR
 if (!TOKEN) {
   console.error('❌ 缺少 GITEE_TOKEN 环境变量')
   process.exit(1)
+}
+
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN
+const GITHUB_REPO = process.env.GITHUB_REPO
+
+// --- 0. --sync-from-github 模式：从 GitHub Release 同步附件到 Gitee ---
+if (process.argv.includes('--sync-from-github')) {
+  if (!GITHUB_TOKEN || !GITHUB_REPO) {
+    console.error('❌ sync 模式需要 GITHUB_TOKEN + GITHUB_REPO 环境变量')
+    process.exit(1)
+  }
+
+  const tauriConfPath = path.join(repoRoot, 'src-tauri/tauri.conf.json')
+  const tauriConf = JSON.parse(readFileSync(tauriConfPath, 'utf8'))
+  const syncTag = `v${tauriConf.version}`
+  console.log(`🔄 从 GitHub Release 同步 ${syncTag} 到 Gitee...`)
+
+  // 1. 读 GitHub Release assets
+  const ghRes = await fetch(
+    `https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${syncTag}`,
+    { headers: { Authorization: `token ${GITHUB_TOKEN}`, 'User-Agent': 'jarvis-ci' } },
+  )
+  if (!ghRes.ok) {
+    console.error(`❌ GitHub Release ${syncTag} 不存在：${ghRes.status}`)
+    process.exit(1)
+  }
+  const ghRelease = await ghRes.json()
+  const assets = ghRelease.assets || []
+  console.log(`  找到 ${assets.length} 个 GitHub 附件`)
+
+  // 2. 创建/复用 Gitee Release
+  const giteeRes = await fetch(`${API}/repos/${GITEE_OWNER}/${GITEE_REPO}/releases`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      access_token: TOKEN,
+      tag_name: syncTag,
+      name: syncTag,
+      body: ghRelease.body || `Jarvis ${syncTag}`,
+      prerelease: false,
+      target_commitish: 'main',
+    }),
+  })
+  let giteeRelease
+  if (giteeRes.ok) {
+    giteeRelease = await giteeRes.json()
+    console.log(`✓ 创建 Gitee release ${syncTag} (id=${giteeRelease.id})`)
+  } else {
+    const t = await giteeRes.text()
+    if (t.includes('已存在') || t.includes('exist') || t.includes('标签已经存在') || t.includes('tag_name has already been taken')) {
+      const r2 = await fetch(`${API}/repos/${GITEE_OWNER}/${GITEE_REPO}/releases/tags/${syncTag}?access_token=${TOKEN}`)
+      if (!r2.ok) throw new Error(`查询 Gitee release 失败：${r2.status}`)
+      giteeRelease = await r2.json()
+      console.log(`✓ 复用已有 Gitee release ${syncTag} (id=${giteeRelease.id})`)
+    } else {
+      throw new Error(`创建 Gitee release 失败：${giteeRes.status} ${t}`)
+    }
+  }
+
+  // 3. 下载 GitHub 附件 → 上传到 Gitee
+  for (const asset of assets) {
+    console.log(`  ↓ 下载 ${asset.name} (${(asset.size / 1024 / 1024).toFixed(1)}MB)...`)
+    const dlRes = await fetch(asset.browser_download_url)
+    if (!dlRes.ok) {
+      console.warn(`  ⚠ 下载 ${asset.name} 失败：${dlRes.status}，跳过`)
+      continue
+    }
+    const data = Buffer.from(await dlRes.arrayBuffer())
+
+    // 删除 Gitee 上已有的同名附件
+    const listUrl = `${API}/repos/${GITEE_OWNER}/${GITEE_REPO}/releases/${giteeRelease.id}/attach_files?access_token=${TOKEN}`
+    const listRes = await fetch(listUrl)
+    if (listRes.ok) {
+      const existing = (await listRes.json()).find(a => a.name === asset.name)
+      if (existing) {
+        await fetch(`${API}/repos/${GITEE_OWNER}/${GITEE_REPO}/releases/${giteeRelease.id}/attach_files/${existing.id}?access_token=${TOKEN}`, { method: 'DELETE' })
+        console.log(`  🗑 删除旧 ${asset.name}`)
+      }
+    }
+
+    const form = new FormData()
+    form.append('access_token', TOKEN)
+    form.append('file', new Blob([data]), asset.name)
+    const upRes = await fetch(
+      `${API}/repos/${GITEE_OWNER}/${GITEE_REPO}/releases/${giteeRelease.id}/attach_files`,
+      { method: 'POST', body: form },
+    )
+    if (upRes.ok) {
+      console.log(`  ✓ 上传 ${asset.name} 到 Gitee`)
+    } else {
+      console.warn(`  ⚠ 上传 ${asset.name} 失败：${upRes.status} ${await upRes.text()}`)
+    }
+  }
+
+  console.log(`\n🎉 ${syncTag} 同步完成`)
+  process.exit(0)
 }
 
 // --- 1. 读 tauri.conf.json 拿版本号 ---
@@ -329,10 +432,95 @@ async function uploadAsset(filePath, name, { optional = false } = {}) {
   throw lastErr
 }
 
-// 顺序上传：按优先级排序，小文件先传、大文件后传
-// 1 = sig（<1KB，确认 API 通不通）
-// 2 = updater target（自动更新必需）+ install script
-// 3 = 额外发行物（.dmg 等，可选）
+// --- 4a. 先上传所有产物到 GitHub Release 保底 ---
+// GitHub Actions (US) → GitHub API (US) 同区域，速度快且稳定。
+// 先确保产物安全落盘，再尝试 Gitee（跨太平洋，可能超时）。
+const ghUrlByName = {} // filename → GitHub download URL，用于 Gitee 失败时回退
+
+async function createOrFindGitHubRelease() {
+  const ghCheckRes = await fetch(
+    `https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${tag}`,
+    { headers: { Authorization: `token ${GITHUB_TOKEN}`, 'User-Agent': 'jarvis-ci' } },
+  )
+  if (ghCheckRes.ok) {
+    const j = await ghCheckRes.json()
+    console.log(`✓ 复用已有 GitHub release ${tag} (id=${j.id})`)
+    return j
+  }
+  const ghCreateRes = await fetch(
+    `https://api.github.com/repos/${GITHUB_REPO}/releases`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `token ${GITHUB_TOKEN}`,
+        'User-Agent': 'jarvis-ci',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        tag_name: tag,
+        name: tag,
+        body: releaseNotes || process.env.RELEASE_NOTES || `Jarvis ${tag}`,
+        prerelease: false,
+        target_commitish: 'main',
+      }),
+    },
+  )
+  if (!ghCreateRes.ok) throw new Error(`创建 GitHub release 失败：${ghCreateRes.status} ${await ghCreateRes.text()}`)
+  const j = await ghCreateRes.json()
+  console.log(`✓ 创建 GitHub release ${tag} (id=${j.id})`)
+  return j
+}
+
+async function uploadToGitHub(filePath, name, ghRelease) {
+  const data = await fs.readFile(filePath)
+  const fileSizeMB = data.length / (1024 * 1024)
+  const uploadUrl = ghRelease.upload_url.replace(/\{.*\}/, '')
+  const r = await fetch(`${uploadUrl}?name=${name}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `token ${GITHUB_TOKEN}`,
+      'User-Agent': 'jarvis-ci',
+      'Content-Type': 'application/octet-stream',
+      'Content-Length': String(data.length),
+    },
+    body: data,
+  })
+  if (!r.ok) throw new Error(`GitHub 上传 ${name} 失败：${r.status} ${await r.text()}`)
+  const j = await r.json()
+  console.log(`  ✓ GitHub ${name} (${fileSizeMB.toFixed(1)}MB)`)
+  ghUrlByName[name] = j.browser_download_url
+  return j.browser_download_url
+}
+
+let githubSucceeded = false
+if (GITHUB_TOKEN && GITHUB_REPO) {
+  console.log(`\n--- Step 1/2: 上传所有产物到 GitHub Release ---`)
+  try {
+    const ghRelease = await createOrFindGitHubRelease()
+    const ghUploadStart = Date.now()
+    for (const p of platforms) {
+      await uploadToGitHub(p.sigPath, p.sigName, ghRelease)
+      await uploadToGitHub(p.updaterPath, p.updaterName, ghRelease)
+      for (const ex of p.extras) {
+        await uploadToGitHub(ex.path, ex.name, ghRelease)
+      }
+    }
+    const macDevInstaller = path.join(repoRoot, 'scripts/install-macos-dev.sh')
+    if (existsSync(macDevInstaller)) {
+      await uploadToGitHub(macDevInstaller, 'install-macos-dev.sh', ghRelease)
+    }
+    console.log(`✓ GitHub 全部上传完成（${((Date.now() - ghUploadStart) / 1000).toFixed(1)}s）`)
+    githubSucceeded = true
+  } catch (e) {
+    console.warn(`⚠ GitHub Release 上传失败：${e?.message || e}`)
+  }
+} else {
+  console.log(`\n⚠ 未配置 GITHUB_TOKEN / GITHUB_REPO，跳过 GitHub Release 备份`)
+}
+
+// --- 4b. 上传到 Gitee Release ---
+// latest.json 的下载 URL 优先指向 Gitee（国内用户可达）。
+// 如果 Gitee 上传失败但 GitHub 成功，用 GitHub URL 回退。
 const platformEntries = {}
 const uploadQueue = []
 
@@ -391,10 +579,10 @@ if (existsSync(macDevInstaller)) {
 
 uploadQueue.sort((a, b) => a.priority - b.priority)
 
-console.log(`\n上传 ${uploadQueue.length} 个文件（同优先级并发=2）...`)
+console.log(`\n--- Step 2/2: 上传到 Gitee Release ---`)
+console.log(`上传 ${uploadQueue.length} 个文件（同优先级并发=2）...`)
 const t0 = Date.now()
 
-// 按 priority 分组，组间串行、组内并发=2
 const groups = new Map()
 for (const job of uploadQueue) {
   if (!groups.has(job.priority)) groups.set(job.priority, [])
@@ -402,92 +590,42 @@ for (const job of uploadQueue) {
 }
 const sortedGroups = [...groups.entries()].sort((a, b) => a[0] - b[0])
 
-for (const [, jobs] of sortedGroups) {
-  let idx = 0
-  const CONCURRENCY = 2
-  await Promise.all(
-    Array.from({ length: Math.min(CONCURRENCY, jobs.length) }, async () => {
-      while (idx < jobs.length) {
-        const job = jobs[idx++]
-        const url = await uploadAsset(job.filePath, job.name, { optional: job.optional })
-        job.onComplete(url)
-      }
-    }),
-  )
-}
-console.log(`✓ 全部上传完成（${((Date.now() - t0) / 1000).toFixed(1)}s）`)
-
-// --- 4b. 备份上传 .dmg 到 GitHub Release ---
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN
-const GITHUB_REPO = process.env.GITHUB_REPO
-const dmgFiles = platforms.flatMap(p => p.extras)
-  .filter(ex => ex.name.endsWith('.dmg') && !ex.name.startsWith('.'))
-
-if (GITHUB_TOKEN && GITHUB_REPO && dmgFiles.length > 0) {
-  console.log(`\n--- 上传 .dmg 到 GitHub Release 备份 ---`)
-  try {
-    let ghRelease
-    const ghCheckRes = await fetch(
-      `https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${tag}`,
-      { headers: { Authorization: `token ${GITHUB_TOKEN}`, 'User-Agent': 'jarvis-ci' } },
+let giteeSucceeded = true
+try {
+  for (const [, jobs] of sortedGroups) {
+    let idx = 0
+    const CONCURRENCY = 2
+    await Promise.all(
+      Array.from({ length: Math.min(CONCURRENCY, jobs.length) }, async () => {
+        while (idx < jobs.length) {
+          const job = jobs[idx++]
+          const url = await uploadAsset(job.filePath, job.name, { optional: job.optional })
+          job.onComplete(url)
+        }
+      }),
     )
-    if (ghCheckRes.ok) {
-      ghRelease = await ghCheckRes.json()
-      console.log(`✓ 复用已有 GitHub release ${tag}`)
-    } else {
-      const ghCreateRes = await fetch(
-        `https://api.github.com/repos/${GITHUB_REPO}/releases`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `token ${GITHUB_TOKEN}`,
-            'User-Agent': 'jarvis-ci',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            tag_name: tag,
-            name: tag,
-            body: releaseNotes || process.env.RELEASE_NOTES || `Jarvis ${tag}`,
-            prerelease: false,
-            target_commitish: 'main',
-          }),
-        },
-      )
-      if (ghCreateRes.ok) {
-        ghRelease = await ghCreateRes.json()
-        console.log(`✓ 创建 GitHub release ${tag}`)
-      } else {
-        console.warn(`⚠ 创建 GitHub release 失败：${ghCreateRes.status} ${await ghCreateRes.text()}`)
-      }
-    }
-    if (ghRelease) {
-      for (const dmg of dmgFiles) {
-        try {
-          const dmgData = await fs.readFile(dmg.path)
-          const uploadUrl = ghRelease.upload_url.replace(/\{.*\}/, '')
-          const r = await fetch(`${uploadUrl}?name=${dmg.name}`, {
-            method: 'POST',
-            headers: {
-              Authorization: `token ${GITHUB_TOKEN}`,
-              'User-Agent': 'jarvis-ci',
-              'Content-Type': 'application/octet-stream',
-              'Content-Length': String(dmgData.length),
-            },
-            body: dmgData,
-          })
-          if (r.ok) {
-            const j = await r.json()
-            console.log(`  ✓ GitHub 备份 ${dmg.name}: ${j.browser_download_url}`)
-          } else {
-            console.warn(`  ⚠ GitHub 上传 ${dmg.name} 失败：${r.status} ${await r.text()}`)
+  }
+  console.log(`✓ Gitee 全部上传完成（${((Date.now() - t0) / 1000).toFixed(1)}s）`)
+} catch (e) {
+  giteeSucceeded = false
+  if (githubSucceeded) {
+    console.error(`\n⚠ Gitee 上传失败（产物已在 GitHub Release 备份，可手动补传）：${e?.message || e}`)
+    // 用 GitHub URL 回退 null 的 platformEntries
+    for (const p of platforms) {
+      const ghUrl = ghUrlByName[p.updaterName]
+      if (ghUrl) {
+        const platformIds = p.platformId.split(',').map(id => id.trim()).filter(Boolean)
+        for (const pid of platformIds) {
+          if (!platformEntries[pid].url) {
+            platformEntries[pid].url = ghUrl
+            console.log(`  ↪ ${pid} 回退到 GitHub URL`)
           }
-        } catch (e) {
-          console.warn(`  ⚠ GitHub 上传 ${dmg.name} 异常：${e?.message || e}`)
         }
       }
     }
-  } catch (e) {
-    console.warn(`⚠ GitHub Release 操作失败（不影响 Gitee 发布）：${e?.message || e}`)
+  } else {
+    console.error(`\n❌ Gitee 上传失败且 GitHub 也未成功：${e?.message || e}`)
+    process.exit(1)
   }
 }
 
@@ -557,3 +695,6 @@ console.log(`\n✓ latest.json 已发布（${platforms.length} 个平台）：`)
 console.log(`   https://gitee.com/${GITEE_OWNER}/${GITEE_REPO}/raw/main/latest.json`)
 
 console.log(`\n🎉 ${tag} 全部发布完成`)
+if (githubSucceeded) console.log(`   ✓ GitHub Release: https://github.com/${GITHUB_REPO}/releases/tag/${tag}`)
+if (giteeSucceeded) console.log(`   ✓ Gitee Release:  https://gitee.com/${GITEE_OWNER}/${GITEE_REPO}/releases/tag/${tag}`)
+else console.log(`   ⚠ Gitee Release 上传失败，可从 GitHub 手动下载后补传`)
