@@ -13,7 +13,9 @@ import { emit } from '@tauri-apps/api/event'
 import ErrorBoundary from './components/ErrorBoundary.vue'
 import MatrixRain from './components/MatrixRain.vue'
 import CyberParticles from './components/CyberParticles.vue'
+import { useConfigStore } from './stores/config'
 import { useTheme } from './composables/useTheme'
+const configStore = useConfigStore()
 useTheme()
 
 interface TaskInfo {
@@ -183,6 +185,7 @@ function onKeydown(ev: KeyboardEvent) {
 }
 
 onMounted(async () => {
+  await configStore.load()
   window.addEventListener('keydown', onKeydown)
   await loadPayload()
   await nextTick()

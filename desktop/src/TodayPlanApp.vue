@@ -2,9 +2,11 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { useConfigStore } from './stores/config'
 import { useTheme } from './composables/useTheme'
 import MatrixRain from './components/MatrixRain.vue'
 import CyberParticles from './components/CyberParticles.vue'
+const configStore = useConfigStore()
 useTheme()
 
 interface CandidateTask {
@@ -214,6 +216,7 @@ async function closeWindow() {
 }
 
 onMounted(async () => {
+  await configStore.load()
   await loadPlan()
   const win = getCurrentWindow()
   cleanupClose = await win.onCloseRequested(async event => {
