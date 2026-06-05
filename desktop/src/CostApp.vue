@@ -128,17 +128,20 @@ const avgCost = computed(() => {
   return (result.value?.totalCost ?? 0) / memberCount.value
 })
 
-// 成本占比颜色板
-const COST_COLORS = [
-  'rgba(0, 212, 255, 0.8)',
-  'rgba(245, 158, 11, 0.8)',
-  'rgba(16, 185, 129, 0.8)',
-  'rgba(236, 72, 153, 0.8)',
-  'rgba(139, 92, 246, 0.8)',
-  'rgba(34, 211, 238, 0.8)',
-  'rgba(251, 146, 60, 0.8)',
-  'rgba(163, 230, 53, 0.8)',
-]
+// 成本占比颜色板 — 从 CSS 变量读取，随主题切换
+function getCostColors(): string[] {
+  const s = getComputedStyle(document.documentElement)
+  return [
+    s.getPropertyValue('--chart-1').trim(),
+    s.getPropertyValue('--chart-2').trim(),
+    s.getPropertyValue('--chart-3').trim(),
+    s.getPropertyValue('--chart-4').trim(),
+    s.getPropertyValue('--chart-5').trim(),
+    s.getPropertyValue('--chart-6').trim(),
+    s.getPropertyValue('--chart-7').trim(),
+    s.getPropertyValue('--chart-8').trim(),
+  ]
+}
 
 // ===== 数据加载 =====
 async function loadProjects() {
@@ -195,6 +198,9 @@ async function runQuery() {
 
 /** 饼图用：conic-gradient 数据。有成本按成本占比，没配时薪（totalCost=0）回退按工时占比。 */
 const pieSegments = computed(() => {
+  // 读一次 styleTheme 使其成为 computed 的响应依赖，主题切换时自动重算
+  void configStore.config.styleTheme
+  const chartColors = getCostColors()
   if (!result.value) return { gradient: '', items: [] as Array<{ account: string; value: number; pct: number; color: string }>, metric: 'cost' as 'cost' | 'hours' }
   const useCost = result.value.totalCost > 0
   const total = useCost ? result.value.totalCost : result.value.totalHours
@@ -206,7 +212,7 @@ const pieSegments = computed(() => {
         account: m.account,
         value,
         pct: (value / total) * 100,
-        color: COST_COLORS[i % COST_COLORS.length],
+        color: chartColors[i % chartColors.length],
       }
     })
     .filter(s => s.value > 0)

@@ -250,9 +250,9 @@ async function openTask(id: string) {
   overflow: hidden;
 }
 .budget-fill { height: 100%; border-radius: var(--radius-sm); transition: width 0.4s; }
-.fill-low { background: linear-gradient(90deg, rgba(16, 185, 129, 0.8), rgba(16, 185, 129, 0.5)); }
-.fill-mid { background: linear-gradient(90deg, rgba(250, 204, 21, 0.8), rgba(245, 158, 11, 0.6)); }
-.fill-high { background: linear-gradient(90deg, rgba(248, 113, 113, 0.85), rgba(239, 68, 68, 0.7)); }
+.fill-low { background: linear-gradient(90deg, color-mix(in srgb, var(--green) 80%, transparent), color-mix(in srgb, var(--green) 50%, transparent)); }
+.fill-mid { background: linear-gradient(90deg, color-mix(in srgb, var(--yellow) 80%, transparent), color-mix(in srgb, var(--warning) 60%, transparent)); }
+.fill-high { background: linear-gradient(90deg, color-mix(in srgb, var(--danger) 85%, transparent), color-mix(in srgb, var(--red) 70%, transparent)); }
 .budget-line {
   position: absolute; left: 50%; top: 0; bottom: 0;
   width: 1px; background: var(--text-faint);
@@ -350,11 +350,11 @@ async function openTask(id: string) {
 }
 .day-bar {
   height: 100%;
-  background: linear-gradient(90deg, rgba(0, 212, 255, 0.7), rgba(0, 212, 255, 0.4));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 70%, transparent), color-mix(in srgb, var(--accent) 40%, transparent));
   border-radius: var(--radius-sm);
 }
 .day-row.stacked .day-bar {
-  background: linear-gradient(90deg, rgba(245, 158, 11, 0.85), rgba(239, 68, 68, 0.7));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--yellow) 85%, transparent), color-mix(in srgb, var(--red) 70%, transparent));
 }
 .day-meta {
   display: flex; gap: 6px;

@@ -947,7 +947,7 @@ onUnmounted(() => {
   font-family: var(--font-display);
   font-variant-numeric: var(--num-font-variant);
 }
-.badge-danger { background: rgba(239, 68, 68, 0.8); color: white; }
-.badge-warn { background: rgba(245, 158, 11, 0.8); color: white; }
-.badge-soon { background: rgba(59, 130, 246, 0.8); color: white; }
+.badge-danger { background: color-mix(in srgb, var(--red) 80%, transparent); color: var(--badge-text); }
+.badge-warn { background: color-mix(in srgb, var(--yellow) 80%, transparent); color: var(--badge-text); }
+.badge-soon { background: color-mix(in srgb, var(--blue) 80%, transparent); color: var(--badge-text); }
 </style>
