@@ -104,6 +104,7 @@ const writeProgress = ref(0)
 const writeTotal = ref(0)
 const writeErrors = ref<string[]>([])
 const shortContentWarning = ref('')  // 内容过短警告，再点一次写入则跳过
+const dirtyRepos = ref<string[]>([])
 
 // task search for orphan assignment
 const taskSearch = ref<Record<string, string>>({})
@@ -355,6 +356,10 @@ async function closeWindow() {
 onMounted(async () => {
   await configStore.load()
   await loadData()
+  // 检测未提交改动（不阻塞页面加载）
+  invoke<string[]>('check_dirty_repos').then(repos => {
+    dirtyRepos.value = repos
+  }).catch(() => {})
   const win = getCurrentWindow()
   cleanupClose = await win.onCloseRequested(async event => {
     event.preventDefault()
@@ -381,6 +386,10 @@ onUnmounted(() => {
     </header>
 
     <main class="bw-body">
+      <div v-if="dirtyRepos.length > 0 && !loading" class="bw-dirty-warn">
+        <span>检测到 {{ dirtyRepos.length }} 个仓库有未提交的改动（{{ dirtyRepos.join('、') }}），写工时前记得先提交</span>
+        <button class="bw-dirty-dismiss" @click="dirtyRepos = []">知道了</button>
+      </div>
       <div v-if="loading" class="bw-empty">加载今日数据中...</div>
       <div v-else-if="loadError" class="bw-empty error">{{ loadError }}</div>
       <template v-else>
@@ -604,4 +613,26 @@ onUnmounted(() => {
   cursor: pointer;
 }
 .bw-quality-dismiss:hover { background: color-mix(in srgb, var(--yellow-text) 10%, transparent); }
+.bw-dirty-warn {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px;
+  font-size: 12px;
+  color: var(--yellow-text);
+  background: var(--yellow-bg);
+  border-bottom: 1px solid color-mix(in srgb, var(--yellow-text) 20%, transparent);
+}
+.bw-dirty-warn span { flex: 1; line-height: 1.5; }
+.bw-dirty-dismiss {
+  flex-shrink: 0;
+  padding: 4px 12px;
+  font-size: 11px;
+  color: var(--yellow-text);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--yellow-text) 30%, transparent);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.bw-dirty-dismiss:hover { background: color-mix(in srgb, var(--yellow-text) 10%, transparent); }
 </style>

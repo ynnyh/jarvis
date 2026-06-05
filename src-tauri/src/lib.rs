@@ -264,6 +264,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             commands::manual_hours_close,
             commands::batch_write_open,
             commands::batch_write_close,
+            commands::check_dirty_repos,
             commands::cost_open,
             commands::cost_close,
             channels::channels_start,

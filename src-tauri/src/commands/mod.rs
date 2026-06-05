@@ -296,6 +296,35 @@ pub(crate) fn strip_secrets_for_save(value: &mut serde_json::Value) -> Result<()
 }
 
 /// 递归把缺失的字段从默认值补齐
+/// 检查所有 repoRoots 中有未提交改动的仓库
+#[tauri::command]
+pub async fn check_dirty_repos() -> Result<Vec<String>, String> {
+    let roots = crate::git_scan::get_repo_roots();
+    let mut dirty = Vec::new();
+    for root in &roots {
+        let path = std::path::Path::new(root);
+        if !path.join(".git").exists() && !path.exists() {
+            continue;
+        }
+        let output = silent_command("git")
+            .arg("-C")
+            .arg(root)
+            .args(["status", "--porcelain"])
+            .output();
+        match output {
+            Ok(o) if !o.stdout.is_empty() => {
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| root.clone());
+                dirty.push(name);
+            }
+            _ => {}
+        }
+    }
+    Ok(dirty)
+}
+
 pub(crate) fn merge_defaults(user: &mut serde_json::Value, defaults: &serde_json::Value) {
     if let (Some(u), Some(d)) = (user.as_object_mut(), defaults.as_object()) {
         for (k, v) in d {
