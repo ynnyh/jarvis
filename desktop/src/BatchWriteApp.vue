@@ -170,7 +170,9 @@ function buildEntries(review: DailyReviewData, plan: TodayPlanData | null) {
   for (const t of review.advancedTasks) {
     const planHours = plan?.estimatedHours?.[t.taskId]
     const hours = planHours ?? t.suggestedHours ?? Math.round(t.effort * 100) / 100
-    const content = t.defaultWorkContent || t.commits.map((c, i) => `${i + 1}、${cleanCommitTitle(c.title, 200)}`).join('；')
+    const content = t.defaultWorkContent || (t.commits.length === 1
+      ? cleanCommitTitle(t.commits[0].title, 200)
+      : t.commits.map((c, i) => `${i + 1}、${cleanCommitTitle(c.title, 200)}`).join('；'))
     result.push({
       key: `task-${t.taskId}`,
       taskId: t.taskId,
@@ -192,7 +194,9 @@ function buildEntries(review: DailyReviewData, plan: TodayPlanData | null) {
       taskId: '',
       taskName: `[未关联] ${o.businessLine}`,
       hours: o.suggestedHours || 0,
-      workContent: o.commits.map((c, i) => `${i + 1}、${cleanCommitTitle(c.title, 200)}`).join('；'),
+      workContent: o.commits.length === 1
+        ? cleanCommitTitle(o.commits[0].title, 200)
+        : o.commits.map((c, i) => `${i + 1}、${cleanCommitTitle(c.title, 200)}`).join('；'),
       commits: o.commits,
       kind: 'orphan',
       written: false,
