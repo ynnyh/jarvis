@@ -46,8 +46,7 @@ pub(super) fn save_cached_auth(auth: &CachedAuth) -> Result<(), String> {
         .map_err(|e| format!("写入帆软认证缓存失败: {}", e))
 }
 
-#[allow(dead_code)]
-fn delete_cached_auth() {
+pub(super) fn delete_cached_auth() {
     let _ = std::fs::remove_file(cache_path());
 }
 
@@ -271,6 +270,10 @@ impl FineReportClient {
                 status,
                 html.chars().take(200).collect::<String>()
             ));
+        }
+        // HTML 为空说明 JWT 已过期（服务器返回空响应而非 401），调用方应清缓存重试
+        if html.is_empty() {
+            return Err("AUTH_EXPIRED: 打开报表返回空内容，JWT 可能已过期".into());
         }
 
         // dump HTML 备查（仅 debug 构建；release 不落盘，避免工时 PII 残留磁盘）

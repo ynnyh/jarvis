@@ -66,29 +66,55 @@ pub async fn finereport_get_efforts(
     let client = FineReportClient::new(cred.base_url, cred.account, cred.password)?;
 
     let t = Instant::now();
-    let auth = client.ensure_valid_auth().await?;
+    let mut auth = client.ensure_valid_auth().await?;
     eprintln!(
         "[FineReport] step1 ensure_valid_auth ok ({}ms) exp={}",
         t.elapsed().as_millis(),
         auth.expires_at
     );
 
+    // 打开报表 + 抠 sessionID，JWT 过期时自动清缓存重试一次
     let t = Instant::now();
-    let session_id = client
+    let session_id = match client
         .open_report_and_get_session(&auth.jwt, DEFAULT_VIEWLET)
         .await
-        .map_err(|e| {
+    {
+        Ok(sid) => {
+            eprintln!("[FineReport] step2 sessionID ok ({}ms)", t.elapsed().as_millis());
+            sid
+        }
+        Err(e) if e.starts_with("AUTH_EXPIRED:") => {
+            eprintln!("[FineReport] step2 JWT 过期，清缓存重新登录...");
+            crate::fine_report::client::delete_cached_auth();
+            auth = client.ensure_valid_auth().await?;
+            eprintln!("[FineReport] step1 re-login ok, exp={}", auth.expires_at);
+            let t2 = Instant::now();
+            let sid = client
+                .open_report_and_get_session(&auth.jwt, DEFAULT_VIEWLET)
+                .await
+                .map_err(|e| {
+                    eprintln!(
+                        "[FineReport] step2 retry FAILED ({}ms): {}",
+                        t2.elapsed().as_millis(),
+                        e
+                    );
+                    e
+                })?;
+            eprintln!(
+                "[FineReport] step2 retry sessionID ok ({}ms)",
+                t2.elapsed().as_millis()
+            );
+            sid
+        }
+        Err(e) => {
             eprintln!(
                 "[FineReport] step2 open_report_and_get_session FAILED ({}ms): {}",
                 t.elapsed().as_millis(),
                 e
             );
-            e
-        })?;
-    eprintln!(
-        "[FineReport] step2 sessionID ok ({}ms)",
-        t.elapsed().as_millis()
-    );
+            return Err(e);
+        }
+    };
 
     let cid = FineReportClient::generate_cid(&session_id);
     eprintln!("[FineReport] step2.5 cid generated: {}", cid);
@@ -197,10 +223,19 @@ pub async fn finereport_get_efforts_raw(
     };
     let effective_project = project_name.unwrap_or_default();
     let client = FineReportClient::new_with_timeout(cred.base_url, cred.account, cred.password, 60)?;
-    let auth = client.ensure_valid_auth().await?;
-    let session_id = client
+    let mut auth = client.ensure_valid_auth().await?;
+    let session_id = match client
         .open_report_and_get_session(&auth.jwt, DEFAULT_VIEWLET)
-        .await?;
+        .await
+    {
+        Ok(sid) => sid,
+        Err(e) if e.starts_with("AUTH_EXPIRED:") => {
+            crate::fine_report::client::delete_cached_auth();
+            auth = client.ensure_valid_auth().await?;
+            client.open_report_and_get_session(&auth.jwt, DEFAULT_VIEWLET).await?
+        }
+        Err(e) => return Err(e),
+    };
     let cid = FineReportClient::generate_cid(&session_id);
     client
         .submit_filter(
