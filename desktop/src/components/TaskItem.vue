@@ -161,20 +161,24 @@ function feedbackOf(sha: string): 'accepted' | 'rejected' | undefined {
 .task-item {
   padding: 8px 10px;
   margin-bottom: 6px;
-  background: rgba(255, 255, 255, 0.04);
-  border-left: 3px solid;
-  border-radius: 6px;
+  background: var(--surface);
+  border: 1px solid var(--accent-border);
+  border-left-width: 3px;
+  border-radius: var(--radius-md);
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.15s, box-shadow 0.15s, border-color 0.15s;
 }
-.task-item:hover { background: rgba(255, 255, 255, 0.08); }
-.task-item.danger { border-left-color: #ef4444; }
-.task-item.warn   { border-left-color: #f59e0b; }
-.task-item.soon   { border-left-color: #3b82f6; }
-.task-item.upcoming { border-left-color: #6b7280; }
+.task-item:hover {
+  background: var(--surface-item-hover);
+  box-shadow: var(--shadow-1);
+}
+.task-item.danger { border-left-color: var(--red); }
+.task-item.warn   { border-left-color: var(--yellow); }
+.task-item.soon   { border-left-color: var(--blue); }
+.task-item.upcoming { border-left-color: var(--purple); }
 
 .task-row1 { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
-.task-title { font-size: 13px; color: #e5e7eb; line-height: 1.4; }
+.task-title { font-size: 13px; color: var(--text); line-height: 1.4; }
 .task-badge {
   font-size: 10px;
   padding: 2px 6px;
@@ -182,20 +186,20 @@ function feedbackOf(sha: string): 'accepted' | 'rejected' | undefined {
   white-space: nowrap;
   flex-shrink: 0;
 }
-.badge-danger { background: rgba(239, 68, 68, 0.2); color: #fca5a5; }
-.badge-warn   { background: rgba(245, 158, 11, 0.2); color: #fcd34d; }
-.badge-soon   { background: rgba(59, 130, 246, 0.2); color: #93c5fd; }
-.badge-upcoming { background: rgba(107, 114, 128, 0.2); color: #9ca3af; }
+.badge-danger { background: var(--red-bg-strong); color: var(--red-text); }
+.badge-warn   { background: var(--yellow-bg-strong); color: var(--yellow-text); }
+.badge-soon   { background: var(--blue-bg-strong); color: var(--blue-text); }
+.badge-upcoming { background: var(--purple-bg-strong); color: var(--purple-text); }
 
 .task-row2 {
   font-size: 11px;
-  color: #9ca3af;
+  color: var(--text-dim);
   margin-top: 4px;
   display: flex;
   gap: 4px;
   align-items: center;
 }
-.muted { color: #6b7280; }
+.muted { color: var(--text-muted); }
 .team-tag { font-size: 10px; }
 
 /* ===== 绑定状态角标 ===== */
@@ -213,23 +217,23 @@ function feedbackOf(sha: string): 'accepted' | 'rejected' | undefined {
   font-family: inherit;
 }
 .bind-chip.unbound {
-  background: rgba(148, 163, 184, 0.08);
-  border-color: rgba(148, 163, 184, 0.25);
-  color: rgba(148, 163, 184, 0.85);
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text-dim);
 }
 .bind-chip.unbound:hover {
-  background: rgba(167, 139, 250, 0.12);
-  border-color: rgba(167, 139, 250, 0.45);
-  color: rgba(167, 139, 250, 0.95);
+  background: var(--purple-bg);
+  border-color: var(--purple-border);
+  color: var(--purple-text);
 }
 .bind-chip.bound {
-  background: rgba(34, 197, 94, 0.1);
-  border-color: rgba(34, 197, 94, 0.3);
-  color: rgba(134, 239, 172, 0.95);
+  background: var(--green-bg);
+  border-color: var(--green-border);
+  color: var(--green-text);
 }
 .bind-chip.bound:hover {
-  background: rgba(34, 197, 94, 0.18);
-  border-color: rgba(34, 197, 94, 0.55);
+  background: var(--green-bg-strong);
+  border-color: var(--green-border);
 }
 .bind-chip-icon { font-size: 9.5px; line-height: 1; }
 .bind-chip-text {
@@ -242,7 +246,8 @@ function feedbackOf(sha: string): 'accepted' | 'rejected' | undefined {
 /* ----- 相关提交折叠区 ----- */
 .commits-section {
   margin-top: 6px;
-  border-top: 1px dashed rgba(255, 255, 255, 0.08);
+  border-top: 1px dashed;
+  border-top-color: var(--border);
   padding-top: 6px;
 }
 .commits-toggle {
@@ -252,13 +257,13 @@ function feedbackOf(sha: string): 'accepted' | 'rejected' | undefined {
   width: 100%;
   background: transparent;
   border: none;
-  color: #93c5fd;
+  color: var(--accent-text);
   font-size: 11px;
   padding: 2px 0;
   cursor: pointer;
   text-align: left;
 }
-.commits-toggle:hover { color: #bfdbfe; }
+.commits-toggle:hover { color: var(--accent); }
 .commits-icon { font-size: 12px; }
 .commits-arrow { margin-left: auto; font-size: 10px; opacity: 0.6; }
 
@@ -267,8 +272,8 @@ function feedbackOf(sha: string): 'accepted' | 'rejected' | undefined {
   padding: 1px 4px;
   border-radius: 3px;
 }
-.tag-exact { background: rgba(34, 197, 94, 0.2); color: #86efac; }
-.tag-soft  { background: rgba(234, 179, 8, 0.18); color: #fde68a; }
+.tag-exact { background: var(--green-bg-strong); color: var(--green-text); }
+.tag-soft  { background: var(--yellow-bg-strong); color: var(--yellow-text); }
 
 .commit-list {
   list-style: none;
@@ -280,10 +285,10 @@ function feedbackOf(sha: string): 'accepted' | 'rejected' | undefined {
   margin: 4px 0;
   border-radius: 4px;
   border-left: 2px solid;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface);
 }
-.commit-exact { border-left-color: #22c55e; }
-.commit-soft  { border-left-color: #eab308; }
+.commit-exact { border-left-color: var(--green); }
+.commit-soft  { border-left-color: var(--yellow); }
 .commit-item.fb-rejected { opacity: 0.4; }
 
 .commit-row1 {
@@ -293,12 +298,12 @@ function feedbackOf(sha: string): 'accepted' | 'rejected' | undefined {
   font-size: 11px;
 }
 .commit-repo {
-  color: #94a3b8;
+  color: var(--text-dim);
   font-family: ui-monospace, monospace;
   font-size: 10px;
   flex-shrink: 0;
 }
-.commit-title { color: #e5e7eb; line-height: 1.4; word-break: break-all; }
+.commit-title { color: var(--text); line-height: 1.4; word-break: break-all; }
 
 .commit-row2 {
   display: flex;
@@ -306,17 +311,17 @@ function feedbackOf(sha: string): 'accepted' | 'rejected' | undefined {
   align-items: center;
   margin-top: 3px;
   font-size: 10px;
-  color: #94a3b8;
+  color: var(--text-dim);
 }
-.commit-sha { font-family: ui-monospace, monospace; color: #64748b; }
-.commit-date { color: #6b7280; }
+.commit-sha { font-family: ui-monospace, monospace; color: var(--text-muted); }
+.commit-date { color: var(--text-muted); }
 
 .commit-actions { display: inline-flex; gap: 4px; margin-left: auto; }
 .fb-btn {
   width: 18px; height: 18px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: rgba(255, 255, 255, 0.04);
-  color: #cbd5e1;
+  border: 1px solid var(--border-soft);
+  background: var(--surface);
+  color: var(--text-dim);
   border-radius: 3px;
   cursor: pointer;
   font-size: 11px;
@@ -325,9 +330,9 @@ function feedbackOf(sha: string): 'accepted' | 'rejected' | undefined {
   align-items: center;
   justify-content: center;
 }
-.fb-yes:hover { background: rgba(34, 197, 94, 0.25); color: #86efac; border-color: #22c55e; }
-.fb-no:hover  { background: rgba(239, 68, 68, 0.25); color: #fca5a5; border-color: #ef4444; }
+.fb-yes:hover { background: var(--green-bg-strong); color: var(--green-text); border-color: var(--green); }
+.fb-no:hover  { background: var(--red-bg-strong); color: var(--red-text); border-color: var(--red); }
 
 .fb-mark { margin-left: auto; font-size: 9px; padding: 1px 5px; border-radius: 3px; }
-.fb-mark-yes { background: rgba(34, 197, 94, 0.2); color: #86efac; }
+.fb-mark-yes { background: var(--green-bg-strong); color: var(--green-text); }
 </style>

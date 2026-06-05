@@ -17,6 +17,7 @@ import { useTimeGreetings } from './composables/useTimeGreetings'
 import { useCursorPassthrough } from './composables/useCursorPassthrough'
 import { useUpdater } from './composables/useUpdater'
 import { useScheduledReminders } from './composables/useScheduledReminders'
+import { useTheme } from './composables/useTheme'
 import { useAvatarDock, type AvatarAnchor } from './composables/useAvatarDock'
 import { useAvatarDrag } from './composables/useAvatarDrag'
 import TaskWindow from './components/TaskWindow.vue'
@@ -32,6 +33,7 @@ import { MENU_KEYS, getMenuTheme } from './menu-themes'
 
 const store = useAppStore()
 const configStore = useConfigStore()
+useTheme()
 const { refresh: refreshAlerts } = useTaskAlerts()
 const { fetchCommits } = useTaskCommits({ autoLoad: true })
 const { openReview } = useDailyReview()
@@ -759,16 +761,16 @@ onUnmounted(() => {
   max-width: 180px;
   padding: 3px 10px;
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.78);
+  color: var(--text-ghost);
   background: rgba(0, 0, 0, 0.45);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .status-label.active {
-  color: rgba(16, 185, 129, 0.95);
-  background: rgba(16, 185, 129, 0.15);
+  color: var(--green-text);
+  background: var(--green-bg);
 }
 .status-label__emoji { font-size: 12px; flex-shrink: 0; }
 .status-label__text { overflow: hidden; text-overflow: ellipsis; }
@@ -782,11 +784,13 @@ onUnmounted(() => {
   min-width: 160px;
   max-width: 320px;
   padding: 8px 28px 8px 12px;     /* 右侧留出关闭按钮空间 */
-  background: linear-gradient(135deg, rgba(20, 30, 56, 0.96), rgba(15, 23, 42, 0.96));
-  border: 1px solid rgba(100, 200, 255, 0.18);
-  border-radius: 12px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-  color: rgba(255, 255, 255, 0.92);
+  background: var(--popup-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: var(--panel-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--panel-shadow);
+  color: var(--text);
   font-size: 12px;
   line-height: 1.55;
   /* 关键：换行策略 */
@@ -820,18 +824,18 @@ onUnmounted(() => {
 .alert-bubble__action {
   height: 24px;
   padding: 0 9px;
-  color: rgba(255, 255, 255, 0.9);
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 7px;
+  color: var(--text-ghost);
+  background: var(--surface-item-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
   font: inherit;
   font-size: 11px;
   cursor: pointer;
 }
 .alert-bubble__action:hover {
-  color: #fff;
-  background: rgba(0, 212, 255, 0.16);
-  border-color: rgba(0, 212, 255, 0.32);
+  color: var(--text);
+  background: var(--accent-glow);
+  border-color: var(--accent-border);
 }
 .alert-bubble__close {
   position: absolute;
@@ -844,15 +848,15 @@ onUnmounted(() => {
   justify-content: center;
   font-size: 14px;
   line-height: 1;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-muted);
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   cursor: pointer;
 }
 .alert-bubble__close:hover {
-  color: rgba(255, 255, 255, 0.85);
-  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-ghost);
+  background: var(--surface-item-hover);
 }
 
 /* 气泡下方小尾巴，指向 avatar */
@@ -863,9 +867,9 @@ onUnmounted(() => {
   bottom: -5px;
   width: 10px;
   height: 10px;
-  background: rgba(15, 23, 42, 0.96);
-  border-right: 1px solid rgba(100, 200, 255, 0.18);
-  border-bottom: 1px solid rgba(100, 200, 255, 0.18);
+  background: var(--popup-bg);
+  border-right: var(--panel-border);
+  border-bottom: var(--panel-border);
   transform: rotate(45deg);
 }
 
@@ -893,11 +897,11 @@ onUnmounted(() => {
   position: fixed; bottom: 86px; right: 16px;
   width: 22px; height: 22px;
   display: flex; align-items: center; justify-content: center;
-  font-size: 14px; color: rgba(255, 255, 255, 0.3);
-  background: rgba(255, 255, 255, 0.05); border-radius: 6px;
+  font-size: 14px; color: var(--text-faint);
+  background: var(--surface); border-radius: var(--radius-control);
   cursor: pointer; line-height: 1;
 }
-.menu-btn:hover { color: rgba(255, 255, 255, 0.7); background: rgba(255, 255, 255, 0.1); }
+.menu-btn:hover { color: var(--text-ghost); background: var(--surface-item-active); }
 /* menu-btn 跟随 anchor 翻转：用 CSS 变量跟 avatar-group 同步 */
 .jarvis-container[data-anchor="rt"] .menu-btn { top: 86px; bottom: auto; }
 .jarvis-container[data-anchor="lb"] .menu-btn { left: 16px; right: auto; }
@@ -910,9 +914,9 @@ onUnmounted(() => {
 }
 .menu {
   position: fixed; bottom: 16px; right: 90px;
-  background: rgba(15, 23, 42, 0.97); backdrop-filter: blur(16px);
-  border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.06);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  background: var(--popup-bg); backdrop-filter: none;
+  border-radius: var(--radius-md); border: var(--menu-border);
+  box-shadow: var(--menu-shadow);
   padding: 4px 0; z-index: 100; min-width: 130px;
   overflow: hidden;
 }
@@ -923,23 +927,25 @@ onUnmounted(() => {
 .menu-item {
   width: 100%; padding: 8px 14px;
   display: flex; align-items: center; gap: 8px;
-  font-size: 12px; color: rgba(255, 255, 255, 0.85);
+  font-size: 12px; color: var(--text);
   background: transparent; border: none; cursor: pointer;
   text-align: left;
 }
-.menu-item:hover { background: rgba(255, 255, 255, 0.08); }
-.menu-item-danger { color: rgba(248, 113, 113, 0.95); }
-.menu-item-danger:hover { background: rgba(239, 68, 68, 0.15); color: rgba(254, 202, 202, 1); }
+.menu-item:hover { background: var(--surface-item-hover); }
+.menu-item-danger { color: var(--red-text); }
+.menu-item-danger:hover { background: var(--red-bg); color: var(--red-text-light); }
 .menu-divider {
   height: 1px;
   margin: 4px 8px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--border-soft);
 }
 .menu-badge {
   margin-left: auto;
   font-size: 10px;
   padding: 1px 6px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-display);
+  font-variant-numeric: var(--num-font-variant);
 }
 .badge-danger { background: rgba(239, 68, 68, 0.8); color: white; }
 .badge-warn { background: rgba(245, 158, 11, 0.8); color: white; }

@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { STYLE_THEMES, DEFAULT_STYLE_THEME } from '../style-themes'
 
 export interface WorkPeriod {
   start: string   // HH:MM
@@ -116,6 +117,8 @@ export interface JarvisConfig {
   todayPlan: TodayPlan
   /** 右键菜单主题 id，对应 menu-themes.ts 中的 id */
   menuTheme: string
+  /** 视觉风格主题 id，对应 style-themes.ts / style.css 的 [data-theme]；默认 'sci-fi' */
+  styleTheme: string
   /** 项目成本分析功能开关，默认关闭 */
   costFeatureEnabled: boolean
 }
@@ -199,6 +202,7 @@ const defaultConfig = (): JarvisConfig => ({
   workStyle: 'balanced',
   todayPlan: { date: '', taskIds: [] },
   menuTheme: 'default',
+  styleTheme: DEFAULT_STYLE_THEME,
   costFeatureEnabled: false,
 })
 
@@ -279,6 +283,9 @@ export const useConfigStore = defineStore('config', () => {
           ? remote.workStyle
           : defaults.workStyle,
         menuTheme: remote.menuTheme ?? defaults.menuTheme,
+        styleTheme: STYLE_THEMES.some(t => t.id === remote.styleTheme)
+          ? remote.styleTheme
+          : defaults.styleTheme,
         costFeatureEnabled: remote.costFeatureEnabled ?? defaults.costFeatureEnabled,
         todayPlan: {
           date: remote.todayPlan?.date ?? defaults.todayPlan.date,

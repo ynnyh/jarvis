@@ -37,16 +37,16 @@ const store = useConfigStore()
   flex: 1;
   padding: 6px 4px;
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.65);
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-ghost);
+  background: var(--surface);
+  border: var(--divider);
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.15s;
 }
 .mode-btn.active {
-  color: rgba(245, 158, 11, 0.98);
-  background: rgba(245, 158, 11, 0.15);
-  border-color: rgba(245, 158, 11, 0.4);
+  color: var(--yellow-text);
+  background: var(--yellow-bg);
+  border-color: var(--yellow-border);
 }
 </style>

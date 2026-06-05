@@ -373,20 +373,22 @@ function priorityLabel(p: string): string {
   inset: var(--panel-top, 8px) var(--panel-right, 8px) var(--panel-bottom, 90px) var(--panel-left, 8px);
   display: flex;
   flex-direction: column;
-  background: linear-gradient(135deg, rgba(20, 30, 56, 0.97), rgba(15, 23, 42, 0.97));
-  border: 1px solid rgba(100, 200, 255, 0.18);
-  border-radius: 14px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  background: var(--popup-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: var(--panel-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--panel-shadow);
   overflow: hidden;
   z-index: 58;
-  color: rgba(255, 255, 255, 0.92);
+  color: var(--text);
 }
 
 .panel-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 8px 10px;
-  background: rgba(0, 0, 0, 0.2);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--panel-header-bg);
+  border-bottom: var(--panel-header-border);
 }
 .panel-title { display: flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 600; }
 .title-icon { font-size: 16px; }
@@ -395,20 +397,20 @@ function priorityLabel(p: string): string {
   padding: 2px 7px;
   font-size: 11.5px;
   font-weight: 500;
-  color: rgba(167, 139, 250, 0.95);
-  background: rgba(167, 139, 250, 0.12);
-  border-radius: 8px;
+  color: var(--purple-text);
+  background: var(--purple-bg);
+  border-radius: var(--radius-sm);
 }
 
 .icon-btn {
   width: 22px; height: 22px;
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 16px; line-height: 1;
-  color: rgba(255, 255, 255, 0.55);
-  background: transparent; border: none; border-radius: 6px;
+  color: var(--text-dim);
+  background: transparent; border: none; border-radius: var(--radius-control);
   cursor: pointer;
 }
-.icon-btn:hover:not(:disabled) { color: rgba(255, 255, 255, 0.95); background: rgba(255, 255, 255, 0.08); }
+.icon-btn:hover:not(:disabled) { color: var(--text); background: var(--surface-item-hover); }
 .icon-btn:disabled { cursor: not-allowed; opacity: 0.35; }
 
 .panel-body {
@@ -422,15 +424,15 @@ function priorityLabel(p: string): string {
 
 .task-card {
   padding: 12px 14px;
-  background: rgba(0, 0, 0, 0.22);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 10px;
+  background: var(--panel-header-bg);
+  border: var(--divider);
+  border-radius: var(--radius-md);
 }
 .task-title {
   font-size: 15px;
   font-weight: 600;
   line-height: 1.45;
-  color: rgba(255, 255, 255, 0.95);
+  color: var(--text);
 }
 .task-meta {
   margin-top: 8px;
@@ -439,26 +441,26 @@ function priorityLabel(p: string): string {
 .meta-pill {
   padding: 2px 8px;
   font-size: 12px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(255, 255, 255, 0.75);
+  border-radius: var(--radius-sm);
+  background: var(--input-bg);
+  color: var(--text-ghost);
 }
-.meta-pill.priority-urgent { color: rgba(248, 113, 113, 0.95); background: rgba(239, 68, 68, 0.12); }
-.meta-pill.priority-high { color: rgba(251, 191, 36, 0.95); background: rgba(245, 158, 11, 0.12); }
-.meta-pill.priority-low { color: rgba(148, 163, 184, 0.85); background: rgba(148, 163, 184, 0.08); }
-.meta-pill.meta-deadline { color: rgba(0, 212, 255, 0.85); background: rgba(0, 212, 255, 0.1); }
-.meta-pill.meta-id { font-family: ui-monospace, SFMono-Regular, monospace; color: rgba(255, 255, 255, 0.45); }
+.meta-pill.priority-urgent { color: var(--red-text); background: var(--red-bg); }
+.meta-pill.priority-high { color: var(--yellow-text); background: var(--yellow-bg); }
+.meta-pill.priority-low { color: var(--text-dim); background: var(--surface-2); }
+.meta-pill.meta-deadline { color: var(--accent-text); background: var(--accent-glow); }
+.meta-pill.meta-id { font-family: ui-monospace, SFMono-Regular, monospace; color: var(--text-muted); }
 
 .phase-text {
   display: flex; align-items: center; gap: 6px; justify-content: center;
   padding: 10px 12px;
   font-size: 13.5px;
   text-align: center;
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.18);
-  color: rgba(255, 255, 255, 0.82);
+  border-radius: var(--radius-md);
+  background: var(--panel-header-bg);
+  color: var(--text-ghost);
 }
-.phase-text.phase-error { color: rgba(248, 113, 113, 0.95); background: rgba(239, 68, 68, 0.1); }
+.phase-text.phase-error { color: var(--red-text); background: var(--red-bg); }
 
 .spinner {
   width: 10px; height: 10px;
@@ -476,23 +478,23 @@ function priorityLabel(p: string): string {
 .rec-header {
   display: flex; justify-content: space-between; align-items: center;
   font-size: 12.5px;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--text-dim);
   padding: 0 2px;
 }
 .ai-btn {
   padding: 3px 10px;
   font-size: 11.5px;
   font-weight: 500;
-  color: rgba(167, 139, 250, 0.95);
-  background: rgba(167, 139, 250, 0.1);
-  border: 1px solid rgba(167, 139, 250, 0.25);
-  border-radius: 6px;
+  color: var(--purple-text);
+  background: var(--purple-bg);
+  border: 1px solid var(--purple-border);
+  border-radius: var(--radius-control);
   cursor: pointer;
   transition: all 0.15s;
 }
 .ai-btn:hover:not(:disabled) {
-  background: rgba(167, 139, 250, 0.2);
-  border-color: rgba(167, 139, 250, 0.5);
+  background: var(--purple-bg-strong);
+  border-color: var(--purple-border);
 }
 .ai-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
@@ -500,24 +502,24 @@ function priorityLabel(p: string): string {
   display: flex; align-items: center; gap: 10px;
   padding: 10px 12px;
   text-align: left;
-  background: rgba(0, 0, 0, 0.18);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 8px;
+  background: var(--panel-header-bg);
+  border: var(--divider);
+  border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.12s;
   color: inherit;
 }
-.rec-row:hover { background: rgba(0, 0, 0, 0.28); border-color: rgba(100, 200, 255, 0.18); }
-.rec-row.selected { background: rgba(0, 212, 255, 0.08); border-color: rgba(0, 212, 255, 0.4); }
-.rec-row.top:not(.selected) { border-color: rgba(167, 139, 250, 0.25); }
+.rec-row:hover { background: var(--surface-2); border-color: var(--accent-border); }
+.rec-row.selected { background: var(--accent-glow); border-color: var(--accent-border); box-shadow: var(--shadow-1); }
+.rec-row.top:not(.selected) { border-color: var(--purple-border); }
 
 .rec-check {
   width: 16px;
   font-size: 16px;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--text-dim);
   text-align: center;
 }
-.rec-row.selected .rec-check { color: rgba(0, 212, 255, 0.95); }
+.rec-row.selected .rec-check { color: var(--accent-text); }
 
 .rec-main { flex: 1; min-width: 0; }
 .rec-line1 { display: flex; align-items: center; gap: 6px; }
@@ -525,27 +527,27 @@ function priorityLabel(p: string): string {
   font-size: 14px;
   font-weight: 500;
   font-family: ui-monospace, SFMono-Regular, monospace;
-  color: rgba(255, 255, 255, 0.95);
+  color: var(--text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .rec-badge {
   padding: 2px 6px;
   font-size: 11px;
   font-weight: 600;
-  color: rgba(167, 139, 250, 0.95);
-  background: rgba(167, 139, 250, 0.14);
-  border-radius: 4px;
+  color: var(--purple-text);
+  background: var(--purple-bg);
+  border-radius: var(--radius-sm);
   letter-spacing: 0.4px;
   flex-shrink: 0;
 }
 .rec-badge-manual {
-  color: rgba(251, 191, 36, 0.95);
-  background: rgba(245, 158, 11, 0.14);
+  color: var(--yellow-text);
+  background: var(--yellow-bg);
 }
 .rec-reason {
   margin-top: 3px;
   font-size: 12.5px;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--text-dim);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
@@ -555,9 +557,9 @@ function priorityLabel(p: string): string {
   font-weight: 600;
   font-family: ui-monospace, SFMono-Regular, monospace;
   text-align: right;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--text-ghost);
 }
-.rec-row.selected .rec-score { color: rgba(0, 212, 255, 0.95); }
+.rec-row.selected .rec-score { color: var(--accent-text); }
 
 .rec-actions {
   display: flex;
@@ -570,34 +572,34 @@ function priorityLabel(p: string): string {
   font-size: 12.5px;
   background: transparent;
   border: 1px dashed;
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   cursor: pointer;
   text-align: center;
   font-family: inherit;
 }
 .action-link:not(.browse-link) {
-  color: rgba(167, 139, 250, 0.85);
-  border-color: rgba(167, 139, 250, 0.3);
+  color: var(--purple-text);
+  border-color: var(--purple-border);
 }
 .action-link:not(.browse-link):hover {
-  background: rgba(167, 139, 250, 0.08);
-  color: rgba(167, 139, 250, 1);
+  background: var(--purple-bg);
+  color: var(--purple-text);
 }
 .browse-link {
-  color: rgba(251, 191, 36, 0.85);
-  border-color: rgba(251, 191, 36, 0.3);
+  color: var(--yellow-text);
+  border-color: var(--yellow-border);
 }
 .browse-link:hover {
-  background: rgba(251, 191, 36, 0.08);
-  color: rgba(251, 191, 36, 1);
+  background: var(--yellow-bg);
+  color: var(--yellow-text);
 }
 
 .panel-footer {
   display: flex;
   gap: 6px;
   padding: 8px 10px;
-  background: rgba(0, 0, 0, 0.2);
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--panel-header-bg);
+  border-top: var(--divider);
 }
 .primary-btn {
   flex: 1;
@@ -605,9 +607,9 @@ function priorityLabel(p: string): string {
   font-size: 13.5px;
   font-weight: 500;
   color: white;
-  background: linear-gradient(135deg, rgba(0, 212, 255, 0.9), rgba(59, 130, 246, 0.9));
+  background: var(--btn-primary-bg);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   cursor: pointer;
   transition: all 0.15s;
 }
@@ -616,22 +618,22 @@ function priorityLabel(p: string): string {
   transform: translateY(-1px);
 }
 .primary-btn:disabled {
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.4);
+  background: var(--surface-item-hover);
+  color: var(--text-muted);
   cursor: not-allowed;
 }
 .secondary-btn {
   padding: 10px 18px;
   font-size: 13.5px;
-  color: rgba(255, 255, 255, 0.7);
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 6px;
+  color: var(--text-ghost);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
   cursor: pointer;
 }
 .secondary-btn:hover:not(:disabled) {
-  color: rgba(255, 255, 255, 0.95);
-  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  background: var(--surface-item-active);
 }
 .secondary-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 

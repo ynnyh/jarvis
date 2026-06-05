@@ -45,8 +45,8 @@ const OPTIONS: Array<{ value: WorkStyle; title: string; desc: string }> = [
   width: 100%;
   padding: 10px 12px;
   text-align: left;
-  color: rgba(255, 255, 255, 0.9);
-  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  background: var(--surface);
   border: 1px solid rgba(148, 163, 184, 0.22);
   border-radius: 8px;
   cursor: pointer;
@@ -59,13 +59,13 @@ const OPTIONS: Array<{ value: WorkStyle; title: string; desc: string }> = [
   height: 14px;
   margin-top: 2px;
   border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.3);
+  border: 2px solid var(--border);
 }
 .ws-card.active .ws-radio {
   border-color: rgba(14, 165, 233, 0.9);
   background: radial-gradient(circle, rgba(14, 165, 233, 0.95) 0 4px, transparent 5px);
 }
 .ws-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.ws-main strong { font-size: 13px; color: rgba(255, 255, 255, 0.96); }
-.ws-main small { font-size: 11.5px; line-height: 1.4; color: rgba(255, 255, 255, 0.6); }
+.ws-main strong { font-size: 13px; color: var(--text); }
+.ws-main small { font-size: 11.5px; line-height: 1.4; color: var(--text-ghost); }
 </style>

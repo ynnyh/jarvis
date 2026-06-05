@@ -178,20 +178,22 @@ async function openTask(id: string) {
   inset: var(--panel-top, 8px) var(--panel-right, 8px) var(--panel-bottom, 90px) var(--panel-left, 8px);
   display: flex;
   flex-direction: column;
-  background: linear-gradient(135deg, rgba(20, 30, 56, 0.97), rgba(15, 23, 42, 0.97));
-  border: 1px solid rgba(245, 158, 11, 0.25);
-  border-radius: 14px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  background: var(--popup-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: var(--panel-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--panel-shadow);
   overflow: hidden;
   z-index: 55;
-  color: rgba(255, 255, 255, 0.92);
+  color: var(--text);
 }
 
 .panel-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 8px 10px;
-  background: rgba(0, 0, 0, 0.2);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--panel-header-bg);
+  border-bottom: var(--panel-header-border);
 }
 .panel-title {
   display: flex; align-items: center; gap: 6px;
@@ -202,11 +204,11 @@ async function openTask(id: string) {
   width: 22px; height: 22px;
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 16px; line-height: 1;
-  color: rgba(255, 255, 255, 0.55);
-  background: transparent; border: none; border-radius: 6px;
+  color: var(--text-dim);
+  background: transparent; border: none; border-radius: var(--radius-control);
   cursor: pointer;
 }
-.icon-btn:hover { color: rgba(255, 255, 255, 0.95); background: rgba(255, 255, 255, 0.08); }
+.icon-btn:hover { color: var(--text); background: var(--surface-item-hover); }
 
 .panel-body {
   flex: 1; overflow-y: auto; padding: 10px;
@@ -218,13 +220,13 @@ async function openTask(id: string) {
   margin: 0;
   font-size: 11px;
   font-weight: 600;
-  color: rgba(0, 212, 255, 0.85);
+  color: var(--accent-text);
   letter-spacing: 0.5px;
 }
 .section-hint {
   margin: 4px 0 0;
   font-size: 9.5px;
-  color: rgba(255, 255, 255, 0.35);
+  color: var(--text-faint);
 }
 
 /* 工时预算 */
@@ -233,27 +235,27 @@ async function openTask(id: string) {
   padding: 6px 0;
 }
 .budget-item { display: flex; flex-direction: column; align-items: center; }
-.budget-num { font-size: 18px; font-weight: 700; line-height: 1; color: rgba(255, 255, 255, 0.95); }
-.budget-label { font-size: 9.5px; color: rgba(255, 255, 255, 0.45); margin-top: 2px; }
-.budget-divider { font-size: 14px; color: rgba(255, 255, 255, 0.35); padding-bottom: 4px; }
-.ratio-high .budget-num { color: rgba(248, 113, 113, 0.95); }
-.ratio-mid .budget-num { color: rgba(250, 204, 21, 0.95); }
-.ratio-low .budget-num { color: rgba(16, 185, 129, 0.95); }
+.budget-num { font-size: 18px; font-weight: 700; line-height: 1; color: var(--text); font-family: var(--font-display); font-variant-numeric: var(--num-font-variant); }
+.budget-label { font-size: 9.5px; color: var(--text-muted); margin-top: 2px; }
+.budget-divider { font-size: 14px; color: var(--text-faint); padding-bottom: 4px; }
+.ratio-high .budget-num { color: var(--red-text); }
+.ratio-mid .budget-num { color: var(--yellow-text); }
+.ratio-low .budget-num { color: var(--green-text); }
 
 .budget-bar {
   position: relative;
   height: 6px;
-  background: rgba(255, 255, 255, 0.06);
-  border-radius: 3px;
+  background: var(--input-bg);
+  border-radius: var(--radius-sm);
   overflow: hidden;
 }
-.budget-fill { height: 100%; border-radius: 3px; transition: width 0.4s; }
+.budget-fill { height: 100%; border-radius: var(--radius-sm); transition: width 0.4s; }
 .fill-low { background: linear-gradient(90deg, rgba(16, 185, 129, 0.8), rgba(16, 185, 129, 0.5)); }
 .fill-mid { background: linear-gradient(90deg, rgba(250, 204, 21, 0.8), rgba(245, 158, 11, 0.6)); }
 .fill-high { background: linear-gradient(90deg, rgba(248, 113, 113, 0.85), rgba(239, 68, 68, 0.7)); }
 .budget-line {
   position: absolute; left: 50%; top: 0; bottom: 0;
-  width: 1px; background: rgba(255, 255, 255, 0.3);
+  width: 1px; background: var(--text-faint);
 }
 
 /* 紧迫度 Top */
@@ -261,29 +263,32 @@ async function openTask(id: string) {
 .urgency-item {
   display: flex; align-items: center; gap: 8px;
   padding: 7px 9px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 8px;
+  background: var(--surface);
+  border: var(--divider);
+  border-radius: var(--radius-md);
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, transform 0.1s;
 }
 .urgency-item:active { transform: scale(0.985); }
-.urgency-item.danger { background: rgba(239, 68, 68, 0.08); border-color: rgba(239, 68, 68, 0.2); }
-.urgency-item.warn { background: rgba(245, 158, 11, 0.08); border-color: rgba(245, 158, 11, 0.2); }
-.urgency-item.soon { background: rgba(59, 130, 246, 0.06); border-color: rgba(59, 130, 246, 0.18); }
-.urgency-item.mild { background: rgba(139, 92, 246, 0.05); border-color: rgba(139, 92, 246, 0.14); }
+.urgency-item:hover { box-shadow: var(--shadow-1); }
+.urgency-item.danger { background: var(--red-bg); border-color: var(--red-border); }
+.urgency-item.warn { background: var(--yellow-bg); border-color: var(--yellow-border); }
+.urgency-item.soon { background: var(--blue-bg); border-color: var(--blue-border); }
+.urgency-item.mild { background: var(--purple-bg); border-color: var(--purple-border); }
 
 .urgency-rank {
   font-size: 14px;
   font-weight: 700;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-muted);
   min-width: 18px;
   text-align: center;
+  font-family: var(--font-display);
+  font-variant-numeric: var(--num-font-variant);
 }
 .urgency-main { flex: 1; min-width: 0; }
 .urgency-title {
   font-size: 11.5px;
-  color: rgba(255, 255, 255, 0.92);
+  color: var(--text);
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -294,29 +299,31 @@ async function openTask(id: string) {
 .urgency-team {
   display: inline-flex; padding: 0 3px;
   font-size: 9.5px;
-  color: rgba(167, 139, 250, 0.95);
-  background: rgba(167, 139, 250, 0.12);
-  border-radius: 3px;
+  color: var(--purple-text);
+  background: var(--purple-bg);
+  border-radius: var(--radius-sm);
   margin-left: 3px;
   vertical-align: middle;
 }
 .urgency-reasons {
   font-size: 9.5px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--text-muted);
   margin-top: 2px;
 }
 .urgency-score {
   font-size: 14px;
   font-weight: 700;
   padding: 3px 7px;
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   min-width: 36px;
   text-align: center;
+  font-family: var(--font-display);
+  font-variant-numeric: var(--num-font-variant);
 }
-.urgency-score.danger { background: rgba(239, 68, 68, 0.2); color: rgba(254, 202, 202, 0.95); }
-.urgency-score.warn { background: rgba(245, 158, 11, 0.2); color: rgba(254, 215, 170, 0.95); }
-.urgency-score.soon { background: rgba(59, 130, 246, 0.2); color: rgba(191, 219, 254, 0.95); }
-.urgency-score.mild { background: rgba(139, 92, 246, 0.15); color: rgba(221, 214, 254, 0.9); }
+.urgency-score.danger { background: var(--red-bg-strong); color: var(--red-text-light); }
+.urgency-score.warn { background: var(--yellow-bg-strong); color: var(--yellow-text-light); }
+.urgency-score.soon { background: var(--blue-bg-strong); color: var(--blue-text-light); }
+.urgency-score.mild { background: var(--purple-bg-strong); color: var(--purple-text-light); }
 
 /* 各日压力 */
 .day-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -325,24 +332,26 @@ async function openTask(id: string) {
   padding: 4px 0;
   font-size: 11px;
 }
-.day-row.stacked .day-date { color: rgba(245, 158, 11, 0.9); }
+.day-row.stacked .day-date { color: var(--yellow-text); }
 .day-date {
   display: flex; flex-direction: column;
   min-width: 60px;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--text-ghost);
+  font-family: var(--font-display);
+  font-variant-numeric: var(--num-font-variant);
 }
-.day-rel { font-size: 9px; color: rgba(255, 255, 255, 0.4); }
+.day-rel { font-size: 9px; color: var(--text-muted); }
 .day-bar-container {
   flex: 1;
   height: 6px;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 3px;
+  background: var(--surface);
+  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 .day-bar {
   height: 100%;
   background: linear-gradient(90deg, rgba(0, 212, 255, 0.7), rgba(0, 212, 255, 0.4));
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
 }
 .day-row.stacked .day-bar {
   background: linear-gradient(90deg, rgba(245, 158, 11, 0.85), rgba(239, 68, 68, 0.7));
@@ -350,21 +359,23 @@ async function openTask(id: string) {
 .day-meta {
   display: flex; gap: 6px;
   min-width: 56px; justify-content: flex-end;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--text-muted);
   font-size: 10px;
+  font-family: var(--font-display);
+  font-variant-numeric: var(--num-font-variant);
 }
-.day-hours { color: rgba(255, 255, 255, 0.75); font-weight: 600; }
+.day-hours { color: var(--text-ghost); font-weight: 600; }
 
 /* 建议 */
 .advice-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
 .advice-item {
   padding: 7px 9px;
-  background: rgba(0, 212, 255, 0.06);
-  border-left: 3px solid rgba(0, 212, 255, 0.5);
-  border-radius: 6px;
+  background: var(--accent-glow);
+  border-left: 3px solid var(--accent-border);
+  border-radius: var(--radius-md);
   font-size: 11px;
   line-height: 1.5;
-  color: rgba(255, 255, 255, 0.88);
+  color: var(--text-ghost);
   word-break: break-word;
 }
 

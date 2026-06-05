@@ -6,6 +6,10 @@ import { onMounted, onUnmounted, ref, computed, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { emit } from '@tauri-apps/api/event'
 import ErrorBoundary from './components/ErrorBoundary.vue'
+import MatrixRain from './components/MatrixRain.vue'
+import CyberParticles from './components/CyberParticles.vue'
+import { useTheme } from './composables/useTheme'
+useTheme()
 
 interface ZenTaoTaskBrief {
   id: string
@@ -214,7 +218,9 @@ onUnmounted(() => {
 
 <template>
   <ErrorBoundary>
-  <div class="mh-root">
+  <div class="mh-root theme-bg">
+    <MatrixRain />
+    <CyberParticles />
     <header class="mh-header" data-tauri-drag-region>
       <h1 class="mh-title" data-tauri-drag-region>📝 手动写工时</h1>
       <button class="mh-header-close" :disabled="submitting" @click="closeWindow" title="关闭">×</button>
@@ -347,8 +353,8 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: linear-gradient(135deg, #1a2238, #0f172a);
-  color: rgba(255, 255, 255, 0.92);
+  background: var(--bg);
+  color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
@@ -359,15 +365,15 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 8px;
   padding: 12px 16px;
-  background: rgba(0, 0, 0, 0.25);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--panel-bg);
+  border-bottom: 1px solid var(--divider);
   user-select: none;
 }
 .mh-title {
   margin: 0;
   font-size: 14px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.95);
+  color: var(--text);
   flex: 1;
 }
 .mh-header-close {
@@ -380,15 +386,15 @@ onUnmounted(() => {
   background: transparent;
   border: none;
   border-radius: 4px;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--text-ghost);
   font-size: 18px;
   cursor: pointer;
   padding: 0;
   line-height: 1;
 }
 .mh-header-close:hover:not(:disabled) {
-  background: rgba(239, 68, 68, 0.25);
-  color: rgba(255, 255, 255, 0.98);
+  background: var(--red-bg-strong);
+  color: var(--red-text);
 }
 .mh-header-close:disabled { opacity: 0.4; cursor: not-allowed; }
 
@@ -406,7 +412,7 @@ onUnmounted(() => {
   justify-content: center;
   gap: 12px;
   padding: 40px 0;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--text-ghost);
   font-size: 13px;
 }
 .mh-spinner {
@@ -414,12 +420,12 @@ onUnmounted(() => {
   animation: spin 1s linear infinite;
 }
 @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
-.mh-error-text { color: rgba(239, 68, 68, 0.85); }
+.mh-error-text { color: var(--red-text); }
 .mh-retry {
   padding: 6px 14px;
-  background: rgba(59, 130, 246, 0.25);
-  color: rgba(255, 255, 255, 0.95);
-  border: 1px solid rgba(59, 130, 246, 0.5);
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+  color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
   border-radius: 6px;
   font-size: 11px;
   cursor: pointer;
@@ -438,8 +444,8 @@ onUnmounted(() => {
   display: flex;
   gap: 4px;
   padding: 4px;
-  background: rgba(0, 0, 0, 0.25);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--surface);
+  border: 1px solid var(--divider);
   border-radius: 8px;
 }
 .mh-tab {
@@ -453,7 +459,7 @@ onUnmounted(() => {
   background: transparent;
   border: 1px solid transparent;
   border-radius: 6px;
-  color: rgba(255, 255, 255, 0.65);
+  color: var(--text-dim);
   font-size: 12px;
   cursor: pointer;
   font-family: inherit;
@@ -462,28 +468,28 @@ onUnmounted(() => {
   overflow: hidden;
 }
 .mh-tab:hover {
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.92);
+  background: var(--surface-item-hover);
+  color: var(--text);
 }
 .mh-tab.active {
-  background: rgba(59, 130, 246, 0.18);
-  border-color: rgba(59, 130, 246, 0.35);
-  color: rgba(255, 255, 255, 0.98);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--text);
 }
 .mh-tab-icon { font-size: 13px; flex-shrink: 0; }
 .mh-tab-label { font-weight: 500; white-space: nowrap; }
 .mh-tab-count {
   flex-shrink: 0;
   padding: 0 5px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--surface-item-hover);
   border-radius: 8px;
   font-size: 10px;
   line-height: 14px;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--text-muted);
 }
 .mh-tab.active .mh-tab-count {
-  background: rgba(59, 130, 246, 0.35);
-  color: rgba(255, 255, 255, 0.95);
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--text);
 }
 
 /* 表单行 */
@@ -493,16 +499,16 @@ onUnmounted(() => {
 .form-row-grow { flex: 1; min-height: 120px; }
 .form-label {
   font-size: 12.5px;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--text-dim);
   font-weight: 500;
 }
 .form-input,
 .form-textarea {
   padding: 8px 10px;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.95);
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
   border-radius: 6px;
   outline: none;
   font-family: inherit;
@@ -511,19 +517,19 @@ onUnmounted(() => {
   box-sizing: border-box;
 }
 .form-input:focus,
-.form-textarea:focus { border-color: rgba(59, 130, 246, 0.6); }
+.form-textarea:focus { border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
 .form-input:disabled,
 .form-textarea:disabled { opacity: 0.55; cursor: not-allowed; }
 .form-select {
   appearance: none;
-  background-image: linear-gradient(45deg, transparent 50%, rgba(255,255,255,0.6) 50%),
-                    linear-gradient(135deg, rgba(255,255,255,0.6) 50%, transparent 50%);
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-ghost) 50%),
+                    linear-gradient(135deg, var(--text-ghost) 50%, transparent 50%);
   background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%;
   background-size: 5px 5px, 5px 5px;
   background-repeat: no-repeat;
   padding-right: 26px;
 }
-.form-select option { background: #1a2238; color: rgba(255,255,255,0.95); }
+.form-select option { background: var(--surface); color: var(--text); }
 .form-input-hours { max-width: 140px; }
 .form-textarea {
   flex: 1;
@@ -537,18 +543,18 @@ onUnmounted(() => {
   margin: 0;
   padding: 8px 10px;
   font-size: 12px;
-  color: rgba(252, 165, 165, 0.95);
-  background: rgba(239, 68, 68, 0.12);
-  border-left: 3px solid rgba(239, 68, 68, 0.5);
+  color: var(--red-text);
+  background: var(--red-bg);
+  border-left: 3px solid var(--red-border);
   border-radius: 4px;
 }
 .form-success {
   margin: 0;
   padding: 8px 10px;
   font-size: 12px;
-  color: rgba(134, 239, 172, 0.95);
-  background: rgba(34, 197, 94, 0.12);
-  border-left: 3px solid rgba(34, 197, 94, 0.5);
+  color: var(--green-text);
+  background: var(--green-bg);
+  border-left: 3px solid var(--green-border);
   border-radius: 4px;
 }
 
@@ -563,14 +569,14 @@ onUnmounted(() => {
   align-items: flex-start;
   gap: 8px;
   padding: 10px 12px;
-  background: rgba(59, 130, 246, 0.12);
-  border: 1px solid rgba(59, 130, 246, 0.3);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
   border-radius: 6px;
 }
 .selected-task-id {
   font-family: ui-monospace, monospace;
   font-size: 12px;
-  color: rgba(147, 197, 253, 0.95);
+  color: var(--accent-text);
   flex-shrink: 0;
   padding-top: 2px;
 }
@@ -578,7 +584,7 @@ onUnmounted(() => {
   flex: 1;
   font-size: 13px;
   line-height: 1.5;
-  color: rgba(255, 255, 255, 0.95);
+  color: var(--text);
   word-break: break-word;
   white-space: normal;
 }
@@ -589,18 +595,18 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--surface-item-hover);
   border: none;
   border-radius: 50%;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--text-dim);
   font-size: 14px;
   cursor: pointer;
   padding: 0;
   line-height: 1;
 }
 .selected-task-clear:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.18);
-  color: white;
+  background: var(--surface-item-hover);
+  color: var(--text);
 }
 .selected-task-clear:disabled { opacity: 0.4; cursor: not-allowed; }
 
@@ -611,10 +617,10 @@ onUnmounted(() => {
   right: 0;
   max-height: 280px;
   overflow-y: auto;
-  background: #1c2540;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 6px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 8px 24px var(--overlay);
   z-index: 10;
   padding: 4px;
 }
@@ -627,25 +633,25 @@ onUnmounted(() => {
   background: transparent;
   border: none;
   border-radius: 4px;
-  color: rgba(255, 255, 255, 0.92);
+  color: var(--text);
   font-size: 12.5px;
   cursor: pointer;
   text-align: left;
   font-family: inherit;
 }
-.task-combo-item:hover { background: rgba(59, 130, 246, 0.18); }
+.task-combo-item:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
 .task-combo-more,
 .task-combo-empty {
   padding: 8px 10px;
   font-size: 11.5px;
-  color: rgba(255, 255, 255, 0.45);
+  color: var(--text-muted);
   text-align: center;
 }
 
 .mh-task-id {
   font-family: ui-monospace, monospace;
   font-size: 11px;
-  color: rgba(147, 197, 253, 0.8);
+  color: var(--accent-text);
   flex-shrink: 0;
 }
 .mh-task-name {
@@ -661,9 +667,9 @@ onUnmounted(() => {
   font-weight: 700;
   flex-shrink: 0;
 }
-.pri-2 { background: rgba(250, 204, 21, 0.2); color: rgba(253, 224, 71, 0.95); }
-.pri-3 { background: rgba(239, 68, 68, 0.2); color: rgba(252, 165, 165, 0.95); }
-.pri-4 { background: rgba(168, 85, 247, 0.25); color: rgba(216, 180, 254, 0.95); }
+.pri-2 { background: var(--yellow-bg); color: var(--yellow-text); }
+.pri-3 { background: var(--red-bg); color: var(--red-text); }
+.pri-4 { background: var(--purple-bg); color: var(--purple-text); }
 
 /* 底部 */
 .mh-footer {
@@ -672,8 +678,8 @@ onUnmounted(() => {
   justify-content: flex-end;
   gap: 10px;
   padding: 12px 20px;
-  background: rgba(0, 0, 0, 0.2);
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--panel-bg);
+  border-top: 1px solid var(--divider);
 }
 .btn {
   padding: 8px 18px;
@@ -687,20 +693,20 @@ onUnmounted(() => {
 .btn:disabled { cursor: not-allowed; opacity: 0.5; }
 .btn-cancel {
   background: transparent;
-  color: rgba(255, 255, 255, 0.7);
-  border-color: rgba(255, 255, 255, 0.18);
+  color: var(--text-dim);
+  border-color: var(--border);
 }
 .btn-cancel:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(255, 255, 255, 0.95);
+  background: var(--surface-item-hover);
+  color: var(--text);
 }
 .btn-confirm {
-  background: linear-gradient(135deg, rgba(167, 139, 250, 0.95), rgba(139, 92, 246, 0.95));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 90%, transparent), color-mix(in srgb, var(--accent) 70%, transparent));
   color: white;
   border-color: transparent;
   font-weight: 500;
 }
 .btn-confirm:hover:not(:disabled) {
-  box-shadow: 0 4px 12px rgba(167, 139, 250, 0.35);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 </style>

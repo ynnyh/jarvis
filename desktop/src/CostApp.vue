@@ -4,6 +4,11 @@
 import { ref, computed, onMounted } from 'vue'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { invoke } from '@tauri-apps/api/core'
+import { useConfigStore } from './stores/config'
+import { useTheme } from './composables/useTheme'
+import ToggleSwitch from './components/ui/ToggleSwitch.vue'
+import MatrixRain from './components/MatrixRain.vue'
+import CyberParticles from './components/CyberParticles.vue'
 
 interface MemberCost {
   account: string
@@ -31,6 +36,10 @@ interface ProjectInfo {
   id: number | string
   name: string
 }
+
+// 主题：应用当前视觉风格到本窗口，并随设置里切换实时变化（config-changed 广播）
+const configStore = useConfigStore()
+useTheme()
 
 // ===== 状态 =====
 const projects = ref<ProjectInfo[]>([])
@@ -299,6 +308,7 @@ function fmtMoney(n: number): string {
 // ===== 生命周期 =====
 onMounted(async () => {
   document.title = '项目成本分析'
+  configStore.load()
   await loadProjects()
   await loadRates()
   const win = getCurrentWindow()
@@ -310,7 +320,9 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="cost-root">
+  <div class="cost-root theme-bg theme-scanline">
+    <MatrixRain />
+    <CyberParticles />
     <!-- 标题栏（可拖拽） -->
     <header class="cost-header" data-tauri-drag-region>
       <span class="title">项目成本分析</span>
@@ -343,10 +355,7 @@ onMounted(async () => {
         <button class="query-btn" :disabled="loading || !projectSearch" @click="runQuery">
           {{ loading ? '查询中…' : '查询' }}
         </button>
-        <label class="overtime-check">
-          <input type="checkbox" v-model="includeResigned" />
-          <span>含离职</span>
-        </label>
+        <ToggleSwitch v-model="includeResigned" label="含离职" />
       </div>
 
       <!-- 时间范围 -->
@@ -373,10 +382,7 @@ onMounted(async () => {
       <template v-if="result">
         <!-- 显示选项：含加班只切换本地展示，不重新查询 -->
         <div class="display-options">
-          <label class="overtime-check">
-            <input type="checkbox" v-model="includeOvertime" />
-            <span>含加班</span>
-          </label>
+          <ToggleSwitch v-model="includeOvertime" label="含加班" />
         </div>
 
         <!-- 概览卡片 -->
@@ -520,9 +526,9 @@ onMounted(async () => {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: linear-gradient(135deg, rgba(20, 30, 56, 1), rgba(15, 23, 42, 1));
-  color: rgba(255, 255, 255, 0.92);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  background: var(--theme-bg);
+  color: var(--text);
+  font-family: var(--font-sans);
 }
 
 .cost-header {
@@ -530,8 +536,8 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
-  background: rgba(0, 0, 0, 0.25);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-soft);
   -webkit-app-region: drag;
   user-select: none;
 }
@@ -540,12 +546,12 @@ onMounted(async () => {
   width: 24px; height: 24px;
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 18px; line-height: 1;
-  color: rgba(255, 255, 255, 0.6);
-  background: transparent; border: none; border-radius: 6px;
+  color: var(--text-dim);
+  background: transparent; border: none; border-radius: var(--radius-md);
   cursor: pointer;
   -webkit-app-region: no-drag;
 }
-.close-btn:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
+.close-btn:hover { color: var(--text); background: var(--surface-hover); }
 
 .cost-body {
   flex: 1;
@@ -557,106 +563,131 @@ onMounted(async () => {
 }
 
 /* 控制栏 */
-.control-bar { display: flex; gap: 8px; align-items: center; }
+.control-bar {
+  display: flex; gap: 8px; align-items: center;
+  background: var(--card-bg);
+  border: var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 8px 10px;
+  box-shadow: var(--card-shadow);
+}
 .search-wrap { position: relative; flex: 1; }
 .control-input {
   width: 100%; box-sizing: border-box;
   padding: 7px 10px; font-size: 13px;
-  background: rgba(0, 0, 0, 0.25); border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 6px; color: rgba(255, 255, 255, 0.9);
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--radius-md); color: var(--text);
   font-family: inherit;
 }
-.control-input:focus { border-color: rgba(0, 212, 255, 0.5); outline: none; }
+.control-input:focus { border-color: var(--accent); outline: none; }
 .search-dropdown {
   position: absolute; top: 100%; left: 0; right: 0;
   max-height: 180px; overflow-y: auto;
-  background: rgba(15, 23, 42, 0.98);
-  border: 1px solid rgba(100, 200, 255, 0.2);
-  border-radius: 6px; z-index: 10; margin-top: 2px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md); z-index: 10; margin-top: 2px;
 }
 .search-option {
   display: block; width: 100%; padding: 7px 10px;
   font-size: 12.5px; text-align: left;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--text);
   background: transparent; border: none; cursor: pointer; font-family: inherit;
 }
-.search-option:hover { background: rgba(100, 200, 255, 0.12); color: white; }
+.search-option:hover { background: var(--surface-hover); color: var(--text); }
 
 .query-btn {
   padding: 7px 18px; font-size: 13px; font-weight: 500;
-  color: white; background: linear-gradient(135deg, rgba(0, 212, 255, 0.9), rgba(59, 130, 246, 0.9));
-  border: none; border-radius: 6px; cursor: pointer;
+  color: var(--on-accent); background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  border: none; border-radius: var(--radius-md); cursor: pointer;
   white-space: nowrap; font-family: inherit;
 }
-.query-btn:hover:not(:disabled) { box-shadow: 0 4px 12px rgba(0, 212, 255, 0.3); }
+.query-btn:hover:not(:disabled) { box-shadow: var(--shadow-1), 0 0 var(--glow-spread) var(--glow); }
 .query-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-
-.overtime-check {
-  display: flex; align-items: center; gap: 4px;
-  font-size: 12px; color: rgba(255, 255, 255, 0.6);
-  white-space: nowrap; cursor: pointer; user-select: none;
-}
-.overtime-check input { accent-color: rgba(0, 212, 255, 0.8); }
 
 /* 时间范围栏 */
 .range-bar {
   display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
   margin-top: -4px;
+  background: var(--card-bg);
+  border: var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 8px 10px;
 }
 .range-chip {
   padding: 4px 10px; font-size: 11.5px;
-  color: rgba(255, 255, 255, 0.6);
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 6px; cursor: pointer; font-family: inherit;
+  color: var(--text-dim);
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md); cursor: pointer; font-family: inherit;
   white-space: nowrap;
 }
-.range-chip:hover { background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.85); }
+.range-chip:hover { background: var(--surface-hover); color: var(--text); }
 .range-chip.active {
-  color: rgba(0, 212, 255, 0.95);
-  background: rgba(0, 212, 255, 0.12);
-  border-color: rgba(0, 212, 255, 0.35);
+  color: var(--accent);
+  background: var(--surface-hover);
+  border-color: var(--accent);
 }
 .range-date {
   padding: 4px 8px; font-size: 11.5px;
-  background: rgba(0, 0, 0, 0.25); border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 6px; color: rgba(255, 255, 255, 0.9);
-  font-family: inherit; color-scheme: dark;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--radius-md); color: var(--text);
+  font-family: inherit;
 }
-.range-date:focus { border-color: rgba(0, 212, 255, 0.5); outline: none; }
-.range-sep { color: rgba(255, 255, 255, 0.4); font-size: 12px; }
+.range-date:focus { border-color: var(--accent); outline: none; }
+.range-sep { color: var(--text-dim); font-size: 12px; }
 .range-hint {
-  font-size: 11px; color: rgba(255, 255, 255, 0.4);
+  font-size: 11px; color: var(--text-dim);
   margin-left: auto; white-space: nowrap;
 }
 
 .cost-error {
   padding: 8px; font-size: 12.5px;
-  color: rgba(248, 113, 113, 0.95);
-  background: rgba(239, 68, 68, 0.1); border-radius: 6px;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent); border-radius: var(--radius-md);
 }
 
 /* 概览卡片 */
-.display-options { display: flex; justify-content: flex-end; }
+.display-options {
+  display: flex; justify-content: flex-end;
+  background: var(--card-bg);
+  border: var(--card-border);
+  border-radius: var(--radius-md);
+  padding: 6px 10px;
+}
 .summary-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
 .summary-card {
   padding: 10px 8px; text-align: center;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 8px;
+  background: var(--card-bg);
+  border: var(--card-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--card-shadow);
+  transition: box-shadow var(--motion-base) var(--ease);
 }
-.card-num { font-size: 18px; font-weight: 700; line-height: 1.2; color: rgba(255, 255, 255, 0.95); }
-.card-label { font-size: 10px; color: rgba(255, 255, 255, 0.45); margin-top: 2px; }
+.card-num {
+  font-size: 18px; font-weight: 700; line-height: 1.2; color: var(--text);
+  font-family: var(--font-display);
+  font-variant-numeric: var(--num-font-variant);
+}
+.card-label { font-size: 10px; color: var(--text-dim); margin-top: 2px; }
 
 /* 图表区域 */
 .charts-row { display: flex; gap: 14px; }
-.chart-section { display: flex; flex-direction: column; gap: 6px; }
+.chart-section {
+  display: flex; flex-direction: column; gap: 6px;
+  background: var(--card-bg);
+  border: var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 10px;
+  box-shadow: var(--card-shadow);
+}
 .chart-left { flex: 1; min-width: 0; }
 .chart-right { flex: 1; min-width: 0; }
 .section-title {
   margin: 0; font-size: 11px; font-weight: 600;
-  color: rgba(0, 212, 255, 0.85); letter-spacing: 0.3px;
+  color: var(--accent-text); letter-spacing: 0.3px;
+  transition: text-shadow var(--motion-base) var(--ease);
 }
+.section-title:hover { text-shadow: 0 0 8px var(--glow); }
 
 /* 条形图 */
 .bar-chart { display: flex; flex-direction: column; gap: 4px; }
@@ -664,18 +695,19 @@ onMounted(async () => {
 .bar-name {
   min-width: 56px; max-width: 72px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: rgba(255, 255, 255, 0.75); text-align: right;
+  color: var(--text-dim); text-align: right;
 }
 .bar-track {
   flex: 1; height: 14px;
-  background: rgba(255, 255, 255, 0.04);
-  border-radius: 3px; overflow: hidden;
+  background: var(--surface);
+  border-radius: var(--radius-sm); overflow: hidden;
 }
 .bar-fill {
   height: 100%; transition: width 0.3s;
-  background: rgba(0, 212, 255, 0.8); border-radius: 3px;
+  background: var(--accent); border-radius: var(--radius-sm);
+  box-shadow: 0 0 var(--glow-spread) var(--glow);
 }
-.bar-value { min-width: 40px; text-align: right; font-weight: 600; color: rgba(255, 255, 255, 0.7); font-size: 10.5px; }
+.bar-value { min-width: 40px; text-align: right; font-weight: 600; color: var(--text-dim); font-size: 10.5px; }
 
 /* 饼图 */
 .pie-container { display: flex; flex-direction: column; align-items: center; gap: 12px; }
@@ -687,9 +719,9 @@ onMounted(async () => {
   position: absolute; top: 50%; left: 50%;
   transform: translate(-50%, -50%);
   width: 72px; height: 72px; border-radius: 50%;
-  background: rgba(15, 23, 42, 0.95);
+  background: var(--bg);
   display: flex; align-items: center; justify-content: center;
-  font-size: 12px; font-weight: 700; color: rgba(0, 212, 255, 0.95);
+  font-size: 12px; font-weight: 700; color: var(--accent-text);
   white-space: nowrap;
 }
 .pie-legend { display: flex; flex-direction: column; gap: 4px; width: 100%; }
@@ -698,30 +730,34 @@ onMounted(async () => {
 .pie-legend-name {
   flex: 1; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: rgba(255, 255, 255, 0.75);
+  color: var(--text-dim);
 }
-.pie-legend-pct { color: rgba(255, 255, 255, 0.5); font-variant-numeric: tabular-nums; min-width: 40px; text-align: right; }
+.pie-legend-pct { color: var(--text-dim); font-variant-numeric: tabular-nums; min-width: 40px; text-align: right; }
 
 /* 统一时薪 */
 .unified-rate-bar {
   display: flex; align-items: center; gap: 6px;
-  padding: 6px 0;
+  padding: 8px 10px;
+  background: var(--card-bg);
+  border: var(--card-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--card-shadow);
 }
-.unified-label { font-size: 11px; color: rgba(255, 255, 255, 0.5); white-space: nowrap; }
+.unified-label { font-size: 11px; color: var(--text-dim); white-space: nowrap; }
 .unified-input {
   width: 80px; padding: 3px 6px; font-size: 12px;
-  background: rgba(0, 0, 0, 0.25); border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 4px; color: rgba(255, 255, 255, 0.9);
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--text);
   font-family: inherit;
 }
-.unified-input:focus { border-color: rgba(0, 212, 255, 0.5); outline: none; }
+.unified-input:focus { border-color: var(--accent); outline: none; }
 .unified-btn {
   padding: 3px 10px; font-size: 11px; font-weight: 500;
-  color: rgba(0, 212, 255, 0.95); background: rgba(0, 212, 255, 0.12);
-  border: 1px solid rgba(0, 212, 255, 0.35); border-radius: 4px;
+  color: var(--accent-text); background: var(--surface-hover);
+  border: 1px solid var(--accent); border-radius: var(--radius-sm);
   cursor: pointer; font-family: inherit;
 }
-.unified-btn:hover:not(:disabled) { background: rgba(0, 212, 255, 0.2); }
+.unified-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .unified-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* 明细表 */
@@ -729,41 +765,44 @@ onMounted(async () => {
 .result-table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
 .result-table th {
   text-align: left; padding: 5px 6px;
-  color: rgba(255, 255, 255, 0.4); font-weight: 500;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-dim); font-weight: 500;
+  border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
 .result-table th.num { text-align: right; }
-.result-table td { padding: 5px 6px; border-bottom: 1px solid rgba(255, 255, 255, 0.03); }
+.result-table td { padding: 5px 6px; border-bottom: 1px solid var(--border-soft); }
 .result-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
-.cost-total { font-weight: 600; color: rgba(0, 212, 255, 0.95); }
-.overtime-num { color: rgba(245, 158, 11, 0.85); }
+.cost-total { font-weight: 600; color: var(--accent-text); }
+.overtime-num { color: var(--warning); }
 .total-row td {
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
-  font-weight: 600; color: rgba(255, 255, 255, 0.85); padding-top: 6px;
+  border-top: 1px solid var(--border);
+  font-weight: 600; color: var(--text); padding-top: 6px;
 }
 
 /* 内联时薪输入 */
 .rate-cell { padding: 2px 4px !important; }
 .rate-input {
   width: 80px; padding: 3px 6px; font-size: 12px; text-align: right;
-  background: rgba(0, 0, 0, 0.2); border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 4px; color: rgba(255, 255, 255, 0.9);
+  background: var(--surface-2); border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm); color: var(--text);
   font-family: inherit; font-variant-numeric: tabular-nums;
 }
-.rate-input:focus { border-color: rgba(0, 212, 255, 0.5); outline: none; background: rgba(0, 212, 255, 0.05); }
+.rate-input:focus { border-color: var(--accent); outline: none; background: var(--surface-hover); }
 
 /* 姓名单元格（纯文本，account 即员工中文名） */
-.name-cell { font-weight: 500; color: rgba(255, 255, 255, 0.9); white-space: nowrap; }
+.name-cell { font-weight: 500; color: var(--text); white-space: nowrap; }
 
 /* 底部汇总 */
 .bottom-summary {
   padding: 8px 10px; font-size: 12.5px; font-weight: 600;
-  background: rgba(0, 0, 0, 0.2); border-radius: 6px;
+  background: var(--card-bg);
+  border: var(--card-border);
+  box-shadow: var(--card-shadow);
+  border-radius: var(--radius-md);
   display: flex; align-items: center; flex-wrap: wrap; gap: 4px;
 }
-.bottom-summary strong { color: rgba(0, 212, 255, 0.95); }
-.sep { color: rgba(255, 255, 255, 0.3); }
+.bottom-summary strong { color: var(--accent-text); }
+.sep { color: var(--text-dim); }
 
 /* 隐藏 number input 的 spin button */
 .rate-input::-webkit-inner-spin-button,

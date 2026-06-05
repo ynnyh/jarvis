@@ -3,7 +3,10 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useConfigStore } from './stores/config'
+import { useTheme } from './composables/useTheme'
 import ErrorBoundary from './components/ErrorBoundary.vue'
+import MatrixRain from './components/MatrixRain.vue'
+import CyberParticles from './components/CyberParticles.vue'
 import {
   SETTINGS_MENU,
   SETTINGS_PAGE_COMPONENTS,
@@ -14,6 +17,7 @@ import {
 import './components/settings/_settings-shared.css'
 
 const store = useConfigStore()
+useTheme()
 const activePage = ref<SettingsPageKey>('channels')
 const collapsedGroups = ref<Set<string>>(new Set())
 
@@ -95,7 +99,9 @@ onUnmounted(() => {
 
 <template>
   <ErrorBoundary>
-    <div class="settings-root">
+    <div class="settings-root theme-bg">
+      <MatrixRain />
+      <CyberParticles />
       <!-- 侧边栏 -->
       <aside class="settings-sidebar">
         <div class="sidebar-brand">设置</div>
@@ -148,9 +154,9 @@ onUnmounted(() => {
   width: 100%;
   height: 100vh;
   display: flex;
-  background: #0b1120;
-  color: rgba(255, 255, 255, 0.92);
-  font-family: system-ui, -apple-system, sans-serif;
+  background: var(--theme-bg);
+  color: var(--text);
+  font-family: var(--font-sans);
   overflow: hidden;
 }
 
@@ -160,8 +166,8 @@ onUnmounted(() => {
   width: 190px;
   display: flex;
   flex-direction: column;
-  background: rgba(17, 24, 39, 0.98);
-  border-right: 1px solid rgba(148, 163, 184, 0.12);
+  background: var(--surface-2);
+  border-right: 1px solid var(--border-soft);
   user-select: none;
   overflow-y: auto;
 }
@@ -170,7 +176,7 @@ onUnmounted(() => {
   padding: 18px 16px 14px;
   font-size: 15px;
   font-weight: 700;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--text);
   letter-spacing: .03em;
 }
 
@@ -191,7 +197,7 @@ onUnmounted(() => {
   padding: 6px 8px 4px;
   font-size: 11px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: .06em;
   background: transparent;
@@ -204,7 +210,7 @@ onUnmounted(() => {
 }
 
 .sidebar-group-title:hover {
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--text);
 }
 
 .sidebar-items {
@@ -216,7 +222,7 @@ onUnmounted(() => {
 .sidebar-item {
   width: 100%;
   padding: 7px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   border: none;
   background: transparent;
   text-align: left;
@@ -227,27 +233,27 @@ onUnmounted(() => {
 }
 
 .sidebar-item:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-hover);
 }
 
 .sidebar-item.active {
-  background: rgba(59, 130, 246, 0.15);
+  background: var(--surface-hover);
 }
 
 .sidebar-item-title {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--text);
   font-weight: 500;
 }
 
 .sidebar-item.active .sidebar-item-title {
-  color: rgba(147, 197, 253, 0.95);
+  color: var(--accent-text);
   font-weight: 600;
 }
 
 .sidebar-item-desc {
   font-size: 10px;
-  color: rgba(255, 255, 255, 0.35);
+  color: var(--text-dim);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -269,8 +275,8 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 16px;
   padding: 18px 22px 14px;
-  background: rgba(17, 24, 39, 0.98);
-  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
   user-select: none;
 }
 
@@ -284,7 +290,7 @@ onUnmounted(() => {
 .detail-header p {
   margin: 5px 0 0;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.46);
+  color: var(--text-dim);
 }
 
 .close-btn {
@@ -296,16 +302,16 @@ onUnmounted(() => {
   justify-content: center;
   font-size: 18px;
   line-height: 1;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--text-dim);
   background: transparent;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   cursor: pointer;
 }
 
 .close-btn:hover {
-  color: rgba(255, 255, 255, 0.95);
-  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  background: var(--surface-hover);
 }
 
 .detail-body {

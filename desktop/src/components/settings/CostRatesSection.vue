@@ -172,7 +172,7 @@ onMounted(() => { if (featureEnabled.value) loadProjects() })
 
       <!-- 人员时薪表 -->
       <div v-if="members.length > 0" class="cost-table-wrap">
-        <h4 style="color: rgba(255,255,255,0.55); font-size: 12.5px; margin: 0 0 6px;">
+        <h4 style="color: var(--text-dim); font-size: 12.5px; margin: 0 0 6px;">
           人员时薪（{{ projectSearch }}）
         </h4>
 
@@ -229,8 +229,8 @@ onMounted(() => { if (featureEnabled.value) loadProjects() })
   top: 100%; left: 0; right: 0;
   max-height: 200px;
   overflow-y: auto;
-  background: rgba(15, 23, 42, 0.98);
-  border: 1px solid rgba(100, 200, 255, 0.2);
+  background: var(--panel-bg);
+  border: var(--panel-border);
   border-radius: 6px;
   z-index: 10;
   margin-top: 2px;
@@ -241,20 +241,20 @@ onMounted(() => { if (featureEnabled.value) loadProjects() })
   padding: 7px 10px;
   font-size: 12.5px;
   text-align: left;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--text);
   background: transparent;
   border: none;
   cursor: pointer;
   font-family: inherit;
 }
 .search-option:hover {
-  background: rgba(100, 200, 255, 0.12);
-  color: white;
+  background: var(--surface-item-hover);
+  color: var(--btn-primary-color);
 }
 
 .cost-divider {
   margin: 8px 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: var(--divider);
 }
 .cost-btn {
   padding: 6px 14px;
@@ -266,22 +266,22 @@ onMounted(() => { if (featureEnabled.value) loadProjects() })
   margin-top: 8px;
 }
 .cost-btn-apply {
-  color: rgba(0, 212, 255, 0.95);
-  background: rgba(0, 212, 255, 0.1);
-  border: 1px solid rgba(0, 212, 255, 0.25);
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
   margin-top: 0;
   padding: 4px 12px;
 }
 .cost-btn-apply:hover:not(:disabled) {
-  background: rgba(0, 212, 255, 0.18);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .cost-btn-apply:disabled { opacity: 0.4; cursor: not-allowed; }
 .cost-error {
   margin-top: 8px;
   padding: 8px 10px;
   font-size: 12.5px;
-  color: rgba(248, 113, 113, 0.95);
-  background: rgba(239, 68, 68, 0.1);
+  color: var(--red-text);
+  background: var(--red-bg);
   border-radius: 6px;
 }
 .cost-table-wrap { margin-top: 4px; }
@@ -290,11 +290,11 @@ onMounted(() => { if (featureEnabled.value) loadProjects() })
   margin-bottom: 8px; padding: 6px 0;
 }
 .unified-label {
-  font-size: 12px; color: rgba(255, 255, 255, 0.55);
+  font-size: 12px; color: var(--text-dim);
   min-width: 56px;
 }
 .auto-save-hint {
-  font-size: 11px; color: rgba(0, 212, 255, 0.7);
+  font-size: 11px; color: color-mix(in srgb, var(--accent) 70%, transparent);
   margin-left: 4px;
 }
 .cost-table {
@@ -305,16 +305,16 @@ onMounted(() => { if (featureEnabled.value) loadProjects() })
 .cost-table th {
   text-align: left;
   padding: 6px 8px;
-  color: rgba(255, 255, 255, 0.45);
+  color: var(--text-dim);
   font-weight: 500;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: var(--divider);
 }
-.cost-table td { padding: 6px 8px; border-bottom: 1px solid rgba(255, 255, 255, 0.04); }
+.cost-table td { padding: 6px 8px; border-bottom: var(--divider-soft); }
 .cost-name {
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--text);
 }
 .cost-account {
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-dim);
   font-family: monospace;
   font-size: 11.5px;
 }
@@ -322,9 +322,9 @@ onMounted(() => { if (featureEnabled.value) loadProjects() })
   width: 80px;
   padding: 4px 8px;
   font-size: 12.5px;
-  background: rgba(0, 0, 0, 0.25);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--input-bg);
+  border: var(--input-border);
   border-radius: 4px;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--text);
 }
 </style>

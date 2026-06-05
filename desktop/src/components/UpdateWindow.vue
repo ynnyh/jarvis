@@ -158,20 +158,22 @@ function handleClose() {
   inset: var(--panel-top, 8px) var(--panel-right, 8px) var(--panel-bottom, 90px) var(--panel-left, 8px);
   display: flex;
   flex-direction: column;
-  background: linear-gradient(135deg, rgba(20, 30, 56, 0.97), rgba(15, 23, 42, 0.97));
-  border: 1px solid rgba(100, 200, 255, 0.18);
+  background: var(--panel-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: var(--panel-border);
   border-radius: 14px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--panel-shadow);
   overflow: hidden;
   z-index: 58;
-  color: rgba(255, 255, 255, 0.92);
+  color: var(--text);
 }
 
 .panel-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 8px 10px;
-  background: rgba(0, 0, 0, 0.2);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--panel-header-bg);
+  border-bottom: var(--panel-header-border);
 }
 .panel-title { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
 .title-icon { font-size: 14px; }
@@ -180,11 +182,11 @@ function handleClose() {
   width: 22px; height: 22px;
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 16px; line-height: 1;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--text-dim);
   background: transparent; border: none; border-radius: 6px;
   cursor: pointer;
 }
-.icon-btn:hover:not(:disabled) { color: rgba(255, 255, 255, 0.95); background: rgba(255, 255, 255, 0.08); }
+.icon-btn:hover:not(:disabled) { color: var(--text); background: var(--surface-item-hover); }
 .icon-btn:disabled { cursor: not-allowed; opacity: 0.35; }
 
 .panel-body {
@@ -202,8 +204,8 @@ function handleClose() {
   align-items: center;
   gap: 4px;
   padding: 12px;
-  background: rgba(0, 0, 0, 0.2);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--panel-header-bg);
+  border: var(--divider);
   border-radius: 10px;
 }
 .version-row {
@@ -212,10 +214,10 @@ function handleClose() {
   gap: 10px;
   font-size: 13px;
 }
-.version-label { color: rgba(255, 255, 255, 0.5); font-size: 11px; }
+.version-label { color: var(--text-muted); font-size: 11px; }
 .version-value { font-weight: 600; font-family: ui-monospace, SFMono-Regular, monospace; }
-.version-row.new .version-value { color: rgba(16, 185, 129, 0.95); font-size: 16px; }
-.version-arrow { color: rgba(255, 255, 255, 0.3); font-size: 14px; line-height: 1; }
+.version-row.new .version-value { color: var(--green-text); font-size: 16px; }
+.version-arrow { color: var(--text-faint); font-size: 14px; line-height: 1; }
 
 .phase-text {
   display: flex; align-items: center; gap: 6px; justify-content: center;
@@ -223,13 +225,13 @@ function handleClose() {
   font-size: 12px;
   text-align: center;
   border-radius: 8px;
-  background: rgba(0, 0, 0, 0.15);
-  color: rgba(255, 255, 255, 0.8);
+  background: var(--panel-header-bg);
+  color: var(--text-ghost);
 }
-.phase-text.phase-no-update { color: rgba(148, 163, 184, 0.9); }
-.phase-text.phase-available { color: rgba(16, 185, 129, 0.95); background: rgba(16, 185, 129, 0.1); }
-.phase-text.phase-error { color: rgba(248, 113, 113, 0.95); background: rgba(239, 68, 68, 0.12); }
-.phase-text.phase-installed { color: rgba(16, 185, 129, 0.95); }
+.phase-text.phase-no-update { color: var(--text-dim); }
+.phase-text.phase-available { color: var(--green-text); background: var(--green-bg); }
+.phase-text.phase-error { color: var(--red-text); background: var(--red-bg); }
+.phase-text.phase-installed { color: var(--green-text); }
 
 .spinner {
   width: 10px; height: 10px;
@@ -246,7 +248,7 @@ function handleClose() {
 }
 .progress-bar {
   width: 100%; height: 8px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--surface-item-hover);
   border-radius: 4px;
   overflow: hidden;
 }
@@ -268,28 +270,28 @@ function handleClose() {
 .progress-meta {
   display: flex; justify-content: space-between;
   font-size: 10.5px;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--text-dim);
   font-family: ui-monospace, SFMono-Regular, monospace;
 }
 
 .notes-block {
   display: flex; flex-direction: column; gap: 4px;
   padding: 10px;
-  background: rgba(0, 0, 0, 0.18);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: var(--panel-header-bg);
+  border: 1px solid var(--border-soft);
   border-radius: 8px;
 }
 .notes-title {
   font-size: 11px;
   font-weight: 600;
-  color: rgba(0, 212, 255, 0.85);
+  color: var(--accent-text);
   letter-spacing: 0.5px;
 }
 .notes-text {
   margin: 0;
   font-size: 11.5px;
   line-height: 1.5;
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--text-ghost);
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 140px;
@@ -301,8 +303,8 @@ function handleClose() {
   display: flex;
   gap: 6px;
   padding: 8px 10px;
-  background: rgba(0, 0, 0, 0.2);
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--panel-header-bg);
+  border-top: var(--divider);
 }
 .primary-btn {
   flex: 1;
@@ -310,7 +312,7 @@ function handleClose() {
   font-size: 12px;
   font-weight: 500;
   color: white;
-  background: linear-gradient(135deg, rgba(0, 212, 255, 0.9), rgba(59, 130, 246, 0.9));
+  background: var(--btn-primary-bg);
   border: none;
   border-radius: 6px;
   cursor: pointer;
@@ -321,22 +323,22 @@ function handleClose() {
   transform: translateY(-1px);
 }
 .primary-btn:disabled {
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.4);
+  background: var(--surface-item-hover);
+  color: var(--text-muted);
   cursor: not-allowed;
 }
 .secondary-btn {
   padding: 7px 14px;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.7);
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-ghost);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 6px;
   cursor: pointer;
 }
 .secondary-btn:hover:not(:disabled) {
-  color: rgba(255, 255, 255, 0.95);
-  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  background: var(--surface-item-active);
 }
 .secondary-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 

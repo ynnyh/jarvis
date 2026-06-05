@@ -97,8 +97,8 @@ function renderInline(text: string): string {
 }
 .changelog-card {
   padding: 14px 16px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--surface);
+  border: var(--divider);
   border-radius: 8px;
 }
 .changelog-card-header {
@@ -108,12 +108,12 @@ function renderInline(text: string): string {
   font-family: ui-monospace, monospace;
   font-size: 13px;
   font-weight: 600;
-  color: rgba(147, 197, 253, 0.95);
+  color: var(--accent-text);
 }
 .changelog-intro {
   margin: 0 0 10px;
   font-size: 12.5px;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--text-ghost);
   line-height: 1.55;
   white-space: pre-wrap;
 }
@@ -127,7 +127,7 @@ function renderInline(text: string): string {
   margin: 0 0 6px;
   font-size: 12px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.75);
+  color: var(--text-ghost);
 }
 .changelog-items {
   margin: 0;
@@ -137,11 +137,11 @@ function renderInline(text: string): string {
 .changelog-items li {
   margin-bottom: 4px;
   font-size: 12.5px;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--text);
   line-height: 1.6;
 }
 .changelog-items :deep(strong) {
-  color: rgba(255, 255, 255, 0.98);
+  color: var(--text);
   font-weight: 600;
 }
 </style>

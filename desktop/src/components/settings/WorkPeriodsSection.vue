@@ -35,19 +35,19 @@ const store = useConfigStore()
   width: 50px;
   padding: 3px 6px;
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.85);
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  background: var(--input-bg);
+  border: var(--input-border);
   border-radius: 4px;
 }
 .time-input {
   padding: 3px 6px;
   font-size: 11px;
   font-family: inherit;
-  color: rgba(255, 255, 255, 0.92);
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  background: var(--input-bg);
+  border: var(--input-border);
   border-radius: 4px;
 }
-.dash { color: rgba(255, 255, 255, 0.4); font-size: 11px; }
+.dash { color: var(--text-dim); font-size: 11px; }
 </style>

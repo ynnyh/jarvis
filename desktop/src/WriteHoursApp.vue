@@ -11,6 +11,10 @@ import { onMounted, onUnmounted, ref, computed, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { emit } from '@tauri-apps/api/event'
 import ErrorBoundary from './components/ErrorBoundary.vue'
+import MatrixRain from './components/MatrixRain.vue'
+import CyberParticles from './components/CyberParticles.vue'
+import { useTheme } from './composables/useTheme'
+useTheme()
 
 interface TaskInfo {
   id: string
@@ -200,7 +204,9 @@ onUnmounted(() => {
 
 <template>
   <ErrorBoundary>
-  <div class="wh-root">
+  <div class="wh-root theme-bg">
+    <MatrixRain />
+    <CyberParticles />
     <header class="wh-header" data-tauri-drag-region>
       <h1 class="wh-title" data-tauri-drag-region>
         {{ payload?.kind === 'orphan' ? '✍️ 写到任务' : '✍️ 写入工时到禅道' }}
@@ -306,8 +312,8 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: linear-gradient(135deg, #1a2238, #0f172a);
-  color: rgba(255, 255, 255, 0.92);
+  background: var(--bg);
+  color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
@@ -318,15 +324,15 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 8px;
   padding: 12px 16px;
-  background: rgba(0, 0, 0, 0.25);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--panel-bg);
+  border-bottom: 1px solid var(--divider);
   user-select: none;
 }
 .wh-title {
   margin: 0;
   font-size: 14px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.95);
+  color: var(--text);
   flex: 1;
 }
 .wh-header-close {
@@ -339,15 +345,15 @@ onUnmounted(() => {
   background: transparent;
   border: none;
   border-radius: 4px;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--text-ghost);
   font-size: 18px;
   cursor: pointer;
   padding: 0;
   line-height: 1;
 }
 .wh-header-close:hover:not(:disabled) {
-  background: rgba(239, 68, 68, 0.25);
-  color: rgba(255, 255, 255, 0.98);
+  background: var(--red-bg-strong);
+  color: var(--red-text);
 }
 .wh-header-close:disabled { opacity: 0.4; cursor: not-allowed; }
 
@@ -364,23 +370,23 @@ onUnmounted(() => {
 .form-row-grow { flex: 1; min-height: 0; }
 .form-label {
   font-size: 12.5px;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--text-dim);
   font-weight: 500;
 }
 .form-input,
 .form-textarea {
   padding: 8px 10px;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.95);
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
   border-radius: 6px;
   outline: none;
   font-family: inherit;
   transition: border-color 0.15s;
 }
 .form-input:focus,
-.form-textarea:focus { border-color: rgba(59, 130, 246, 0.6); }
+.form-textarea:focus { border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
 .form-input:disabled,
 .form-textarea:disabled { opacity: 0.55; cursor: not-allowed; }
 .form-textarea {
@@ -394,15 +400,15 @@ onUnmounted(() => {
 .form-hint {
   margin: 0;
   font-size: 11.5px;
-  color: rgba(255, 255, 255, 0.45);
+  color: var(--text-muted);
   line-height: 1.5;
 }
-.form-hint strong { color: rgba(196, 181, 253, 0.95); }
+.form-hint strong { color: color-mix(in srgb, var(--accent-text) 80%, transparent); }
 
 .clear-task-btn {
   background: transparent;
   border: none;
-  color: rgba(96, 165, 250, 0.85);
+  color: var(--accent-text);
   font-size: 11px;
   cursor: pointer;
   padding: 0 4px;
@@ -410,16 +416,16 @@ onUnmounted(() => {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.clear-task-btn:hover:not(:disabled) { color: rgba(147, 197, 253, 1); }
+.clear-task-btn:hover:not(:disabled) { color: var(--accent-text); }
 .clear-task-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .form-error {
   margin: 0;
   padding: 8px 10px;
   font-size: 12px;
-  color: rgba(252, 165, 165, 0.95);
-  background: rgba(239, 68, 68, 0.12);
-  border-left: 3px solid rgba(239, 68, 68, 0.5);
+  color: var(--red-text);
+  background: var(--red-bg);
+  border-left: 3px solid var(--red-border);
   border-radius: 4px;
   word-break: break-word;
 }
@@ -427,9 +433,9 @@ onUnmounted(() => {
   margin: 0;
   padding: 8px 10px;
   font-size: 12px;
-  color: rgba(134, 239, 172, 0.95);
-  background: rgba(34, 197, 94, 0.12);
-  border-left: 3px solid rgba(34, 197, 94, 0.5);
+  color: var(--green-text);
+  background: var(--green-bg);
+  border-left: 3px solid var(--green-border);
   border-radius: 4px;
 }
 
@@ -444,16 +450,16 @@ onUnmounted(() => {
   list-style: none;
   margin: 2px 0 0;
   padding: 4px 0;
-  background: #1e293b;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 6px;
   max-height: 220px;
   overflow-y: auto;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 8px 24px var(--overlay);
 }
 .task-search-dropdown::-webkit-scrollbar { width: 4px; }
 .task-search-dropdown::-webkit-scrollbar-track { background: transparent; }
-.task-search-dropdown::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
+.task-search-dropdown::-webkit-scrollbar-thumb { background: var(--text-ghost); border-radius: 2px; }
 .task-search-option {
   display: flex;
   align-items: center;
@@ -461,16 +467,16 @@ onUnmounted(() => {
   padding: 6px 10px;
   cursor: pointer;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--text);
   transition: background 0.1s;
 }
 .task-search-option:hover {
-  background: rgba(59, 130, 246, 0.2);
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
 }
 .tso-id {
   font-family: ui-monospace, monospace;
   font-size: 11px;
-  color: rgba(147, 197, 253, 0.8);
+  color: var(--accent-text);
   flex-shrink: 0;
 }
 .tso-name {
@@ -486,8 +492,8 @@ onUnmounted(() => {
   justify-content: flex-end;
   gap: 10px;
   padding: 12px 20px;
-  background: rgba(0, 0, 0, 0.2);
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--panel-bg);
+  border-top: 1px solid var(--divider);
 }
 .btn {
   padding: 8px 18px;
@@ -501,20 +507,20 @@ onUnmounted(() => {
 .btn:disabled { cursor: not-allowed; opacity: 0.5; }
 .btn-cancel {
   background: transparent;
-  color: rgba(255, 255, 255, 0.7);
-  border-color: rgba(255, 255, 255, 0.18);
+  color: var(--text-dim);
+  border-color: var(--border);
 }
 .btn-cancel:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(255, 255, 255, 0.95);
+  background: var(--surface-item-hover);
+  color: var(--text);
 }
 .btn-confirm {
-  background: linear-gradient(135deg, rgba(167, 139, 250, 0.95), rgba(139, 92, 246, 0.95));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 90%, transparent), color-mix(in srgb, var(--accent) 70%, transparent));
   color: white;
   border-color: transparent;
   font-weight: 500;
 }
 .btn-confirm:hover:not(:disabled) {
-  box-shadow: 0 4px 12px rgba(167, 139, 250, 0.35);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 </style>

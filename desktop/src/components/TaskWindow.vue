@@ -177,13 +177,15 @@ const hasAnyAlert = computed(() =>
   inset: var(--panel-top, 8px) var(--panel-right, 8px) var(--panel-bottom, 90px) var(--panel-left, 8px);
   display: flex;
   flex-direction: column;
-  background: linear-gradient(135deg, rgba(20, 30, 56, 0.97), rgba(15, 23, 42, 0.97));
-  border: 1px solid rgba(100, 200, 255, 0.16);
-  border-radius: 14px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  background: var(--popup-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: var(--panel-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--panel-shadow);
   overflow: hidden;
   z-index: 50;
-  color: rgba(255, 255, 255, 0.92);
+  color: var(--text);
 }
 
 /* ===== 标题栏 ===== */
@@ -192,8 +194,8 @@ const hasAnyAlert = computed(() =>
   align-items: center;
   justify-content: space-between;
   padding: 8px 10px;
-  background: rgba(0, 0, 0, 0.2);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--panel-header-bg);
+  border-bottom: var(--panel-header-border);
 }
 .panel-title {
   display: flex;
@@ -201,7 +203,7 @@ const hasAnyAlert = computed(() =>
   gap: 6px;
   font-size: 13px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.95);
+  color: var(--text);
 }
 .title-icon { font-size: 14px; }
 .panel-actions { display: flex; gap: 2px; }
@@ -213,20 +215,20 @@ const hasAnyAlert = computed(() =>
   justify-content: center;
   font-size: 14px;
   line-height: 1;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--text-dim);
   background: transparent;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
 .icon-btn:hover {
-  color: rgba(255, 255, 255, 0.95);
-  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  background: var(--surface-item-hover);
 }
 .icon-btn.spinning {
   animation: spin 0.6s linear infinite;
-  color: rgba(0, 212, 255, 0.95);
+  color: var(--accent-text);
 }
 @keyframes spin {
   to { transform: rotate(360deg); }
@@ -239,9 +241,9 @@ const hasAnyAlert = computed(() =>
   gap: 6px;
   padding: 4px 10px;
   font-size: 10px;
-  background: rgba(0, 0, 0, 0.15);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.6);
+  background: var(--panel-header-bg);
+  border-bottom: var(--divider-soft);
+  color: var(--text-dim);
 }
 .conn-dot {
   width: 6px;
@@ -255,22 +257,22 @@ const hasAnyAlert = computed(() =>
 }
 .conn-ok .conn-dot { background: rgba(16, 185, 129, 0.95); }
 .conn-error .conn-dot { background: rgba(239, 68, 68, 0.95); }
-.conn-ok { color: rgba(16, 185, 129, 0.85); }
-.conn-error { color: rgba(239, 68, 68, 0.9); }
-.conn-meta { margin-left: auto; color: rgba(255, 255, 255, 0.45); }
+.conn-ok { color: var(--green-text); }
+.conn-error { color: var(--red-text); }
+.conn-meta { margin-left: auto; color: var(--text-muted); font-family: var(--font-display); font-variant-numeric: var(--num-font-variant); }
 .range-select {
   margin-left: 6px;
   padding: 1px 4px;
   font-size: 10px;
   font-family: inherit;
-  color: rgba(255, 255, 255, 0.75);
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
+  color: var(--text-ghost);
+  background: var(--input-bg);
+  border: var(--input-border);
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
-.range-select:hover { background: rgba(255, 255, 255, 0.1); }
-.range-select:focus { outline: none; border-color: rgba(0, 212, 255, 0.5); }
+.range-select:hover { background: var(--surface-item-active); }
+.range-select:focus { outline: none; border-color: var(--accent-border); }
 .range-select option { color: #222; background: #fff; }
 /* conn-meta 没有时 select 自己往右 */
 .conn-bar > .range-select:not(:last-child) { margin-left: 6px; }
@@ -313,20 +315,22 @@ const hasAnyAlert = computed(() =>
   height: 16px;
   font-size: 10px;
   font-weight: 700;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-sm);
+  background: var(--surface-item-hover);
+  font-family: var(--font-display);
+  font-variant-numeric: var(--num-font-variant);
 }
-.group-danger .group-title { color: rgba(248, 113, 113, 0.95); }
-.group-warn .group-title { color: rgba(250, 204, 21, 0.95); }
-.group-soon .group-title { color: rgba(96, 165, 250, 0.95); }
-.group-upcoming .group-title { color: rgba(167, 139, 250, 0.9); }
+.group-danger .group-title { color: var(--red-text); }
+.group-warn .group-title { color: var(--yellow-text); }
+.group-soon .group-title { color: var(--blue-text); }
+.group-upcoming .group-title { color: var(--purple-text); }
 
 .task-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
 .task-item {
   padding: 7px 9px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   border: 1px solid transparent;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface);
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -334,26 +338,27 @@ const hasAnyAlert = computed(() =>
   transition: background 0.15s, border-color 0.15s, transform 0.1s;
 }
 .task-item:active { transform: scale(0.985); }
+.task-item:hover { box-shadow: var(--shadow-1); }
 .task-item.danger {
-  background: rgba(239, 68, 68, 0.08);
-  border-color: rgba(239, 68, 68, 0.18);
+  background: var(--red-bg);
+  border-color: var(--red-border);
 }
-.task-item.danger:hover { background: rgba(239, 68, 68, 0.14); }
+.task-item.danger:hover { background: var(--red-bg); }
 .task-item.warn {
-  background: rgba(245, 158, 11, 0.08);
-  border-color: rgba(245, 158, 11, 0.18);
+  background: var(--yellow-bg);
+  border-color: var(--yellow-border);
 }
-.task-item.warn:hover { background: rgba(245, 158, 11, 0.14); }
+.task-item.warn:hover { background: var(--yellow-bg); }
 .task-item.soon {
-  background: rgba(59, 130, 246, 0.06);
-  border-color: rgba(59, 130, 246, 0.18);
+  background: var(--blue-bg);
+  border-color: var(--blue-border);
 }
-.task-item.soon:hover { background: rgba(59, 130, 246, 0.12); }
+.task-item.soon:hover { background: var(--blue-bg); }
 .task-item.upcoming {
-  background: rgba(139, 92, 246, 0.05);
-  border-color: rgba(139, 92, 246, 0.14);
+  background: var(--purple-bg);
+  border-color: var(--purple-border);
 }
-.task-item.upcoming:hover { background: rgba(139, 92, 246, 0.1); }
+.task-item.upcoming:hover { background: var(--purple-bg); }
 
 .task-row1 {
   display: flex;
@@ -364,7 +369,7 @@ const hasAnyAlert = computed(() =>
 .task-title {
   font-size: 11.5px;
   line-height: 1.4;
-  color: rgba(255, 255, 255, 0.92);
+  color: var(--text);
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -375,31 +380,31 @@ const hasAnyAlert = computed(() =>
   flex-shrink: 0;
   font-size: 9.5px;
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   white-space: nowrap;
 }
-.badge-danger { background: rgba(239, 68, 68, 0.25); color: rgba(254, 202, 202, 0.95); }
-.badge-warn { background: rgba(245, 158, 11, 0.25); color: rgba(254, 215, 170, 0.95); }
-.badge-soon { background: rgba(59, 130, 246, 0.25); color: rgba(191, 219, 254, 0.95); }
-.badge-upcoming { background: rgba(139, 92, 246, 0.2); color: rgba(221, 214, 254, 0.92); }
+.badge-danger { background: var(--red-bg-strong); color: var(--red-text-light); }
+.badge-warn { background: var(--yellow-bg-strong); color: var(--yellow-text-light); }
+.badge-soon { background: var(--blue-bg-strong); color: var(--blue-text-light); }
+.badge-upcoming { background: var(--purple-bg-strong); color: var(--purple-text-light); }
 
 .task-row2 {
   display: flex;
   align-items: center;
   gap: 4px;
   font-size: 10px;
-  color: rgba(255, 255, 255, 0.45);
+  color: var(--text-muted);
 }
-.muted { color: rgba(255, 255, 255, 0.35); }
+.muted { color: var(--text-faint); }
 
 .team-tag {
   display: inline-flex;
   align-items: center;
   padding: 0 4px;
   font-size: 9.5px;
-  color: rgba(167, 139, 250, 0.95);
-  background: rgba(167, 139, 250, 0.12);
-  border-radius: 4px;
+  color: var(--purple-text);
+  background: var(--purple-bg);
+  border-radius: var(--radius-sm);
   margin-left: 2px;
 }
 
@@ -412,7 +417,7 @@ const hasAnyAlert = computed(() =>
   padding: 6px 10px;
   background: linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(239, 68, 68, 0.12));
   border: 1px solid rgba(245, 158, 11, 0.3);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   font-size: 10.5px;
 }
 .stack-icon { font-size: 14px; line-height: 1.4; flex-shrink: 0; }
@@ -420,19 +425,21 @@ const hasAnyAlert = computed(() =>
 .stack-title {
   font-size: 11px;
   font-weight: 600;
-  color: rgba(254, 215, 170, 0.95);
+  color: var(--yellow-text-light);
   margin-bottom: 2px;
 }
 .stack-detail {
-  color: rgba(255, 255, 255, 0.65);
+  color: var(--text-dim);
   font-size: 10px;
   word-break: break-word;
 }
-.stack-day { color: rgba(254, 215, 170, 0.85); }
+.stack-day { color: var(--yellow-text-light); }
 .stack-num {
   margin-left: 2px;
   font-weight: 600;
-  color: rgba(248, 113, 113, 0.95);
+  color: var(--red-text);
+  font-family: var(--font-display);
+  font-variant-numeric: var(--num-font-variant);
 }
 
 /* ===== 空状态 / 加载态 / 错误态 ===== */
@@ -444,7 +451,7 @@ const hasAnyAlert = computed(() =>
   justify-content: center;
   text-align: center;
   padding: 20px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--text-muted);
 }
 .empty-icon {
   font-size: 28px;
@@ -455,27 +462,27 @@ const hasAnyAlert = computed(() =>
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: rgba(16, 185, 129, 0.12);
-  color: rgba(16, 185, 129, 0.95);
+  background: var(--green-bg);
+  color: var(--green-text);
   font-weight: 600;
 }
 .empty-icon.loading {
-  background: rgba(245, 158, 11, 0.12);
-  color: rgba(245, 158, 11, 0.95);
+  background: var(--yellow-bg);
+  color: var(--yellow-text);
   animation: spin 1s linear infinite;
 }
 .empty-icon.error {
-  background: rgba(239, 68, 68, 0.12);
-  color: rgba(239, 68, 68, 0.95);
+  background: var(--red-bg);
+  color: var(--red-text);
 }
 .empty-text {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--text-ghost);
   margin: 4px 0 2px;
 }
 .empty-hint {
   font-size: 10.5px;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-muted);
   margin: 0;
   max-width: 200px;
 }
@@ -483,13 +490,13 @@ const hasAnyAlert = computed(() =>
   margin-top: 10px;
   padding: 4px 12px;
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.85);
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 6px;
+  color: var(--text-ghost);
+  background: var(--surface-item-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
   cursor: pointer;
 }
-.retry-btn:hover { background: rgba(255, 255, 255, 0.14); }
+.retry-btn:hover { background: var(--surface-item-active); }
 
 /* ===== 进出动效 ===== */
 .panel-enter-active,

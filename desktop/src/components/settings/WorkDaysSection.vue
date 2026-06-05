@@ -42,16 +42,16 @@ function toggle(day: number) {
   flex: 1;
   height: 26px;
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.55);
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  color: var(--text-ghost);
+  background: var(--surface);
+  border: var(--divider);
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.15s;
 }
 .weekday-btn.active {
-  color: rgba(0, 212, 255, 0.95);
-  background: rgba(0, 212, 255, 0.12);
-  border-color: rgba(0, 212, 255, 0.4);
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
 }
 </style>

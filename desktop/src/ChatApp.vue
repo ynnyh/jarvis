@@ -12,6 +12,9 @@ import { listen } from '@tauri-apps/api/event'
 import { useConfigStore } from './stores/config'
 import ErrorBoundary from './components/ErrorBoundary.vue'
 import MarkdownRenderer from './components/MarkdownRenderer.vue'
+import MatrixRain from './components/MatrixRain.vue'
+import CyberParticles from './components/CyberParticles.vue'
+import { useTheme } from './composables/useTheme'
 
 // rename input 出现时自动 focus + select。Vue 3 <script setup> 里 v 前缀的常量
 // 自动被识别为模板里的 v-focus 指令
@@ -20,6 +23,7 @@ const vFocus: Directive<HTMLInputElement> = {
 }
 
 const configStore = useConfigStore()
+useTheme()
 
 // ===== 类型 =====
 interface ConversationMeta {
@@ -445,7 +449,9 @@ watch(() => configStore.config.assistantName, (n) => {
 
 <template>
   <ErrorBoundary>
-  <div class="chat-root">
+  <div class="chat-root theme-bg">
+    <MatrixRain />
+    <CyberParticles />
     <!-- 头部（可拖动） -->
     <header class="chat-header">
       <span class="title">{{ configStore.config.assistantName }} · 对话</span>
@@ -588,8 +594,8 @@ watch(() => configStore.config.assistantName, (n) => {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: linear-gradient(135deg, rgba(20, 30, 56, 1), rgba(15, 23, 42, 1));
-  color: rgba(255, 255, 255, 0.92);
+  background: var(--bg);
+  color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
 }
 
@@ -598,8 +604,8 @@ watch(() => configStore.config.assistantName, (n) => {
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
-  background: rgba(0, 0, 0, 0.25);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--panel-bg);
+  border-bottom: 1px solid var(--divider);
   -webkit-app-region: drag;
   user-select: none;
 }
@@ -608,12 +614,12 @@ watch(() => configStore.config.assistantName, (n) => {
   width: 24px; height: 24px;
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 18px; line-height: 1;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--text-ghost);
   background: transparent; border: none; border-radius: 6px;
   cursor: pointer;
   -webkit-app-region: no-drag;
 }
-.close-btn:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
+.close-btn:hover { color: var(--text); background: var(--surface-item-hover); }
 
 .chat-body {
   flex: 1;
@@ -626,20 +632,20 @@ watch(() => configStore.config.assistantName, (n) => {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  background: rgba(0, 0, 0, 0.18);
-  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--surface);
+  border-right: 1px solid var(--divider);
 }
 .new-btn {
   margin: 10px;
   padding: 8px 12px;
   font-size: 12px;
-  color: rgba(0, 212, 255, 0.95);
-  background: rgba(0, 212, 255, 0.12);
-  border: 1px solid rgba(0, 212, 255, 0.35);
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
   border-radius: 6px;
   cursor: pointer;
 }
-.new-btn:hover { background: rgba(0, 212, 255, 0.2); }
+.new-btn:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
 
 .conv-list {
   flex: 1;
@@ -657,10 +663,10 @@ watch(() => configStore.config.assistantName, (n) => {
   font-size: 12px;
   transition: background 0.12s;
 }
-.conv-item:hover { background: rgba(255, 255, 255, 0.05); }
-.conv-item.active { background: rgba(0, 212, 255, 0.12); }
+.conv-item:hover { background: var(--surface-item-hover); }
+.conv-item.active { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .conv-title {
-  color: rgba(255, 255, 255, 0.92);
+  color: var(--text);
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
@@ -669,7 +675,7 @@ watch(() => configStore.config.assistantName, (n) => {
 .conv-meta {
   margin-top: 2px;
   font-size: 10.5px;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-muted);
 }
 .conv-del {
   position: absolute;
@@ -679,7 +685,7 @@ watch(() => configStore.config.assistantName, (n) => {
   width: 18px; height: 18px;
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 14px;
-  color: rgba(255, 255, 255, 0.35);
+  color: var(--text-muted);
   background: transparent;
   border: none;
   border-radius: 4px;
@@ -688,20 +694,20 @@ watch(() => configStore.config.assistantName, (n) => {
   transition: opacity 0.12s;
 }
 .conv-item:hover .conv-del { opacity: 1; }
-.conv-del:hover { color: rgba(239, 68, 68, 0.95); background: rgba(239, 68, 68, 0.12); }
+.conv-del:hover { color: var(--red-text); background: var(--red-bg); }
 .rename-input {
   width: 100%;
   padding: 3px 6px;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.95);
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(0, 212, 255, 0.5);
+  color: var(--text);
+  background: var(--input-bg);
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
   border-radius: 4px;
 }
 .empty-hint {
   padding: 12px;
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.35);
+  color: var(--text-muted);
   text-align: center;
 }
 
@@ -724,13 +730,13 @@ watch(() => configStore.config.assistantName, (n) => {
 .empty-state {
   margin: auto;
   text-align: center;
-  color: rgba(255, 255, 255, 0.45);
+  color: var(--text-ghost);
   font-size: 13px;
 }
 .empty-state .hint {
   margin-top: 8px;
   font-size: 11.5px;
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--text-muted);
 }
 
 .msg {
@@ -746,25 +752,25 @@ watch(() => configStore.config.assistantName, (n) => {
   gap: 6px;
   margin-bottom: 4px;
   font-size: 10.5px;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--text-ghost);
   font-weight: 500;
 }
-.msg-time { color: rgba(255, 255, 255, 0.3); }
+.msg-time { color: var(--text-muted); }
 .msg-content {
   white-space: pre-wrap;
   word-break: break-word;
-  color: rgba(255, 255, 255, 0.92);
+  color: var(--text);
 }
 .msg-user {
   align-self: flex-end;
-  background: rgba(0, 212, 255, 0.14);
-  border: 1px solid rgba(0, 212, 255, 0.28);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
 }
 .msg-user .msg-role { justify-content: flex-end; }
 .msg-assistant {
   align-self: flex-start;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  border: 1px solid var(--border);
 }
 .msg-assistant-content {
   font-size: 13px;
@@ -772,8 +778,8 @@ watch(() => configStore.config.assistantName, (n) => {
 }
 .msg-tool {
   align-self: flex-start;
-  background: rgba(168, 85, 247, 0.08);
-  border: 1px solid rgba(168, 85, 247, 0.25);
+  background: color-mix(in srgb, var(--purple-text) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--purple-text) 25%, transparent);
   font-family: ui-monospace, monospace;
   font-size: 11.5px;
 }
@@ -781,21 +787,21 @@ watch(() => configStore.config.assistantName, (n) => {
   cursor: pointer;
   user-select: none;
 }
-.tool-header:hover { color: rgba(255, 255, 255, 0.75); }
+.tool-header:hover { color: var(--text-dim); }
 .tool-toggle {
   display: inline-block;
   width: 12px;
-  color: rgba(168, 85, 247, 0.9);
+  color: var(--purple-text);
   font-family: ui-monospace, monospace;
 }
 .tool-preview {
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--text-dim);
   font-style: italic;
 }
 .tool-expanded {
   margin: 0;
   padding: 6px 8px;
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--input-bg);
   border-radius: 4px;
   max-height: 400px;
   overflow: auto;
@@ -804,7 +810,7 @@ watch(() => configStore.config.assistantName, (n) => {
   font-family: ui-monospace, monospace;
   font-size: 11px;
   line-height: 1.45;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--text);
 }
 .msg-system { display: none; }   /* 系统消息不可见 */
 
@@ -814,9 +820,9 @@ watch(() => configStore.config.assistantName, (n) => {
 .pending-summary {
   margin: 4px 0 10px;
   padding: 10px 12px;
-  color: rgba(255, 255, 255, 0.9);
-  background: rgba(0, 0, 0, 0.24);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 8px;
   white-space: pre-wrap;
   word-break: break-word;
@@ -838,24 +844,24 @@ watch(() => configStore.config.assistantName, (n) => {
   font-family: inherit;
   font-size: 12px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.82);
-  background: rgba(255, 255, 255, 0.07);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
   border-radius: 7px;
   cursor: pointer;
 }
 .pending-btn:hover:not(:disabled) {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.12);
+  color: var(--text);
+  background: var(--surface-item-hover);
 }
 .pending-btn-primary {
-  color: rgba(8, 20, 34, 0.96);
-  background: rgba(0, 212, 255, 0.9);
-  border-color: rgba(0, 212, 255, 0.18);
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent) 90%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .pending-btn-primary:hover:not(:disabled) {
-  color: rgba(8, 20, 34, 0.96);
-  background: rgba(44, 225, 255, 1);
+  color: var(--accent-text);
+  background: var(--accent);
 }
 .pending-btn:disabled {
   opacity: 0.48;
@@ -863,27 +869,27 @@ watch(() => configStore.config.assistantName, (n) => {
 }
 .pending-note {
   margin: 8px 0 0;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--text-ghost);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   font-size: 12px;
 }
-.pending-note.ok { color: rgba(52, 211, 153, 0.95); }
-.pending-note.fail { color: rgba(248, 113, 113, 0.95); }
+.pending-note.ok { color: var(--green-text); }
+.pending-note.fail { color: var(--red-text); }
 
 .typing {
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--text-ghost);
   font-style: italic;
 }
 .tool-call-hint {
-  color: rgba(168, 85, 247, 0.9);
+  color: var(--purple-text);
   font-size: 11.5px;
   font-style: italic;
 }
 
 .input-area {
   padding: 10px 14px 14px;
-  background: rgba(0, 0, 0, 0.18);
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--panel-bg);
+  border-top: 1px solid var(--divider);
   display: flex;
   gap: 8px;
   align-items: flex-end;
@@ -893,17 +899,17 @@ watch(() => configStore.config.assistantName, (n) => {
   padding: 8px 10px;
   font-family: inherit;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.92);
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
   border-radius: 8px;
   resize: none;
   outline: none;
   line-height: 1.45;
 }
 .input-box:focus {
-  border-color: rgba(0, 212, 255, 0.5);
-  background: rgba(0, 212, 255, 0.05);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
 }
 .input-box:disabled { opacity: 0.6; cursor: not-allowed; }
 .send-btn {
@@ -911,16 +917,16 @@ watch(() => configStore.config.assistantName, (n) => {
   height: 38px;
   font-size: 13px;
   font-weight: 500;
-  color: #fff;
-  background: rgba(0, 212, 255, 0.85);
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent) 85%, transparent);
   border: none;
   border-radius: 8px;
   cursor: pointer;
 }
-.send-btn:hover:not(:disabled) { background: rgba(0, 212, 255, 1); }
+.send-btn:hover:not(:disabled) { background: var(--accent); }
 .send-btn:disabled {
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.3);
+  background: var(--surface);
+  color: var(--text-muted);
   cursor: not-allowed;
 }
 </style>

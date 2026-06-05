@@ -60,8 +60,8 @@ const currentTheme = computed(() => getMenuTheme(store.config.menuTheme))
 .theme-preview-header {
   padding: 6px 10px;
   font-size: 10px;
-  color: rgba(255, 255, 255, 0.4);
-  background: rgba(0, 0, 0, 0.2);
+  color: var(--text-dim);
+  background: var(--surface-2);
   border-bottom: 1px solid rgba(148, 163, 184, 0.1);
 }
 
@@ -76,7 +76,7 @@ const currentTheme = computed(() => getMenuTheme(store.config.menuTheme))
 .theme-preview-group-label {
   padding: 2px 10px;
   font-size: 9px;
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--text-faint);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
@@ -87,6 +87,6 @@ const currentTheme = computed(() => getMenuTheme(store.config.menuTheme))
   gap: 6px;
   padding: 4px 10px;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--text-ghost);
 }
 </style>

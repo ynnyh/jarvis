@@ -274,17 +274,17 @@ async function deleteProfile(id: string) {
   align-items: center;
   gap: 6px;
   padding: 8px 10px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--surface);
+  border: var(--divider);
   border-radius: 6px;
   transition: border-color 0.15s;
 }
 .model-card:hover {
-  border-color: rgba(255, 255, 255, 0.15);
+  border-color: var(--border);
 }
 .model-card.active {
-  background: rgba(147, 197, 253, 0.06);
-  border-color: rgba(147, 197, 253, 0.2);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 20%, transparent);
 }
 .model-info {
   flex: 1;
@@ -296,36 +296,36 @@ async function deleteProfile(id: string) {
 }
 .model-name {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .model-meta {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.35);
+  color: var(--text-faint);
 }
 .model-badge {
   flex-shrink: 0;
   font-size: 10px;
   padding: 2px 8px;
-  background: rgba(147, 197, 253, 0.15);
-  color: rgba(147, 197, 253, 0.9);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent-text);
   border-radius: 10px;
 }
 .model-switch-btn {
   flex-shrink: 0;
   font-size: 11px;
   padding: 2px 10px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.7);
+  background: var(--input-bg);
+  border: var(--input-border);
+  color: var(--text-ghost);
   border-radius: 4px;
   cursor: pointer;
 }
 .model-switch-btn:hover:not(:disabled) {
-  background: rgba(147, 197, 253, 0.1);
-  color: rgba(147, 197, 253, 0.9);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent-text);
 }
 .model-edit-btn {
   flex-shrink: 0;
@@ -336,14 +336,14 @@ async function deleteProfile(id: string) {
   justify-content: center;
   background: none;
   border: none;
-  color: rgba(255, 255, 255, 0.25);
+  color: var(--text-faint);
   cursor: pointer;
   border-radius: 4px;
   font-size: 13px;
 }
 .model-edit-btn:hover {
-  color: rgba(147, 197, 253, 0.9);
-  background: rgba(147, 197, 253, 0.1);
+  color: var(--accent-text);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 .model-del-btn {
   flex-shrink: 0;
@@ -354,22 +354,22 @@ async function deleteProfile(id: string) {
   justify-content: center;
   background: none;
   border: none;
-  color: rgba(255, 255, 255, 0.2);
+  color: var(--text-faint);
   cursor: pointer;
   border-radius: 4px;
   font-size: 14px;
 }
 .model-del-btn:hover {
-  color: rgba(248, 113, 113, 0.95);
-  background: rgba(239, 68, 68, 0.1);
+  color: var(--red-text);
+  background: var(--red-bg);
 }
 .model-add-btn {
   font-size: 12px;
-  color: rgba(147, 197, 253, 0.8);
+  color: var(--accent-text);
   padding: 6px 0;
 }
 .model-add-btn:hover {
-  color: rgba(147, 197, 253, 1);
+  color: var(--accent-text);
 }
 .editor-header {
   display: flex;
@@ -381,14 +381,14 @@ async function deleteProfile(id: string) {
   text-align: center;
   padding: 24px 0;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.45);
+  color: var(--text-dim);
 }
 .cc-group {
   margin-bottom: 8px;
 }
 .cc-group-title {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-dim);
   padding: 6px 0 4px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -403,18 +403,18 @@ async function deleteProfile(id: string) {
   align-items: center;
   gap: 8px;
   padding: 7px 10px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--surface);
+  border: var(--divider);
   border-radius: 6px;
   cursor: pointer;
   transition: border-color 0.15s;
 }
 .cc-item:hover:not(.cc-imported) {
-  border-color: rgba(255, 255, 255, 0.15);
+  border-color: var(--border);
 }
 .cc-item.cc-selected {
-  background: rgba(147, 197, 253, 0.06);
-  border-color: rgba(147, 197, 253, 0.25);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 25%, transparent);
 }
 .cc-item.cc-imported {
   opacity: 0.5;
@@ -422,7 +422,7 @@ async function deleteProfile(id: string) {
 }
 .cc-item input[type="checkbox"] {
   flex-shrink: 0;
-  accent-color: rgba(147, 197, 253, 0.8);
+  accent-color: var(--accent-text);
 }
 .cc-item-info {
   flex: 1;
@@ -433,14 +433,14 @@ async function deleteProfile(id: string) {
 }
 .cc-item-name {
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .cc-item-meta {
   font-size: 10px;
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--text-faint);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -449,16 +449,16 @@ async function deleteProfile(id: string) {
   flex-shrink: 0;
   font-size: 10px;
   padding: 1px 6px;
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(255, 255, 255, 0.4);
+  background: var(--input-bg);
+  color: var(--text-dim);
   border-radius: 8px;
 }
 .cc-nokey-badge {
   flex-shrink: 0;
   font-size: 10px;
   padding: 1px 6px;
-  background: rgba(239, 68, 68, 0.1);
-  color: rgba(248, 113, 113, 0.8);
+  background: var(--red-bg);
+  color: var(--red-text);
   border-radius: 8px;
 }
 .cc-actions {

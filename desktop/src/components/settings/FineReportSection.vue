@@ -464,13 +464,13 @@ async function fetchEfforts() {
 <style scoped>
 .settings-divider {
   margin: 18px 0 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: var(--divider);
 }
 
 .settings-subsection-title {
   margin: 0 0 6px;
   font-size: 13px;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--text);
 }
 
 .date-row {
@@ -486,7 +486,7 @@ async function fetchEfforts() {
 }
 
 .date-sep {
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--text-ghost);
   font-size: 12px;
 }
 
@@ -499,9 +499,9 @@ async function fetchEfforts() {
 
 .range-tab {
   padding: 3px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.03);
-  color: rgba(255, 255, 255, 0.7);
+  border: var(--input-border);
+  background: var(--surface);
+  color: var(--text-ghost);
   border-radius: 12px;
   font-size: 11px;
   cursor: pointer;
@@ -509,15 +509,15 @@ async function fetchEfforts() {
 }
 
 .range-tab:hover {
-  background: rgba(147, 197, 253, 0.18);
-  border-color: rgba(147, 197, 253, 0.5);
-  color: rgba(191, 219, 254, 1);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  color: var(--accent-text);
 }
 
 .range-tab.active {
-  background: rgba(59, 130, 246, 0.28);
-  border-color: rgba(147, 197, 253, 0.65);
-  color: rgba(219, 234, 254, 1);
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 65%, transparent);
+  color: var(--accent-text);
   font-weight: 600;
 }
 
@@ -528,8 +528,8 @@ async function fetchEfforts() {
   margin-bottom: 12px;
   padding: 10px 12px;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--surface);
+  border: var(--divider);
 }
 
 .mode-badge {
@@ -545,18 +545,18 @@ async function fetchEfforts() {
 }
 
 .mode-badge.effort {
-  background: rgba(59, 130, 246, 0.18);
-  color: rgba(191, 219, 254, 0.96);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent-text);
 }
 
 .mode-badge.report {
-  background: rgba(168, 85, 247, 0.18);
-  color: rgba(233, 213, 255, 0.96);
+  background: color-mix(in srgb, var(--purple) 18%, transparent);
+  color: var(--purple-text);
 }
 
 .mode-text {
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--text-ghost);
   line-height: 1.5;
 }
 </style>

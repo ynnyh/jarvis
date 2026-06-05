@@ -57,7 +57,7 @@ function cronHuman(cron: string): string {
 <style scoped>
 .reminder-empty {
   padding: 12px 0;
-  color: rgba(255, 255, 255, 0.35);
+  color: var(--text-faint);
   font-size: 12.5px;
 }
 .reminder-list {
@@ -71,8 +71,8 @@ function cronHuman(cron: string): string {
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--surface);
+  border: var(--divider);
   border-radius: 6px;
   font-size: 12.5px;
 }
@@ -86,12 +86,12 @@ function cronHuman(cron: string): string {
 .reminder-cron {
   font-family: ui-monospace, monospace;
   font-size: 11px;
-  color: rgba(147, 197, 253, 0.9);
+  color: var(--accent-text);
   white-space: nowrap;
 }
 .reminder-message {
   flex: 1;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--text);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -106,13 +106,13 @@ function cronHuman(cron: string): string {
   justify-content: center;
   background: none;
   border: none;
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--text-faint);
   cursor: pointer;
   border-radius: 4px;
   font-size: 14px;
 }
 .reminder-delete:hover {
-  color: rgba(248, 113, 113, 0.95);
-  background: rgba(239, 68, 68, 0.1);
+  color: var(--red-text);
+  background: var(--red-bg);
 }
 </style>

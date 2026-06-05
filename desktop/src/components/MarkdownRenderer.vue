@@ -96,7 +96,7 @@ const html = computed(() => {
 .markdown-body h4 {
   margin: 14px 0 6px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.95);
+  color: var(--text);
 }
 .markdown-body h1 { font-size: 16px; }
 .markdown-body h2 { font-size: 15px; }
@@ -114,23 +114,23 @@ const html = computed(() => {
 .markdown-body blockquote {
   margin: 8px 0;
   padding: 4px 12px;
-  border-left: 3px solid rgba(0, 212, 255, 0.5);
-  color: rgba(255, 255, 255, 0.7);
-  background: rgba(255, 255, 255, 0.03);
+  border-left: 3px solid var(--accent-border);
+  color: var(--text-dim);
+  background: var(--surface);
   border-radius: 0 4px 4px 0;
 }
 
 .markdown-body a {
-  color: rgba(0, 212, 255, 0.9);
+  color: var(--accent-2);
   text-decoration: none;
 }
 .markdown-body a:hover { text-decoration: underline; }
 
-.markdown-body strong { color: rgba(255, 255, 255, 0.95); font-weight: 600; }
+.markdown-body strong { color: var(--text); font-weight: 600; }
 
 .markdown-body hr {
   border: none;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid var(--border);
   margin: 12px 0;
 }
 
@@ -142,17 +142,17 @@ const html = computed(() => {
 }
 .markdown-body th,
 .markdown-body td {
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid var(--border);
   padding: 5px 8px;
   text-align: left;
 }
 .markdown-body th {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface);
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--text);
 }
-.markdown-body td { color: rgba(255, 255, 255, 0.8); }
-.markdown-body tr:nth-child(even) td { background: rgba(255, 255, 255, 0.02); }
+.markdown-body td { color: var(--text); }
+.markdown-body tr:nth-child(even) td { background: var(--surface-2); }
 
 /* 代码块 */
 .code-block-wrapper {
@@ -189,11 +189,11 @@ const html = computed(() => {
 /* 行内代码 */
 .markdown-body code:not(.code-block code) {
   padding: 1px 5px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--surface-2);
   border-radius: 4px;
   font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 0.9em;
-  color: rgba(0, 212, 255, 0.9);
+  color: var(--accent-text);
 }
 
 /* highlight.js 暗色主题覆盖 */

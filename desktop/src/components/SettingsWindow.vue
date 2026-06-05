@@ -147,13 +147,13 @@ function openChatWindow() {
   inset: var(--panel-top, 8px) var(--panel-right, 8px) var(--panel-bottom, 90px) var(--panel-left, 8px);
   display: flex;
   flex-direction: column;
-  background: rgba(17, 24, 39, 0.98);
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: var(--popup-bg);
+  border: var(--panel-border);
   border-radius: 12px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.48);
+  box-shadow: var(--panel-shadow);
   overflow: hidden;
   z-index: 60;
-  color: rgba(255, 255, 255, 0.92);
+  color: var(--text);
 }
 
 .panel-header {
@@ -161,8 +161,8 @@ function openChatWindow() {
   align-items: center;
   justify-content: space-between;
   padding: 9px 11px;
-  background: rgba(0, 0, 0, 0.18);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--panel-header-bg);
+  border-bottom: var(--divider);
 }
 
 .panel-title {
@@ -178,7 +178,7 @@ function openChatWindow() {
 
 .title-sub {
   font-size: 10px;
-  color: rgba(255, 255, 255, 0.42);
+  color: var(--text-muted);
 }
 
 .icon-btn {
@@ -189,7 +189,7 @@ function openChatWindow() {
   justify-content: center;
   font-size: 18px;
   line-height: 1;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--text-dim);
   background: transparent;
   border: none;
   border-radius: 6px;
@@ -197,8 +197,8 @@ function openChatWindow() {
 }
 
 .icon-btn:hover {
-  color: rgba(255, 255, 255, 0.95);
-  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  background: var(--surface-item-hover);
 }
 
 .phase-bar {
@@ -207,27 +207,27 @@ function openChatWindow() {
   gap: 6px;
   padding: 5px 11px;
   font-size: 10px;
-  background: rgba(255, 255, 255, 0.03);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.64);
+  background: var(--surface);
+  border-bottom: var(--divider-soft);
+  color: var(--text-dim);
 }
 
 .phase-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: rgba(16, 185, 129, 0.95);
+  background: var(--green-text);
 }
 
-.phase-lunch .phase-dot { background: rgba(14, 165, 233, 0.95); }
+.phase-lunch .phase-dot { background: var(--blue-text); }
 .phase-after-work .phase-dot,
-.phase-before-work .phase-dot { background: rgba(148, 163, 184, 0.75); }
+.phase-before-work .phase-dot { background: var(--text-dim); }
 .phase-weekend .phase-dot,
-.phase-dayoff .phase-dot { background: rgba(245, 158, 11, 0.95); }
+.phase-dayoff .phase-dot { background: var(--yellow-text); }
 
 .phase-meta {
   margin-left: auto;
-  color: rgba(245, 158, 11, 0.9);
+  color: var(--yellow-text);
 }
 
 .menu-body {
@@ -251,7 +251,7 @@ function openChatWindow() {
   font-size: 10px;
   line-height: 1;
   font-weight: 700;
-  color: rgba(14, 165, 233, 0.88);
+  color: var(--accent-text);
 }
 
 .menu-item {
@@ -263,9 +263,9 @@ function openChatWindow() {
   gap: 7px;
   min-height: 50px;
   padding: 8px 10px;
-  color: rgba(255, 255, 255, 0.88);
-  background-color: rgba(30, 41, 59, 0.86);
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  color: var(--text);
+  background-color: var(--surface);
+  border: var(--panel-border);
   border-radius: 8px;
   cursor: pointer;
   text-align: left;
@@ -275,13 +275,14 @@ function openChatWindow() {
 
 .menu-item:hover,
 .menu-item:focus-visible {
-  background-color: rgba(14, 165, 233, 0.14);
-  border-color: rgba(14, 165, 233, 0.28);
+  background-color: var(--surface-item-hover);
+  border-color: var(--accent-border);
+  box-shadow: var(--shadow-1);
 }
 
 .menu-item-primary {
-  background-color: rgba(14, 165, 233, 0.16);
-  border-color: rgba(14, 165, 233, 0.34);
+  background-color: var(--accent-glow);
+  border-color: var(--accent-border);
 }
 
 .menu-main {
@@ -307,7 +308,7 @@ function openChatWindow() {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 10px;
-  color: rgba(255, 255, 255, 0.42);
+  color: var(--text-muted);
 }
 
 .menu-status {
@@ -319,14 +320,14 @@ function openChatWindow() {
   font-size: 10px;
   line-height: 1;
   padding: 4px 0;
-  color: rgba(134, 239, 172, 0.95);
+  color: var(--green-text-light);
 }
 
 .menu-arrow {
   justify-self: end;
   font-size: 20px;
   line-height: 1;
-  color: rgba(255, 255, 255, 0.28);
+  color: var(--text-faint);
 }
 
 .panel-enter-active,

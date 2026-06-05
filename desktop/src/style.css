@@ -6,10 +6,12 @@
 /* 全局工具类 ----------------------------------------------------------- */
 @layer components {
   .glass {
-    background: rgba(15, 23, 42, 0.92);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--card-bg);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: var(--card-border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--card-shadow);
   }
 }
 
@@ -32,6 +34,7 @@ body {
     'Noto Color Emoji', Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   user-select: none;
+  color: var(--text);
 }
 
 /* 隐藏滚动条 */
@@ -48,4 +51,779 @@ select {
 select option {
   background-color: #1e293b;
   color: #ffffff;
+}
+
+/* ===== 设计 token：主题切换的唯一开关面 =====================================
+   组件一律用 var(--xxx) 取值；切主题只改 <html data-theme>（见 composables/useTheme.ts）。
+   :root 默认值 = 霓虹风（旗舰）；其余主题按 [data-theme] 覆盖。
+   新增主题 = 复制一段 [data-theme="..."] 改值，无需动组件。 */
+/* 基础默认值 = 霓虹风（旗舰主题），所有窗口在无 data-theme 时也能正常渲染 */
+:root {
+  --bg: #0d0b1a;
+  --bg-2: #120d2e;
+  --surface: rgba(255, 255, 255, 0.03);
+  --surface-2: rgba(0, 0, 0, 0.25);
+  --surface-hover: rgba(255, 45, 149, 0.12);
+  --border: rgba(255, 255, 255, 0.10);
+  --border-soft: rgba(255, 255, 255, 0.06);
+  --text: rgba(255, 255, 255, 0.92);
+  --text-dim: rgba(255, 255, 255, 0.45);
+  --accent: #ff2d95;
+  --accent-2: #00d4ff;
+  --on-accent: #1a0010;
+  --danger: #f87171;
+  --warning: #f59e0b;
+  --success: #10b981;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-control: 6px;
+  --shadow-1: 0 4px 12px rgba(255, 45, 149, 0.3);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-mono: 'SFMono-Regular', ui-monospace, 'Cascadia Code', Consolas, monospace;
+  --motion-fast: 120ms;
+  --motion-base: 240ms;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  /* 装饰 token（默认值 = 霓虹风，确保无 data-theme 的窗口也能正常渲染 .glass 等） */
+  --theme-bg: linear-gradient(135deg, #0d0b1a 0%, #1a1035 40%, #0d1a2d 100%);
+  --theme-overlay-image: radial-gradient(ellipse at 20% 50%, rgba(255,45,149,0.10) 0%, transparent 50%), radial-gradient(ellipse at 80% 20%, rgba(0,212,255,0.08) 0%, transparent 50%), radial-gradient(ellipse at 50% 80%, rgba(139,92,246,0.06) 0%, transparent 50%);
+  --theme-overlay-opacity: 1;
+  --theme-blend: normal;
+  --glow: rgba(255, 45, 149, 0.6);
+  --glow-spread: 10px;
+  --card-bg: rgba(13, 11, 26, 0.78);
+  --card-border: 1px solid rgba(255, 45, 149, 0.45);
+  --card-shadow: 0 0 24px rgba(255, 45, 149, 0.28), 0 4px 16px rgba(0, 0, 0, 0.5);
+  --font-display: var(--font-mono);
+  --num-font-variant: tabular-nums;
+  --anim-idle-name: sci-fi-grid-pulse;
+  --anim-breathe-duration: 4s;
+}
+
+/* 霓虹风：品红霓虹 × 深紫暗夜 · 硬直角 · 发光描边 · 网格脉冲 */
+:root[data-theme="sci-fi"] {
+  --bg: #0d0b1a;
+  --bg-2: #120d2e;
+  --surface: rgba(255, 255, 255, 0.03);
+  --surface-2: rgba(0, 0, 0, 0.25);
+  --surface-hover: rgba(255, 45, 149, 0.14);
+  --border: rgba(255, 255, 255, 0.10);
+  --border-soft: rgba(255, 255, 255, 0.06);
+  --text: rgba(255, 255, 255, 0.92);
+  --text-dim: rgba(255, 255, 255, 0.45);
+  --accent: #ff2d95;
+  --accent-2: #00d4ff;
+  --on-accent: #1a0010;
+  --danger: #f87171;
+  --warning: #f59e0b;
+  --success: #10b981;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-control: 6px;
+  --shadow-1: 0 4px 12px rgba(255, 45, 149, 0.35);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-mono: 'SFMono-Regular', ui-monospace, 'Cascadia Code', Consolas, monospace;
+  --motion-fast: 120ms;
+  --motion-base: 240ms;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  /* 装饰 token */
+  --theme-bg: linear-gradient(135deg, #0d0b1a 0%, #1a1035 40%, #0d1a2d 100%);
+  --theme-overlay-image: radial-gradient(ellipse at 20% 50%, rgba(255,45,149,0.12) 0%, transparent 50%), radial-gradient(ellipse at 80% 20%, rgba(0,212,255,0.10) 0%, transparent 50%), radial-gradient(ellipse at 50% 80%, rgba(139,92,246,0.08) 0%, transparent 50%);
+  --theme-overlay-opacity: 1;
+  --theme-blend: normal;
+  --glow: rgba(255, 45, 149, 0.6);
+  --glow-spread: 12px;
+  --card-bg: rgba(13, 11, 26, 0.78);
+  --card-border: 1px solid rgba(255, 45, 149, 0.45);
+  --card-shadow: 0 0 24px rgba(255, 45, 149, 0.28), 0 4px 16px rgba(0, 0, 0, 0.5);
+  --font-display: var(--font-mono);
+  --num-font-variant: tabular-nums;
+  --anim-idle-name: sci-fi-grid-pulse;
+  --anim-breathe-duration: 4s;
+}
+
+/* 俏皮风(糖果)：奶油粉彩游乐园 · 大圆角 · 弹跳软影 · 糖果色 */
+:root[data-theme="playful"] {
+  --bg: #fff5f5;
+  --bg-2: #ffe8e8;
+  --surface: rgba(255, 255, 255, 0.82);
+  --surface-2: rgba(255, 255, 255, 0.55);
+  --surface-hover: rgba(255, 92, 138, 0.14);
+  --border: rgba(200, 100, 150, 0.22);
+  --border-soft: rgba(200, 100, 150, 0.10);
+  --text: #4a3040;
+  --text-dim: #b08a9a;
+  --accent: #ff5c8a;
+  --accent-2: #ff8f1c;
+  --on-accent: #ffffff;
+  --danger: #ef4444;
+  --warning: #f59e0b;
+  --success: #10b981;
+  --radius-sm: 10px;
+  --radius-md: 18px;
+  --radius-lg: 26px;
+  --radius-control: 999px;
+  --shadow-1: 0 8px 20px rgba(255, 92, 138, 0.30);
+  --shadow-2: 0 12px 32px rgba(200, 100, 150, 0.20);
+  --font-sans: 'Quicksand', 'Segoe UI Rounded', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-mono: 'Quicksand', ui-rounded, system-ui, sans-serif;
+  --motion-fast: 140ms;
+  --motion-base: 280ms;
+  --ease: cubic-bezier(0.34, 1.56, 0.64, 1);
+  /* 装饰 token */
+  --theme-bg: linear-gradient(160deg, #fff5f5 0%, #ffe4ed 25%, #e8d4f5 50%, #fef9e0 100%);
+  --theme-overlay-image: radial-gradient(circle at 15% 25%, rgba(255,92,138,0.15) 0%, transparent 40%), radial-gradient(circle at 85% 75%, rgba(255,143,28,0.12) 0%, transparent 40%), radial-gradient(circle at 50% 50%, rgba(200,150,255,0.10) 0%, transparent 50%);
+  --theme-overlay-opacity: 1;
+  --theme-blend: normal;
+  --glow: rgba(255, 92, 138, 0.25);
+  --glow-spread: 12px;
+  --card-bg: rgba(255, 240, 245, 0.90);
+  --card-border: 1px solid rgba(255, 92, 138, 0.20);
+  --card-shadow: 0 8px 24px rgba(255,92,138,0.16), 0 2px 8px rgba(0,0,0,0.04);
+  --font-display: var(--font-sans);
+  --num-font-variant: normal;
+  --anim-idle-name: playful-blob-float;
+  --anim-breathe-duration: 3s;
+}
+
+/* 治愈风(纸木)：手工纸木工坊 · 米灰低饱和 · 纸纹理 · 素色 */
+:root[data-theme="zen"] {
+  --bg: #f2f0e8;
+  --bg-2: #e6e3d9;
+  --surface: rgba(255, 255, 255, 0.80);
+  --surface-2: rgba(120, 110, 90, 0.05);
+  --surface-hover: rgba(168, 176, 158, 0.14);
+  --border: rgba(160, 150, 130, 0.15);
+  --border-soft: rgba(160, 150, 130, 0.08);
+  --text: #3d3a32;
+  --text-dim: #8a8579;
+  --accent: #a8b09e;
+  --accent-2: #d4cdbc;
+  --on-accent: #ffffff;
+  --danger: #b07a60;
+  --warning: #b8a070;
+  --success: #8aa07a;
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-control: 10px;
+  --shadow-1: 0 3px 10px rgba(160, 150, 130, 0.14);
+  --shadow-2: 0 6px 18px rgba(160, 150, 130, 0.10);
+  --font-sans: 'Nunito', 'Microsoft YaHei', 'Noto Sans SC', system-ui, sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  --motion-fast: 180ms;
+  --motion-base: 350ms;
+  --ease: cubic-bezier(0.37, 0, 0.27, 1);
+  /* 装饰 token */
+  --theme-bg: linear-gradient(180deg, #f2f0e8 0%, #e6e3d9 100%);
+  --theme-overlay-image: repeating-linear-gradient(45deg, transparent, transparent 3px, rgba(160,150,130,0.03) 3px, rgba(160,150,130,0.03) 6px);
+  --theme-overlay-opacity: 1;
+  --theme-blend: multiply;
+  --glow: transparent;
+  --glow-spread: 0;
+  --card-bg: #f2f0e8;
+  --card-border: 1px solid rgba(160, 150, 130, 0.12);
+  --card-shadow: 1px 2px 6px rgba(160,150,130,0.08);
+  --font-display: var(--font-sans);
+  --num-font-variant: normal;
+  --anim-idle-name: zen-breathe;
+  --anim-breathe-duration: 6s;
+}
+
+/* 极简风：纯黑白稿 · 灰阶单色 · 发丝边框 · 零阴影零动效 */
+:root[data-theme="minimal"] {
+  --bg: #0f172a;
+  --bg-2: #0f172a;
+  --surface: rgba(255, 255, 255, 0.02);
+  --surface-2: rgba(255, 255, 255, 0.03);
+  --surface-hover: rgba(255, 255, 255, 0.06);
+  --border: rgba(255, 255, 255, 0.12);
+  --border-soft: rgba(255, 255, 255, 0.06);
+  --text: rgba(255, 255, 255, 0.90);
+  --text-dim: rgba(255, 255, 255, 0.40);
+  --accent: #e2e8f0;
+  --accent-2: #94a3b8;
+  --on-accent: #0f172a;
+  --danger: #f87171;
+  --warning: #cbd5e1;
+  --success: #cbd5e1;
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+  --radius-control: 4px;
+  --shadow-1: none;
+  --shadow-2: none;
+  --font-sans: system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  --font-mono: ui-monospace, Consolas, monospace;
+  --motion-fast: 80ms;
+  --motion-base: 120ms;
+  --ease: ease;
+  /* 装饰 token */
+  --theme-bg: #0f172a;
+  --theme-overlay-image: none;
+  --theme-overlay-opacity: 0;
+  --theme-blend: normal;
+  --glow: transparent;
+  --glow-spread: 0;
+  --card-bg: rgba(255, 255, 255, 0.02);
+  --card-border: 1px solid rgba(255, 255, 255, 0.08);
+  --card-shadow: none;
+  --font-display: var(--font-sans);
+  --num-font-variant: tabular-nums;
+  --anim-idle-name: none;
+  --anim-breathe-duration: 0s;
+}
+
+/* 矩阵风：黑客帝国数字雨 · 荧光绿×近黑 · 硬直角 · 扫描线 · 等宽字 */
+:root[data-theme="matrix"] {
+  --bg: #0a0e0a;
+  --bg-2: #050805;
+  --surface: rgba(0, 255, 65, 0.04);
+  --surface-2: rgba(0, 0, 0, 0.35);
+  --surface-hover: rgba(0, 255, 65, 0.12);
+  --border: rgba(0, 255, 65, 0.18);
+  --border-soft: rgba(0, 255, 65, 0.09);
+  --text: rgba(200, 255, 200, 0.92);
+  --text-dim: rgba(0, 255, 65, 0.50);
+  --accent: #00ff41;
+  --accent-2: #00d4aa;
+  --on-accent: #001a06;
+  --danger: #ff5555;
+  --warning: #ffcc00;
+  --success: #00ff41;
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-lg: 5px;
+  --radius-control: 3px;
+  --shadow-1: 0 0 12px rgba(0, 255, 65, 0.35);
+  --shadow-2: 0 0 24px rgba(0, 255, 65, 0.20);
+  --font-sans: 'Cascadia Code', ui-monospace, Consolas, 'Microsoft YaHei', monospace;
+  --font-mono: 'Cascadia Code', ui-monospace, Consolas, monospace;
+  --motion-fast: 100ms;
+  --motion-base: 200ms;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  /* 装饰 token */
+  --theme-bg: #0a0e0a;
+  --theme-overlay-image: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,255,65,0.025) 2px, rgba(0,255,65,0.025) 3px);
+  --theme-overlay-opacity: 1;
+  --theme-blend: normal;
+  --glow: rgba(0, 255, 65, 0.6);
+  --glow-spread: 10px;
+  --card-bg: rgba(5, 12, 5, 0.85);
+  --card-border: 1px solid rgba(0, 255, 65, 0.35);
+  --card-shadow: 0 0 20px rgba(0, 255, 65, 0.25), 0 4px 16px rgba(0, 0, 0, 0.6);
+  --font-display: var(--font-mono);
+  --num-font-variant: tabular-nums;
+  --anim-idle-name: none;
+  --anim-breathe-duration: 4s;
+}
+
+/* 未来战：全光战士 · 颗粒朦胧 · 深空黑×电光蓝 · 全息紫 */
+:root[data-theme="cyber"] {
+  --bg: #050a14;
+  --bg-2: #020408;
+  --surface: rgba(0, 212, 255, 0.06);
+  --surface-2: rgba(0, 0, 0, 0.40);
+  --surface-hover: rgba(0, 212, 255, 0.12);
+  --border: rgba(0, 212, 255, 0.20);
+  --border-soft: rgba(0, 212, 255, 0.08);
+  --text: rgba(200, 230, 255, 0.94);
+  --text-dim: rgba(0, 212, 255, 0.55);
+  --accent: #00d4ff;
+  --accent-2: #a855f7;
+  --on-accent: #020810;
+  --danger: #ff4466;
+  --warning: #ffa936;
+  --success: #00ff9d;
+  --radius-sm: 3px;
+  --radius-md: 5px;
+  --radius-lg: 8px;
+  --radius-control: 5px;
+  --shadow-1: 0 0 16px rgba(0, 212, 255, 0.4), 0 4px 12px rgba(0, 0, 0, 0.6);
+  --shadow-2: 0 0 24px rgba(168, 85, 247, 0.3), 0 8px 24px rgba(0, 0, 0, 0.7);
+  --font-sans: 'Segoe UI', 'Microsoft YaHei', -apple-system, system-ui, sans-serif;
+  --font-mono: 'Cascadia Code', ui-monospace, Consolas, monospace;
+  --motion-fast: 100ms;
+  --motion-base: 220ms;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  /* 装饰 token */
+  --theme-bg: linear-gradient(135deg, #020408 0%, #050a14 50%, #020812 100%);
+  --theme-overlay-image: repeating-linear-gradient(0deg, transparent, transparent 1px, rgba(0,212,255,0.015) 1px, rgba(0,212,255,0.015) 2px), radial-gradient(ellipse at 30% 20%, rgba(0,212,255,0.08) 0%, transparent 40%), radial-gradient(ellipse at 70% 80%, rgba(168,85,247,0.06) 0%, transparent 40%), radial-gradient(ellipse at 50% 50%, rgba(0,180,255,0.04) 0%, transparent 50%);
+  --theme-overlay-opacity: 1;
+  --theme-blend: screen;
+  --glow: rgba(0, 212, 255, 0.5);
+  --glow-spread: 14px;
+  --card-bg: rgba(2, 8, 16, 0.85);
+  --card-border: 1px solid rgba(0, 212, 255, 0.30);
+  --card-shadow: 0 0 20px rgba(0, 212, 255, 0.25), 0 4px 16px rgba(0, 0, 0, 0.7);
+  --font-display: var(--font-mono);
+  --num-font-variant: tabular-nums;
+  --anim-idle-name: cyber-hologram-pulse;
+  --anim-breathe-duration: 5s;
+}
+
+/* ===== 主题动画 keyframes ==================================================== */
+
+@keyframes sci-fi-grid-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+@keyframes sci-fi-scanline {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100vh); }
+}
+
+@keyframes sci-fi-neon-pulse {
+  0%, 100% { box-shadow: 0 0 4px var(--glow), 0 0 8px var(--glow); }
+  50% { box-shadow: 0 0 8px var(--glow), 0 0 16px var(--glow); }
+}
+
+@keyframes playful-blob-float {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(10px, -8px) scale(1.05); }
+  66% { transform: translate(-5px, 5px) scale(0.97); }
+}
+
+@keyframes zen-breathe {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(1.01); }
+}
+
+/* ===== 主题装饰背景层 ======================================================== */
+
+/* .theme-bg：窗口根元素加此类，即可获得完整主题背景 + 装饰纹理叠加层。
+   装饰层用 ::after 伪元素，z-index:0 在背景之上、内容之下。
+   avatar 窗口不加此类，不受影响。 */
+.theme-bg {
+  position: relative;
+  z-index: 0;
+  background: var(--theme-bg);
+}
+.theme-bg::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image: var(--theme-overlay-image);
+  opacity: var(--theme-overlay-opacity, 0);
+  mix-blend-mode: var(--theme-blend, normal);
+}
+
+/* ===== 面板 / 菜单 / 输入 / 状态语义 token ==========================================
+   组件用 var(--xxx) 取值；切主题只改 <html data-theme>。
+   默认值（:root）= 霓虹风，其余主题按 [data-theme] 覆盖。 */
+:root {
+  /* 面板表面 */
+  --panel-bg: linear-gradient(135deg, rgba(18, 13, 46, 0.96), rgba(13, 11, 26, 0.96));
+  --popup-bg: radial-gradient(ellipse at 22% 0%, rgba(255,45,149,0.14) 0%, transparent 55%), radial-gradient(ellipse at 95% 100%, rgba(0,212,255,0.10) 0%, transparent 55%), linear-gradient(135deg, #0e0a17, #140a1d);
+  --panel-border: 1px solid rgba(255, 45, 149, 0.45);
+  --panel-shadow: 0 0 22px rgba(255, 45, 149, 0.30), 0 12px 30px rgba(0, 0, 0, 0.6);
+  --panel-header-bg: rgba(0, 0, 0, 0.2);
+  --panel-header-border: 1px solid rgba(255, 255, 255, 0.06);
+  /* 菜单表面 */
+  --menu-bg: rgba(13, 11, 26, 0.97);
+  --menu-border: 1px solid rgba(255, 45, 149, 0.40);
+  --menu-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  /* 分隔线 */
+  --divider: 1px solid rgba(255, 255, 255, 0.06);
+  --divider-soft: 1px solid rgba(255, 255, 255, 0.04);
+  /* 输入控件 */
+  --input-bg: rgba(255, 255, 255, 0.06);
+  --input-border: 1px solid rgba(255, 255, 255, 0.10);
+  --input-focus-border: 1px solid rgba(255, 45, 149, 0.5);
+  --input-text: rgba(255, 255, 255, 0.75);
+  /* 按钮 */
+  --btn-primary-bg: linear-gradient(135deg, rgba(255, 45, 149, 0.9), rgba(0, 212, 255, 0.9));
+  --btn-primary-color: white;
+  --btn-primary-shadow: 0 4px 12px rgba(255, 45, 149, 0.3);
+  /* 悬停 */
+  --surface-item-hover: rgba(255, 255, 255, 0.08);
+  --surface-item-active: rgba(255, 255, 255, 0.12);
+  /* 文字补充层次 */
+  --text-ghost: rgba(255, 255, 255, 0.60);
+  --text-muted: rgba(255, 255, 255, 0.40);
+  --text-faint: rgba(255, 255, 255, 0.30);
+  /* 装饰强调 */
+  --accent-glow: rgba(255, 45, 149, 0.28);
+  --accent-border: rgba(255, 45, 149, 0.55);
+  --accent-text: rgba(255, 45, 149, 0.95);
+  /* 状态色（固定义：红=危险、黄=警告、蓝=信息、绿=成功、紫=特殊） */
+  --red: #ef4444;
+  --red-text: rgba(248, 113, 113, 0.95);
+  --red-text-light: rgba(254, 202, 202, 0.95);
+  --red-bg: rgba(239, 68, 68, 0.12);
+  --red-bg-strong: rgba(239, 68, 68, 0.25);
+  --red-border: rgba(239, 68, 68, 0.30);
+  --yellow: #f59e0b;
+  --yellow-text: rgba(250, 204, 21, 0.95);
+  --yellow-text-light: rgba(254, 215, 170, 0.95);
+  --yellow-bg: rgba(245, 158, 11, 0.12);
+  --yellow-bg-strong: rgba(245, 158, 11, 0.25);
+  --yellow-border: rgba(245, 158, 11, 0.30);
+  --blue: #3b82f6;
+  --blue-text: rgba(96, 165, 250, 0.95);
+  --blue-text-light: rgba(191, 219, 254, 0.95);
+  --blue-bg: rgba(59, 130, 246, 0.12);
+  --blue-bg-strong: rgba(59, 130, 246, 0.25);
+  --blue-border: rgba(59, 130, 246, 0.30);
+  --green: #10b981;
+  --green-text: rgba(16, 185, 129, 0.95);
+  --green-text-light: rgba(134, 239, 172, 0.95);
+  --green-bg: rgba(16, 185, 129, 0.12);
+  --green-bg-strong: rgba(16, 185, 129, 0.25);
+  --green-border: rgba(16, 185, 129, 0.30);
+  --purple: #a78bfa;
+  --purple-text: rgba(167, 139, 250, 0.95);
+  --purple-text-light: rgba(221, 214, 254, 0.92);
+  --purple-bg: rgba(167, 139, 250, 0.12);
+  --purple-bg-strong: rgba(167, 139, 250, 0.25);
+  --purple-border: rgba(167, 139, 250, 0.30);
+  /* 通用 badge 文字 */
+  --badge-text: white;
+}
+
+/* 霓虹风面板补充 — 品红霓虹卡片质感 */
+:root[data-theme="sci-fi"] {
+  --panel-bg: linear-gradient(135deg, rgba(13, 11, 26, 0.82), rgba(18, 13, 46, 0.78));
+  --popup-bg: radial-gradient(ellipse at 22% 0%, rgba(255,45,149,0.14) 0%, transparent 55%), radial-gradient(ellipse at 95% 100%, rgba(0,212,255,0.10) 0%, transparent 55%), linear-gradient(135deg, #0e0a17, #140a1d);
+  --panel-border: 1px solid rgba(255, 45, 149, 0.45);
+  --panel-shadow: 0 0 22px rgba(255, 45, 149, 0.30), 0 12px 30px rgba(0, 0, 0, 0.6);
+  --menu-bg: rgba(13, 11, 26, 0.88);
+  --menu-border: 1px solid rgba(255, 45, 149, 0.40);
+  --menu-shadow: 0 0 15px rgba(255, 45, 149, 0.12), 0 8px 32px rgba(0, 0, 0, 0.5);
+  --btn-primary-bg: linear-gradient(135deg, rgba(255, 45, 149, 0.9), rgba(0, 212, 255, 0.9));
+  --btn-primary-shadow: 0 0 15px rgba(255, 45, 149, 0.35), 0 4px 12px rgba(0, 0, 0, 0.3);
+  --card-border: 1px solid rgba(255, 45, 149, 0.45);
+  --card-shadow: 0 0 24px rgba(255, 45, 149, 0.28), 0 4px 16px rgba(0, 0, 0, 0.5);
+  --accent-glow: rgba(255, 45, 149, 0.28);
+  --accent-border: rgba(255, 45, 149, 0.55);
+  --glow: rgba(255, 45, 149, 0.6);
+  /* 临近档信息色：霓虹主题下蓝→青(#00d4ff)，与品红主调组成霓虹双色；其余主题继承默认蓝，不受影响 */
+  --blue: #00d4ff;
+  --blue-text: rgba(0, 212, 255, 0.95);
+  --blue-text-light: rgba(165, 243, 252, 0.95);
+  --blue-bg: rgba(0, 212, 255, 0.12);
+  --blue-bg-strong: rgba(0, 212, 255, 0.22);
+  --blue-border: rgba(0, 212, 255, 0.40);
+}
+
+/* 俏皮风(糖果)面板 */
+:root[data-theme="playful"] {
+  --panel-bg: linear-gradient(135deg, rgba(255,255,255,0.97), rgba(255,245,248,0.96));
+  --popup-bg: linear-gradient(135deg, #ffffff, #fff4f8);
+  --panel-border: 1px solid rgba(255, 92, 138, 0.22);
+  --panel-shadow: 0 8px 28px rgba(255, 92, 138, 0.15), 0 2px 8px rgba(0, 0, 0, 0.04);
+  --panel-header-bg: rgba(255, 92, 138, 0.06);
+  --panel-header-border: 1px solid rgba(255, 92, 138, 0.12);
+  --menu-bg: rgba(255, 240, 245, 0.92);
+  --menu-border: 1px solid rgba(255, 92, 138, 0.15);
+  --menu-shadow: 0 8px 28px rgba(255, 92, 138, 0.15), 0 2px 6px rgba(0, 0, 0, 0.04);
+  --divider: 1px solid rgba(200, 100, 150, 0.12);
+  --divider-soft: 1px solid rgba(200, 100, 150, 0.06);
+  --input-bg: rgba(255, 255, 255, 0.70);
+  --input-border: 1px solid rgba(255, 92, 138, 0.22);
+  --input-focus-border: 1px solid rgba(255, 92, 138, 0.55);
+  --input-text: #4a3040;
+  --btn-primary-bg: linear-gradient(135deg, rgba(255, 92, 138, 0.9), rgba(255, 143, 28, 0.9));
+  --btn-primary-color: white;
+  --btn-primary-shadow: 0 4px 14px rgba(255, 92, 138, 0.35);
+  --surface-item-hover: rgba(255, 92, 138, 0.10);
+  --surface-item-active: rgba(255, 92, 138, 0.16);
+  --text-ghost: #6b4d5a;
+  --text-muted: #b08a9a;
+  --text-faint: #c8aaba;
+  --accent-glow: rgba(255, 92, 138, 0.16);
+  --accent-border: rgba(255, 92, 138, 0.32);
+  --accent-text: rgba(255, 45, 90, 0.95);
+  --red-text: rgba(239, 68, 68, 0.95);
+  --red-text-light: rgba(239, 68, 68, 0.85);
+  --yellow-text: rgba(217, 119, 6, 0.95);
+  --yellow-text-light: rgba(180, 83, 9, 0.85);
+  --blue-text: rgba(37, 99, 235, 0.95);
+  --blue-text-light: rgba(37, 99, 235, 0.85);
+  --green-text: rgba(5, 150, 105, 0.95);
+  --green-text-light: rgba(5, 150, 105, 0.85);
+  --purple-text: rgba(124, 58, 237, 0.95);
+  --purple-text-light: rgba(124, 58, 237, 0.85);
+  --badge-text: white;
+}
+
+/* 治愈风(纸木)面板 */
+:root[data-theme="zen"] {
+  --panel-bg: #f2f0e8;
+  --popup-bg: #f2f0e8;
+  --panel-border: 1px solid rgba(160, 150, 130, 0.12);
+  --panel-shadow: 1px 2px 6px rgba(160, 150, 130, 0.08);
+  --panel-header-bg: rgba(160, 150, 130, 0.04);
+  --panel-header-border: 1px solid rgba(160, 150, 130, 0.08);
+  --menu-bg: #f2f0e8;
+  --menu-border: 1px solid rgba(160, 150, 130, 0.10);
+  --menu-shadow: 1px 2px 10px rgba(160, 150, 130, 0.10);
+  --divider: 1px solid rgba(160, 150, 130, 0.08);
+  --divider-soft: 1px solid rgba(160, 150, 130, 0.05);
+  --input-bg: rgba(255, 255, 255, 0.40);
+  --input-border: 1px solid rgba(160, 150, 130, 0.15);
+  --input-focus-border: 1px solid rgba(168, 176, 158, 0.45);
+  --input-text: #3d3a32;
+  --btn-primary-bg: linear-gradient(135deg, rgba(168, 176, 158, 0.85), rgba(140, 150, 130, 0.85));
+  --btn-primary-color: white;
+  --btn-primary-shadow: 0 2px 8px rgba(168, 176, 158, 0.20);
+  --surface-item-hover: rgba(168, 176, 158, 0.08);
+  --surface-item-active: rgba(168, 176, 158, 0.14);
+  --text-ghost: #4d4a40;
+  --text-muted: #8a8579;
+  --text-faint: #a5a098;
+  --accent-glow: rgba(168, 176, 158, 0.10);
+  --accent-border: rgba(168, 176, 158, 0.25);
+  --accent-text: rgba(90, 107, 80, 0.95);
+  --red: #b07a60;
+  --red-text: #6a4030;
+  --red-text-light: #8a5a48;
+  --red-bg: rgba(176, 122, 96, 0.08);
+  --red-bg-strong: rgba(176, 122, 96, 0.18);
+  --red-border: rgba(176, 122, 96, 0.22);
+  --yellow: #b8a070;
+  --yellow-text: #7a6030;
+  --yellow-text-light: #9a7a4a;
+  --blue-text: #3a4a5a;
+  --blue-text-light: #5a6a7a;
+  --green: #8aa07a;
+  --green-text: #3a5a2a;
+  --green-text-light: #5a7a4a;
+  --purple-text: #5a4a5a;
+  --purple-text-light: #7a6a7a;
+  --blue: #8a9aaa;
+  --blue-bg: rgba(138, 154, 170, 0.12);
+  --blue-bg-strong: rgba(138, 154, 170, 0.22);
+  --blue-border: rgba(138, 154, 170, 0.30);
+  --green-bg: rgba(138, 160, 122, 0.12);
+  --green-bg-strong: rgba(138, 160, 122, 0.22);
+  --green-border: rgba(138, 160, 122, 0.30);
+  --purple: #a898a8;
+  --purple-bg: rgba(168, 152, 168, 0.12);
+  --purple-bg-strong: rgba(168, 152, 168, 0.22);
+  --purple-border: rgba(168, 152, 168, 0.30);
+  --badge-text: white;
+}
+
+/* 极简风面板 */
+:root[data-theme="minimal"] {
+  --panel-bg: rgba(255, 255, 255, 0.03);
+  --popup-bg: #161c28;
+  --panel-border: 1px solid rgba(255, 255, 255, 0.08);
+  --panel-shadow: none;
+  --panel-header-bg: rgba(255, 255, 255, 0.02);
+  --panel-header-border: 1px solid rgba(255, 255, 255, 0.06);
+  --menu-bg: rgba(255, 255, 255, 0.04);
+  --menu-border: 1px solid rgba(255, 255, 255, 0.08);
+  --menu-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  --divider: 1px solid rgba(255, 255, 255, 0.08);
+  --divider-soft: 1px solid rgba(255, 255, 255, 0.04);
+  --input-bg: rgba(255, 255, 255, 0.04);
+  --input-border: 1px solid rgba(255, 255, 255, 0.10);
+  --input-focus-border: 1px solid rgba(255, 255, 255, 0.25);
+  --input-text: rgba(255, 255, 255, 0.70);
+  --btn-primary-bg: rgba(255, 255, 255, 0.12);
+  --btn-primary-color: rgba(255, 255, 255, 0.90);
+  --btn-primary-shadow: none;
+  --surface-item-hover: rgba(255, 255, 255, 0.06);
+  --surface-item-active: rgba(255, 255, 255, 0.10);
+  --accent-glow: transparent;
+  --accent-border: rgba(255, 255, 255, 0.12);
+  --accent-text: rgba(255, 255, 255, 0.80);
+  --red-text: rgba(248, 113, 113, 0.90);
+  --yellow-text: rgba(203, 213, 225, 0.90);
+  --blue-text: rgba(148, 163, 184, 0.90);
+  --green-text: rgba(203, 213, 225, 0.90);
+  --purple-text: rgba(148, 163, 184, 0.90);
+  --badge-text: rgba(255, 255, 255, 0.90);
+}
+
+/* 矩阵风(数字雨)面板 — 荧光绿网格卡片质感 */
+:root[data-theme="matrix"] {
+  --panel-bg: linear-gradient(135deg, rgba(5, 12, 5, 0.92), rgba(0, 8, 0, 0.92));
+  --popup-bg: linear-gradient(135deg, #050a05, #0a0e0a);
+  --panel-border: 1px solid rgba(0, 255, 65, 0.35);
+  --panel-shadow: 0 0 20px rgba(0, 255, 65, 0.20), 0 12px 30px rgba(0, 0, 0, 0.7);
+  --panel-header-bg: rgba(0, 255, 65, 0.05);
+  --panel-header-border: 1px solid rgba(0, 255, 65, 0.12);
+  --menu-bg: rgba(5, 12, 5, 0.95);
+  --menu-border: 1px solid rgba(0, 255, 65, 0.30);
+  --menu-shadow: 0 0 15px rgba(0, 255, 65, 0.15), 0 8px 32px rgba(0, 0, 0, 0.6);
+  --divider: 1px solid rgba(0, 255, 65, 0.10);
+  --divider-soft: 1px solid rgba(0, 255, 65, 0.05);
+  --input-bg: rgba(0, 255, 65, 0.05);
+  --input-border: 1px solid rgba(0, 255, 65, 0.20);
+  --input-focus-border: 1px solid rgba(0, 255, 65, 0.50);
+  --input-text: rgba(200, 255, 200, 0.85);
+  --btn-primary-bg: linear-gradient(135deg, rgba(0, 255, 65, 0.85), rgba(0, 180, 60, 0.85));
+  --btn-primary-color: #001a06;
+  --btn-primary-shadow: 0 0 15px rgba(0, 255, 65, 0.35), 0 4px 12px rgba(0, 0, 0, 0.4);
+  --surface-item-hover: rgba(0, 255, 65, 0.08);
+  --surface-item-active: rgba(0, 255, 65, 0.12);
+  --text-ghost: rgba(0, 255, 65, 0.70);
+  --text-muted: rgba(0, 255, 65, 0.45);
+  --text-faint: rgba(0, 255, 65, 0.30);
+  --accent-glow: rgba(0, 255, 65, 0.25);
+  --accent-border: rgba(0, 255, 65, 0.45);
+  --accent-text: rgba(0, 255, 65, 0.95);
+  --red: #ff5555;
+  --red-text: rgba(255, 100, 100, 0.95);
+  --red-text-light: rgba(255, 180, 180, 0.95);
+  --red-bg: rgba(255, 85, 85, 0.12);
+  --red-bg-strong: rgba(255, 85, 85, 0.25);
+  --red-border: rgba(255, 85, 85, 0.35);
+  --yellow: #ffcc00;
+  --yellow-text: rgba(255, 204, 0, 0.95);
+  --yellow-text-light: rgba(255, 230, 130, 0.95);
+  --yellow-bg: rgba(255, 204, 0, 0.12);
+  --yellow-bg-strong: rgba(255, 204, 0, 0.22);
+  --yellow-border: rgba(255, 204, 0, 0.30);
+  --blue: #00d4aa;
+  --blue-text: rgba(0, 212, 170, 0.95);
+  --blue-text-light: rgba(140, 255, 220, 0.95);
+  --blue-bg: rgba(0, 212, 170, 0.12);
+  --blue-bg-strong: rgba(0, 212, 170, 0.22);
+  --blue-border: rgba(0, 212, 170, 0.38);
+  --green: #00ff41;
+  --green-text: rgba(0, 255, 65, 0.95);
+  --green-text-light: rgba(150, 255, 150, 0.95);
+  --green-bg: rgba(0, 255, 65, 0.12);
+  --green-bg-strong: rgba(0, 255, 65, 0.22);
+  --green-border: rgba(0, 255, 65, 0.35);
+  --purple: #00b894;
+  --purple-text: rgba(0, 200, 150, 0.95);
+  --purple-text-light: rgba(130, 255, 210, 0.92);
+  --purple-bg: rgba(0, 184, 148, 0.12);
+  --purple-bg-strong: rgba(0, 184, 148, 0.22);
+  --purple-border: rgba(0, 184, 148, 0.30);
+  --badge-text: #001a06;
+}
+
+/* 未来战(颗粒朦胧)面板 — 深空黑×电光蓝·全息紫·弱半透明 */
+:root[data-theme="cyber"] {
+  --panel-bg: linear-gradient(135deg, rgba(2, 8, 16, 0.92), rgba(5, 10, 20, 0.90));
+  --popup-bg: linear-gradient(135deg, #020812, #050a14);
+  --panel-border: 1px solid rgba(0, 212, 255, 0.30);
+  --panel-shadow: 0 0 18px rgba(0, 212, 255, 0.25), 0 8px 28px rgba(0, 0, 0, 0.7);
+  --panel-header-bg: rgba(0, 212, 255, 0.06);
+  --panel-header-border: 1px solid rgba(0, 212, 255, 0.12);
+  --menu-bg: rgba(2, 8, 16, 0.95);
+  --menu-border: 1px solid rgba(0, 212, 255, 0.25);
+  --menu-shadow: 0 0 12px rgba(0, 212, 255, 0.20), 0 6px 24px rgba(0, 0, 0, 0.6);
+  --divider: 1px solid rgba(0, 212, 255, 0.12);
+  --divider-soft: 1px solid rgba(0, 212, 255, 0.06);
+  --input-bg: rgba(0, 212, 255, 0.06);
+  --input-border: 1px solid rgba(0, 212, 255, 0.18);
+  --input-focus-border: 1px solid rgba(0, 212, 255, 0.50);
+  --input-text: rgba(200, 230, 255, 0.85);
+  --btn-primary-bg: linear-gradient(135deg, rgba(0, 212, 255, 0.85), rgba(168, 85, 247, 0.85));
+  --btn-primary-color: #020810;
+  --btn-primary-shadow: 0 0 16px rgba(0, 212, 255, 0.35), 0 4px 12px rgba(0, 0, 0, 0.4);
+  --surface-item-hover: rgba(0, 212, 255, 0.10);
+  --surface-item-active: rgba(0, 212, 255, 0.16);
+  --text-ghost: rgba(0, 212, 255, 0.70);
+  --text-muted: rgba(0, 212, 255, 0.45);
+  --text-faint: rgba(0, 212, 255, 0.30);
+  --accent-glow: rgba(0, 212, 255, 0.25);
+  --accent-border: rgba(0, 212, 255, 0.45);
+  --accent-text: rgba(0, 212, 255, 0.95);
+  /* 状态色：覆盖更寒的蓝紫 */
+  --red: #ff4466;
+  --red-text: rgba(255, 100, 120, 0.95);
+  --red-text-light: rgba(255, 180, 190, 0.95);
+  --red-bg: rgba(255, 68, 102, 0.12);
+  --red-bg-strong: rgba(255, 68, 102, 0.25);
+  --red-border: rgba(255, 68, 102, 0.30);
+  --yellow: #ffa936;
+  --yellow-text: rgba(255, 169, 54, 0.95);
+  --yellow-text-light: rgba(255, 200, 130, 0.95);
+  --yellow-bg: rgba(255, 169, 54, 0.12);
+  --yellow-bg-strong: rgba(255, 169, 54, 0.25);
+  --yellow-border: rgba(255, 169, 54, 0.30);
+  --blue: #00e5ff;
+  --blue-text: rgba(0, 229, 255, 0.95);
+  --blue-text-light: rgba(128, 245, 255, 0.95);
+  --blue-bg: rgba(0, 229, 255, 0.12);
+  --blue-bg-strong: rgba(0, 229, 255, 0.22);
+  --blue-border: rgba(0, 229, 255, 0.35);
+  --green: #00ff9d;
+  --green-text: rgba(0, 255, 157, 0.95);
+  --green-text-light: rgba(150, 255, 200, 0.95);
+  --green-bg: rgba(0, 255, 157, 0.12);
+  --green-bg-strong: rgba(0, 255, 157, 0.22);
+  --green-border: rgba(0, 255, 157, 0.30);
+  --purple: #d8b4fe;
+  --purple-text: rgba(216, 180, 254, 0.95);
+  --purple-text-light: rgba(230, 210, 255, 0.95);
+  --purple-bg: rgba(216, 180, 254, 0.12);
+  --purple-bg-strong: rgba(216, 180, 254, 0.22);
+  --purple-border: rgba(216, 180, 254, 0.35);
+  --badge-text: #000a1f;
+}
+
+/* ===== 通用面板 / 菜单 / 输入工具类 =============================================
+   组件在模板根元素加 .panel / .menu / .header-bar 等类名，即可获得完整主题表面。
+   组件 scoped 样式只需覆盖独特部分（如 accent 边框色），无需重复表面基础。 */
+@layer components {
+  .panel {
+    background: var(--panel-bg);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: var(--panel-border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--panel-shadow);
+    color: var(--text);
+  }
+  .panel-header {
+    background: var(--panel-header-bg);
+    border-bottom: var(--panel-header-border);
+  }
+  .menu {
+    background: var(--menu-bg);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: var(--menu-border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--menu-shadow);
+    color: var(--text);
+  }
+  .menu-header {
+    background: var(--panel-header-bg);
+    border-bottom: var(--panel-header-border);
+  }
+  .input-field {
+    background: var(--input-bg);
+    border: var(--input-border);
+    border-radius: var(--radius-control);
+    color: var(--input-text);
+  }
+  .input-field:focus {
+    border: var(--input-focus-border);
+    outline: none;
+  }
+  .btn-primary {
+    background: var(--btn-primary-bg);
+    color: var(--btn-primary-color);
+    border: none;
+    border-radius: var(--radius-control);
+    box-shadow: var(--btn-primary-shadow);
+    cursor: pointer;
+  }
+  .divider {
+    border-top: var(--divider);
+  }
+  .divider-soft {
+    border-top: var(--divider-soft);
+  }
+}
+
+/* 霓虹风扫描线：仅在 sci-fi 主题下显示 */
+[data-theme="sci-fi"] .theme-scanline::before {
+  display: none;
 }

@@ -346,40 +346,40 @@ onMounted(refreshStatus)
   flex-direction: column;
   gap: 5px;
   padding: 8px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--surface);
+  border: var(--divider);
   border-radius: 6px;
 }
 .channel-status {
   align-self: center;
   font-size: 11px;
-  color: rgba(255, 255, 255, 0.45);
+  color: var(--text-dim);
 }
 .channel-status.running {
-  color: rgba(134, 239, 172, 0.95);
+  color: var(--green-text);
 }
 .channel-next {
   margin: 0;
   padding: 5px 8px;
   font-size: 10.5px;
   line-height: 1.45;
-  color: rgba(255, 255, 255, 0.55);
-  background: rgba(59, 130, 246, 0.1);
-  border: 1px solid rgba(59, 130, 246, 0.16);
+  color: var(--text-ghost);
+  background: var(--blue-bg);
+  border: 1px solid var(--blue-border);
   border-radius: 5px;
 }
 .channel-help {
   padding: 6px 8px;
   font-size: 10.5px;
   line-height: 1.55;
-  color: rgba(255, 255, 255, 0.56);
-  background: rgba(0, 0, 0, 0.14);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  color: var(--text-ghost);
+  background: var(--surface-2);
+  border: var(--divider-soft);
   border-radius: 5px;
 }
 .help-title {
   margin-bottom: 2px;
-  color: rgba(0, 212, 255, 0.8);
+  color: var(--accent-text);
   font-weight: 600;
 }
 .channel-help ol {
@@ -388,17 +388,17 @@ onMounted(refreshStatus)
 }
 .channel-help p {
   margin: 4px 0 0;
-  color: rgba(255, 255, 255, 0.42);
+  color: var(--text-dim);
 }
 .channel-note {
   margin: -1px 0 2px;
   font-size: 10px;
   line-height: 1.45;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--text-dim);
 }
 .channel-help code {
   font-family: ui-monospace, monospace;
-  color: rgba(255, 255, 255, 0.82);
+  color: var(--text-ghost);
 }
 .settings-field-top {
   align-items: flex-start;
@@ -418,8 +418,8 @@ onMounted(refreshStatus)
   align-items: center;
   gap: 8px;
   padding: 6px 8px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--surface);
+  border: var(--divider);
   border-radius: 5px;
 }
 .recent-main {
@@ -431,11 +431,11 @@ onMounted(refreshStatus)
   font-size: 11px;
 }
 .recent-main strong {
-  color: rgba(255, 255, 255, 0.86);
+  color: var(--text-ghost);
 }
 .recent-main span,
 .recent-main small {
-  color: rgba(255, 255, 255, 0.46);
+  color: var(--text-dim);
   word-break: break-all;
 }
 </style>

@@ -9,7 +9,8 @@
     "writeHours",
     "manualHours",
     "todayPlan",
-    "batchWrite"
+    "batchWrite",
+    "cost"
   ],
   "permissions": [
     "core:default",

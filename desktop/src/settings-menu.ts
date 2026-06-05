@@ -9,6 +9,7 @@ import ExcludedLinesSection from './components/settings/ExcludedLinesSection.vue
 import FineReportSection from './components/settings/FineReportSection.vue'
 import LeftClickActionSection from './components/settings/LeftClickActionSection.vue'
 import MenuThemeSection from './components/settings/MenuThemeSection.vue'
+import StyleThemeSection from './components/settings/StyleThemeSection.vue'
 import LlmSection from './components/settings/LlmSection.vue'
 import PetSection from './components/settings/PetSection.vue'
 import QuietRulesSection from './components/settings/QuietRulesSection.vue'
@@ -53,7 +54,7 @@ export const SETTINGS_PAGE_COMPONENTS: Record<SettingsPageKey, Component[]> = {
   code: [RepoRootsSection, ExcludedLinesSection],
   dailyNudges: [WorkDaysSection, WorkPeriodsSection, QuietRulesSection, RitualsSection, WorkdayNudgesSection, TodayOverrideSection, RemindersSection],
   effortClosing: [EffortClosingSection],
-  personalization: [AutoStartSection, AssistantNameSection, MenuThemeSection, WorkStyleSection, PetSection, LeftClickActionSection],
+  personalization: [AutoStartSection, AssistantNameSection, StyleThemeSection, MenuThemeSection, WorkStyleSection, PetSection, LeftClickActionSection],
   about: [ChangelogSection],
 }
 
