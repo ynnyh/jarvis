@@ -21,17 +21,23 @@ useTheme()
 const activePage = ref<SettingsPageKey>('channels')
 const collapsedGroups = ref<Set<string>>(new Set())
 
+// 「对话式发版」属高危功能，未开启时不在导航里出现（响应式，开关一开即时显示）
+const visibleMenu = computed(() =>
+  SETTINGS_MENU.filter(item => item.key !== 'deploy' || store.config.deployEnabled),
+)
+
 const groupedMenu = computed(() => {
+  const menu = visibleMenu.value
   const groups: { name: string; order: number; items: typeof SETTINGS_MENU }[] = []
   const seen = new Set<string>()
-  for (const item of SETTINGS_MENU) {
+  for (const item of menu) {
     if (!seen.has(item.group)) {
       seen.add(item.group)
       groups.push({ name: item.group, order: item.groupOrder, items: [] })
     }
   }
   for (const g of groups) {
-    g.items.push(...SETTINGS_MENU.filter(i => i.group === g.name))
+    g.items.push(...menu.filter(i => i.group === g.name))
   }
   groups.sort((a, b) => a.order - b.order)
   return groups

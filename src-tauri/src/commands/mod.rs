@@ -188,7 +188,8 @@ pub(crate) fn default_config() -> serde_json::Value {
             }
         },
         "repoRoots": [],
-        "leftClickAction": "tasks"
+        "leftClickAction": "tasks",
+        "deployEnabled": false
     })
 }
 

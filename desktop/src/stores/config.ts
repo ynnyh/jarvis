@@ -121,6 +121,8 @@ export interface JarvisConfig {
   styleTheme: string
   /** 项目成本分析功能开关，默认关闭 */
   costFeatureEnabled: boolean
+  /** 对话式发版（Jenkins）功能开关，默认关闭。开启后「接入」里出现发版配置项 */
+  deployEnabled: boolean
 }
 
 export interface ScheduledReminder {
@@ -204,6 +206,7 @@ const defaultConfig = (): JarvisConfig => ({
   menuTheme: 'default',
   styleTheme: DEFAULT_STYLE_THEME,
   costFeatureEnabled: false,
+  deployEnabled: false,
 })
 
 function todayStr(): string {
@@ -289,6 +292,7 @@ export const useConfigStore = defineStore('config', () => {
           ? remote.styleTheme
           : defaults.styleTheme,
         costFeatureEnabled: remote.costFeatureEnabled ?? defaults.costFeatureEnabled,
+        deployEnabled: remote.deployEnabled ?? defaults.deployEnabled,
         todayPlan: {
           date: remote.todayPlan?.date ?? defaults.todayPlan.date,
           taskIds: Array.isArray(remote.todayPlan?.taskIds)

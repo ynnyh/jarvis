@@ -9,8 +9,10 @@ import './settings/_settings-shared.css'
 const store = useConfigStore()
 
 const groupedMenu = computed(() => {
+  // 「对话式发版」属高危功能，未开启时不在菜单里出现（响应式，开关一开即时显示）
+  const menu = SETTINGS_MENU.filter(item => item.key !== 'deploy' || store.config.deployEnabled)
   const groups: Array<{ name: string; items: SettingsMenuItem[] }> = []
-  for (const item of SETTINGS_MENU) {
+  for (const item of menu) {
     let group = groups.find(g => g.name === item.group)
     if (!group) {
       group = { name: item.group, items: [] }
@@ -47,6 +49,7 @@ const aiStatus = computed(() => {
 })
 
 function pageStatus(key: SettingsPageKey) {
+  if (key === 'general') return store.config.autoStartOnBoot ? '自启已开' : '自启已关'
   if (key === 'zentao') return store.config.zentao.account ? '已配置' : '未配置'
   if (key === 'ai') return aiStatus.value
   if (key === 'channels') {
