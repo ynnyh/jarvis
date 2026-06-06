@@ -70,11 +70,27 @@ A hardcoded color does not follow the theme — it stays fixed across all 4 them
 
 - **Surfaces**: `--bg`, `--bg-2`, `--surface`, `--surface-2`, `--surface-hover`, `--surface-item-hover`, `--surface-item-active`
 - **Text layers**: `--text` → `--text-ghost` → `--text-dim` → `--text-muted` → `--text-faint`
-- **Accents**: `--accent`, `--accent-2`, `--accent-text`, `--accent-border`, `--accent-glow`, `--glow`
+- **Accents**: `--accent`, `--accent-2`, `--accent-text`, **`--on-accent`**, `--accent-border`, `--accent-glow`, `--glow`
 - **Status (each has `-text/-text-light/-bg/-bg-strong/-border` + base)**: `--red-*`, `--yellow-*`, `--blue-*`, `--green-*`, `--purple-*`
 - **Panels/menus**: `--panel-bg`, `--panel-border`, `--panel-shadow`, `--panel-header-bg`, `--menu-bg`, `--menu-border`, `--menu-shadow`, **`--popup-bg`**
 - **Inputs/buttons**: `--input-bg`, `--input-border`, `--input-focus-border`, `--btn-primary-bg/-color/-shadow`
 - **Shape/motion**: `--radius-sm/md/lg/control`, `--shadow-1/2`, `--font-display`, `--num-font-variant`
+
+---
+
+## Gotcha: 强调底色上的文字用 `--on-accent`，不是 `--accent-text`
+
+> `--accent-text` 是「深色背景上的强调色文字」（链接/标签/ID 高亮，全项目 ~60 处这么用）。多数主题里它**就等于强调色本身**（如 cyber `--accent-text` 与 `--accent` 同为 `#00d4ff`）。
+
+把它当成「强调色按钮/底色上的前景色」会得到同色字叠同色底 = 隐形——发版确认卡片的「确认发版」按钮曾因此青字青底看不清。实心强调底色上的文字（主按钮等）一律用 `--on-accent`（每套主题都定义，cyber=`#020810`；范式见 `CostApp.vue:606`），或整块直接用 `--btn-primary-bg`/`--btn-primary-color`。
+
+```css
+/* Wrong —— 青字叠青底，cyber 主题下不可读 */
+.pending-btn-primary { color: var(--accent-text); background: var(--accent); }
+
+/* Correct —— --on-accent = 强调底色上的前景色 */
+.pending-btn-primary { color: var(--on-accent); background: var(--accent); }
+```
 
 ---
 

@@ -900,12 +900,12 @@ watch(() => configStore.config.assistantName, (n) => {
   background: var(--surface-item-hover);
 }
 .pending-btn-primary {
-  color: var(--accent-text);
+  color: var(--on-accent);
   background: color-mix(in srgb, var(--accent) 90%, transparent);
   border-color: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .pending-btn-primary:hover:not(:disabled) {
-  color: var(--accent-text);
+  color: var(--on-accent);
   background: var(--accent);
 }
 .pending-btn:disabled {
