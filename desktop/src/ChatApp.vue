@@ -54,6 +54,8 @@ interface ChatMessage {
   pendingWrite?: PendingWrite
   writeStatus?: 'pending' | 'writing' | 'done' | 'cancelled' | 'failed'
   writeError?: string
+  /** 成功后的补充说明（如发版触发的 queueId/buildNumber） */
+  writeNote?: string
 }
 interface Conversation {
   id: string
@@ -62,16 +64,20 @@ interface Conversation {
   updatedAt: number
   messages: ChatMessage[]
 }
-interface PendingWrite {
-  kind: 'log-task-effort'
-  payload: {
-    taskId: string
-    hours: number
-    work: string
-    date?: string
-  }
-  summary: string
+interface LogTaskEffortPayload {
+  taskId: string
+  hours: number
+  work: string
+  date?: string
 }
+interface McpDeployPayload {
+  server: string
+  tool: string
+  args: Record<string, any>
+}
+type PendingWrite =
+  | { kind: 'log-task-effort'; payload: LogTaskEffortPayload; summary: string }
+  | { kind: 'mcp-deploy'; payload: McpDeployPayload; summary: string }
 
 // ===== 状态 =====
 const conversations = ref<ConversationMeta[]>([])
@@ -126,22 +132,39 @@ function newConversation() {
 }
 
 function pendingWriteFromToolMessage(m: ChatMessage): PendingWrite | null {
-  if (m.role !== 'tool' || m.name !== 'prepare-log-task-effort') return null
+  if (m.role !== 'tool') return null
+  if (m.name !== 'prepare-log-task-effort' && m.name !== 'prepare-deploy') return null
   try {
     const parsed = JSON.parse(m.content)
-    if (!parsed?.pendingWrite || parsed.kind !== 'log-task-effort') return null
-    const payload = parsed.payload ?? {}
-    if (!payload.taskId || !payload.hours || !payload.work) return null
-    return {
-      kind: 'log-task-effort',
-      payload: {
-        taskId: String(payload.taskId),
-        hours: Number(payload.hours),
-        work: String(payload.work),
-        date: payload.date ? String(payload.date) : undefined,
-      },
-      summary: String(parsed.summary || ''),
+    if (!parsed?.pendingWrite) return null
+    if (m.name === 'prepare-log-task-effort' && parsed.kind === 'log-task-effort') {
+      const payload = parsed.payload ?? {}
+      if (!payload.taskId || !payload.hours || !payload.work) return null
+      return {
+        kind: 'log-task-effort',
+        payload: {
+          taskId: String(payload.taskId),
+          hours: Number(payload.hours),
+          work: String(payload.work),
+          date: payload.date ? String(payload.date) : undefined,
+        },
+        summary: String(parsed.summary || ''),
+      }
     }
+    if (m.name === 'prepare-deploy' && parsed.kind === 'mcp-deploy') {
+      const payload = parsed.payload ?? {}
+      if (!payload.server || !payload.tool || !payload.args || !parsed.summary) return null
+      return {
+        kind: 'mcp-deploy',
+        payload: {
+          server: String(payload.server),
+          tool: String(payload.tool),
+          args: payload.args,
+        },
+        summary: String(parsed.summary),
+      }
+    }
+    return null
   } catch {
     return null
   }
@@ -152,16 +175,29 @@ async function confirmPendingWrite(msg: ChatMessage) {
   if (msg.writeStatus !== 'pending' && msg.writeStatus !== 'failed') return
   msg.writeStatus = 'writing'
   msg.writeError = undefined
+  const toolName = msg.pendingWrite.kind === 'mcp-deploy' ? 'confirm-deploy' : 'log-task-effort'
   try {
     const r = await invoke<{ success: boolean; data?: any; error?: string }>('tool_execute', {
-      name: 'log-task-effort',
+      name: toolName,
       input: msg.pendingWrite.payload,
     })
     if (!r.success) {
       msg.writeStatus = 'failed'
-      msg.writeError = r.error || '写入失败'
+      msg.writeError = r.error || (msg.pendingWrite.kind === 'mcp-deploy' ? '发版失败' : '写入失败')
     } else {
       msg.writeStatus = 'done'
+      if (msg.pendingWrite.kind === 'mcp-deploy') {
+        const data = r.data ?? {}
+        if (data.queueId != null) {
+          msg.writeNote = `已触发构建（queueId: ${data.queueId}）`
+        } else if (data.buildNumber != null) {
+          msg.writeNote = `已触发构建（buildNumber: ${data.buildNumber}）`
+        } else if (data.raw != null) {
+          msg.writeNote = `已触发构建（${typeof data.raw === 'string' ? data.raw : JSON.stringify(data.raw)}）`
+        } else {
+          msg.writeNote = '已触发构建'
+        }
+      }
     }
   } catch (e: any) {
     msg.writeStatus = 'failed'
@@ -502,7 +538,7 @@ watch(() => configStore.config.assistantName, (n) => {
               <template v-if="msg.role === 'tool'">
                 <div v-if="msg.pendingWrite" class="pending-write">
                   <div class="msg-role">
-                    <span>待确认写入</span>
+                    <span>{{ msg.pendingWrite.kind === 'mcp-deploy' ? '待确认发版' : '待确认写入' }}</span>
                     <span class="msg-time">{{ formatTime(msg.createdAt) }}</span>
                   </div>
                   <pre class="pending-summary">{{ msg.pendingWrite.summary }}</pre>
@@ -512,7 +548,12 @@ watch(() => configStore.config.assistantName, (n) => {
                       :disabled="msg.writeStatus === 'writing' || msg.writeStatus === 'done' || msg.writeStatus === 'cancelled'"
                       @click="confirmPendingWrite(msg)"
                     >
-                      {{ msg.writeStatus === 'done' ? '已写入' : msg.writeStatus === 'writing' ? '写入中' : msg.writeStatus === 'failed' ? '重试写入' : '确认写入' }}
+                      <template v-if="msg.pendingWrite.kind === 'mcp-deploy'">
+                        {{ msg.writeStatus === 'done' ? '已触发' : msg.writeStatus === 'writing' ? '触发中' : msg.writeStatus === 'failed' ? '重试发版' : '确认发版' }}
+                      </template>
+                      <template v-else>
+                        {{ msg.writeStatus === 'done' ? '已写入' : msg.writeStatus === 'writing' ? '写入中' : msg.writeStatus === 'failed' ? '重试写入' : '确认写入' }}
+                      </template>
                     </button>
                     <button
                       class="pending-btn"
@@ -522,10 +563,14 @@ watch(() => configStore.config.assistantName, (n) => {
                       {{ msg.writeStatus === 'cancelled' ? '已取消' : '取消' }}
                     </button>
                   </div>
-                  <p v-if="msg.writeStatus === 'done'" class="pending-note ok">已写入禅道。</p>
-                  <p v-else-if="msg.writeStatus === 'cancelled'" class="pending-note">已取消，这次不会写入。</p>
+                  <p v-if="msg.writeStatus === 'done'" class="pending-note ok">
+                    {{ msg.pendingWrite.kind === 'mcp-deploy' ? (msg.writeNote || '已触发构建') : '已写入禅道。' }}
+                  </p>
+                  <p v-else-if="msg.writeStatus === 'cancelled'" class="pending-note">已取消，这次不会执行。</p>
                   <p v-else-if="msg.writeStatus === 'failed'" class="pending-note fail">{{ msg.writeError }}</p>
-                  <p v-else-if="msg.writeStatus === 'writing'" class="pending-note">正在写入禅道…</p>
+                  <p v-else-if="msg.writeStatus === 'writing'" class="pending-note">
+                    {{ msg.pendingWrite.kind === 'mcp-deploy' ? '正在触发构建…' : '正在写入禅道…' }}
+                  </p>
                 </div>
                 <template v-else>
                   <div class="msg-role tool-header" @click="toggleToolExpanded(i)">
