@@ -6,6 +6,7 @@ use std::process::Command;
 
 pub mod chat;
 pub mod config;
+pub mod deploy_config;
 pub mod llm;
 pub mod tasks;
 pub mod tool;
@@ -15,6 +16,7 @@ pub mod window;
 
 pub use chat::*;
 pub use config::*;
+pub use deploy_config::*;
 pub use llm::*;
 pub use tasks::*;
 pub use tool::*;
