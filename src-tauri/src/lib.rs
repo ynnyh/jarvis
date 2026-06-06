@@ -19,6 +19,7 @@ mod task_bindings;
 mod task_snapshot;
 mod tools;
 mod util;
+mod voice;
 mod worklog;
 mod zentao;
 
@@ -325,6 +326,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             worklog::worklog_card_write,
             worklog::worklog_session_write_confirmed,
             repo_recommender::recommend_repos_for_task,
+            voice::voice_assets_status,
+            voice::voice_start,
+            voice::voice_stop_and_transcribe,
         ])
         .build(tauri::generate_context!())?
         .run(|_app_handle, _event| {});

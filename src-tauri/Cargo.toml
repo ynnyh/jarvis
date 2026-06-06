@@ -43,6 +43,10 @@ futures-util = "0.3"
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 tauri-plugin-autostart = "2.5.1"
 rmcp = { version = "1.7.0", features = ["client", "transport-child-process"] }
+cpal = "0.17.1"
+hound = "3.5.1"
+enigo = "0.3.0"
+arboard = "3.6.1"
 
 # 非 Windows 平台需要 libc::kill 来检测 daemon 进程存活
 # Windows 走 tasklist，不需要 libc

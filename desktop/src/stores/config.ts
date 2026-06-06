@@ -123,6 +123,8 @@ export interface JarvisConfig {
   costFeatureEnabled: boolean
   /** 对话式发版（Jenkins）功能开关，默认关闭。开启后「接入」里出现发版配置项 */
   deployEnabled: boolean
+  /** 语音输入功能开关，默认关闭。开启后热键/点小人可语音转写并注入聚焦框（PR2 接 UI） */
+  voiceInputEnabled: boolean
 }
 
 export interface ScheduledReminder {
@@ -207,6 +209,7 @@ const defaultConfig = (): JarvisConfig => ({
   styleTheme: DEFAULT_STYLE_THEME,
   costFeatureEnabled: false,
   deployEnabled: false,
+  voiceInputEnabled: false,
 })
 
 function todayStr(): string {
@@ -293,6 +296,7 @@ export const useConfigStore = defineStore('config', () => {
           : defaults.styleTheme,
         costFeatureEnabled: remote.costFeatureEnabled ?? defaults.costFeatureEnabled,
         deployEnabled: remote.deployEnabled ?? defaults.deployEnabled,
+        voiceInputEnabled: remote.voiceInputEnabled ?? defaults.voiceInputEnabled,
         todayPlan: {
           date: remote.todayPlan?.date ?? defaults.todayPlan.date,
           taskIds: Array.isArray(remote.todayPlan?.taskIds)
