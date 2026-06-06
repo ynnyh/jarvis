@@ -10,6 +10,7 @@ mod daily_review;
 mod fine_report;
 mod git_scan;
 mod llm;
+mod mcp_client;
 mod memory;
 mod repo_recommender;
 mod settings;

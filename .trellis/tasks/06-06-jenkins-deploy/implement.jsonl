@@ -1,1 +1,3 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/tasks/06-06-jenkins-deploy/research/rmcp-stdio-client.md", "reason": "rmcp 0.8 客户端 API + jenkins-mcp server 事实；PR1 直接依据，含「必须 cargo 验证」的 API 漂移清单"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "PRD 强调复用 chat_agent/tools/pending_actions，勿重复造确认基建"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "发版闭环跨 Rust 后端 + 确认卡片前端 + IM 渠道，多层数据流"}
