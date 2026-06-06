@@ -7,7 +7,7 @@
 
 ## Overview
 
-The app ships 4 visual themes, switchable at runtime with **zero re-render**:
+The app ships 6 visual themes, switchable at runtime with **zero re-render**:
 
 | id | name | character |
 |----|------|-----------|
@@ -15,8 +15,10 @@ The app ships 4 visual themes, switchable at runtime with **zero re-render**:
 | `playful` | 俏皮风 | candy pastel, big radius, bouncy shadow |
 | `zen` | 治愈风 | paper/wood, low-saturation beige |
 | `minimal` | 极简风 | grayscale mono, hairline borders, no shadow/motion |
+| `matrix` | 矩阵风 | hacker green × near-black, scanlines, canvas digital-rain |
+| `cyber` | 未来风 | deep-space black × electric-blue/holo-purple, canvas particles |
 
-Theming is driven entirely by **CSS custom properties (design tokens)**. There is no JS color logic in components.
+Theming is driven entirely by **CSS custom properties (design tokens)**. There is no JS color logic in components. The two canvas-backed themes (`matrix`, `cyber`) additionally mount a self-contained `<canvas>` background component (see "Canvas-backed theme effects" below).
 
 ---
 
@@ -93,6 +95,13 @@ A hardcoded color does not follow the theme — it stays fixed across all 4 them
 
 Use `--popup-bg` for: review/risk/bind/task popups, the right-click menu, the settings panel. Keep `--menu-bg` only for genuine small dropdowns that have their own shadow (e.g. `.iw-dropdown`).
 
+### 同样适用于 `--panel-bg`：透明主窗里的悬浮面板背景一律用 `--popup-bg`
+
+挂载在透明主窗（`App.vue`，root `background: transparent`）里的悬浮面板，主背景**必须**用 `--popup-bg`（在全部 6 套主题里都是不透明的）。
+
+切勿把 `--panel-bg` / `--menu-bg` 当成悬浮面板的主背景：它们在极简（minimal）主题下被刻意做成近乎全透明（如 `--panel-bg: rgba(255,255,255,0.03)`，仅 3% 不透明度），只有当面板叠在不透明的窗口 body 之上（即独立窗口入口，如 ChatApp/BatchWriteApp/WriteHoursApp/TodayPlanApp/ManualHoursApp/CostRatesSection）时才安全。直接浮在 `App.vue` 透明 root 上会导致桌面透视——`UpdateWindow.vue` 曾因此在极简主题下几乎看不见（`.update-panel` 误用 `--panel-bg`，应为 `--popup-bg`）。`--panel-header-bg` 等薄叠加层不受影响，可继续用在不透明主背景之上。
+
+
 ---
 
 ## Convention: adding a theme = copy one `[data-theme]` block and override ALL differing tokens
@@ -138,4 +147,22 @@ Then register it in `style-themes.ts` (`STYLE_THEMES`). No component changes nee
 
 ## Decorative background layer (`.theme-bg`)
 
-Real (non-avatar) windows add class `.theme-bg` on their root to get `--theme-bg` plus a `::after` overlay (`--theme-overlay-image` / `-opacity` / `-blend`). The avatar window does NOT add it (must stay transparent). A future canvas-based theme (e.g. matrix rain) should mount its canvas only on `.theme-bg` windows, behind content (`z-index:0; pointer-events:none`), never on the avatar window.
+Real (non-avatar) windows add class `.theme-bg` on their root to get `--theme-bg` plus a `::after` overlay (`--theme-overlay-image` / `-opacity` / `-blend`). The avatar window does NOT add it (must stay transparent).
+
+---
+
+## Canvas-backed theme effects (`MatrixRain`, `CyberParticles`)
+
+`matrix` and `cyber` add a moving `<canvas>` background via two self-contained components: `components/MatrixRain.vue` (green digital rain) and `components/CyberParticles.vue` (drifting particles + connection lines + pulse bursts). They are mounted in all 7 non-avatar windows as the first children of the `.theme-bg` root, and **never** in the avatar window (`App.vue` / `App.mock.vue`), which must stay transparent.
+
+### Contract (must hold for every canvas-backed theme component)
+
+- **Theme-gated render**: `v-if="isMatrix"` / `v-if="isCyber"` (computed off `config.styleTheme`). When the theme is inactive the canvas is not in the DOM and costs zero CPU.
+- **Layering**: `position:absolute; inset:0; z-index:-1; pointer-events:none`, sitting behind content inside the `.theme-bg` stacking context (`.theme-bg` is `position:relative; z-index:0`).
+- **RAF lifecycle**: throttle to ~24–30 fps via timestamp; `tick()` must early-return and zero `rafId` when the theme is inactive or `document.hidden`. Guard every (re)start with `if (!rafId)` to avoid double loops.
+- **Pause when hidden**: listen `visibilitychange`; `stop()` on hide, resume on show (only if `!rafId`).
+- **Cleanup on unmount** (no leaks): `onBeforeUnmount` must `removeEventListener('visibilitychange')`, `cancelAnimationFrame`, `ResizeObserver.disconnect()`, and null the 2D context.
+- **Switch off the theme**: the `watch(isActive)` handler must `stop()` + clear the canvas when turning off, and re-`start()` (after a RAF so `v-if` has mounted the canvas) when turning on.
+- **Hardcoded colors are allowed here**: these are fixed visual effects (matrix green, cyber blue/purple), orthogonal to the token palette — like the other allowed exceptions above. The surrounding UI still uses tokens.
+
+A future canvas-based theme should follow the same contract.
