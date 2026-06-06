@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 8
-- **Last Active**: 2026-06-04
+- **Total Sessions**: 9
+- **Last Active**: 2026-06-06
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~271 | Active |
+| `journal-1.md` | ~304 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 9 | 2026-06-06 | ui-theme M1 收尾归档 + 语音输入任务立项 | `3cd7ee0` | `main` |
 | 8 | 2026-06-04 | 成本与记忆模块代码审查与修复 | `02408b4` | `main` |
 | 7 | 2026-06-03 | CC Switch 全量 provider 导入 | `e52fc96` | `main` |
 | 6 | 2026-06-03 | 工时内容 AI 精简按钮 | `bcd5c88` | `main` |
