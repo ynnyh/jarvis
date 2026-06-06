@@ -1,3 +1,5 @@
 {"file": ".trellis/tasks/06-06-jenkins-deploy/research/rmcp-stdio-client.md", "reason": "rmcp 0.8 客户端 API + jenkins-mcp server 事实；PR1 直接依据，含「必须 cargo 验证」的 API 漂移清单"}
 {"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "PRD 强调复用 chat_agent/tools/pending_actions，勿重复造确认基建"}
 {"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "发版闭环跨 Rust 后端 + 确认卡片前端 + IM 渠道，多层数据流"}
+{"file": ".trellis/spec/backend/mcp-client.md", "reason": "PR3 confirm-deploy 调 manager.call_tool 必须遵两层错误(Err vs is_error)+CallToolResult 取文本；keychain env 注入点在 spawn"}
+{"file": ".trellis/spec/backend/mcp-agent-integration.md", "reason": "PR3 必须保留 PR2 红线：agent 永不直调 trigger_build；prepare/confirm 拆分不能绕过门禁"}

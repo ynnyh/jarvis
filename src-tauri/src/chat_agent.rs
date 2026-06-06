@@ -61,7 +61,14 @@ pub const DEFAULT_AGENT_TOOLS: &[&str] = &[
     "prepare-log-task-effort",
     "cost_report_preview",
     "cost_report",
+    "prepare-deploy",
 ];
+
+/// 红线：agent 永不允许直接调用的写操作工具（无论 allowed 列表怎么传）。
+///   - log-task-effort：写禅道工时，必须走 prepare-log-task-effort + 用户确认。
+///   - confirm-deploy：真正触发 Jenkins 构建，必须走 prepare-deploy + 用户确认
+///     （它本就不在 DEFAULT_AGENT_TOOLS，列在此处是 belt-and-suspenders，万一被传入也拒）。
+pub const AGENT_FORBIDDEN_TOOLS: &[&str] = &["log-task-effort", "confirm-deploy"];
 
 pub fn default_system_prompt(assistant_name: &str, user_title: &str) -> String {
     format!(
@@ -74,7 +81,8 @@ pub fn default_system_prompt(assistant_name: &str, user_title: &str) -> String {
 4. 查短周期工时时使用 get_efforts；查本月、本季度、近半年、本年等长周期时，优先使用 get_effort_report，输出完整工作汇报正文和数据附录。\n\
 5. **主动提议记工时**：当用户提到「干了什么、花了多长时间」时（例如\"修了登录bug花了2小时\"），主动调用 get_tasks 查找匹配任务。返回任务列表后，先向用户说明你找到了哪些可能匹配的任务以及你的选择理由，再调用 prepare-log-task-effort 生成待确认写入建议（记得传出 taskName）。如果拿不准选哪个，把候选列表发给用户让对方选。\n\
    注意：必须等用户确认（说\"确认\"\"好\"\"可以\"）后才会真正写入，你只负责准备建议。如果信息不全（缺任务、缺工时、缺工作描述），先追问清楚再准备。\n\
-6. **项目成本查询两步确认**：用户问项目成本时，必须先调 cost_report_preview 拉团队成员列表，展示给用户确认「你要查的是 XXX 项目吗？团队成员有张三、李四…」，用户确认后再调 cost_report 出完整报告。若用户指定了周期（今年/本季/近半年/某段日期），调 cost_report 时带上 range 或 startDate+endDate；默认本月。禁止跳过预览直接查成本。",
+6. **项目成本查询两步确认**：用户问项目成本时，必须先调 cost_report_preview 拉团队成员列表，展示给用户确认「你要查的是 XXX 项目吗？团队成员有张三、李四…」，用户确认后再调 cost_report 出完整报告。若用户指定了周期（今年/本季/近半年/某段日期），调 cost_report 时带上 range 或 startDate+endDate；默认本月。禁止跳过预览直接查成本。\n\
+7. **发版/部署必须确认后执行**：当用户要求发版/部署/上线（如\"给 XX 项目测试环境发个版\"）时，调用 prepare-deploy 并**显式传入项目和环境**（test 或 prod，绝不能省略或自己猜默认环境）生成确认卡片，让用户核对项目/环境/分支/参数后确认。绝不直接调用 mcp__<server>__trigger_build（会被拒绝），也绝不替用户确认——必须等用户确认后才真正发版。",
         assistant_name, user_title, user_title
     )
 }
@@ -382,13 +390,12 @@ async fn execute_tool_call(call: &ToolCall, allowed: &[String]) -> ChatMessage {
         return execute_mcp_tool_call(call).await;
     }
 
-    // 红线第二道防线：无论 allowed 列表怎么传，agent 都不能直接调用写禅道的工具。
-    // 写工时必须走 prepare-log-task-effort + 用户确认。
-    const AGENT_FORBIDDEN_TOOLS: &[&str] = &["log-task-effort"];
+    // 红线第二道防线：无论 allowed 列表怎么传，agent 都不能直接调用写操作工具
+    // （写禅道工时 / 触发发版）。见 AGENT_FORBIDDEN_TOOLS 定义。
     if AGENT_FORBIDDEN_TOOLS.contains(&name.as_str()) {
         return ChatMessage {
             role: Role::Tool,
-            content: json!({ "error": format!("工具 {} 是写操作，agent 不允许直接调用；请改用 prepare-log-task-effort 生成待确认建议。", name) }).to_string(),
+            content: json!({ "error": format!("工具 {} 是写操作，agent 不允许直接调用；请改用对应的 prepare- 工具生成待确认建议。", name) }).to_string(),
             tool_calls: None,
             tool_call_id: Some(call.id.clone()),
             name: Some(name),
@@ -725,6 +732,19 @@ fn tool_schema(name: &str) -> Option<(String, Value)> {
                 "additionalProperties": false
             }),
         )),
+        "prepare-deploy" => Some((
+            "发版（部署）的唯一入口：生成一张待用户确认的发版建议卡片，不会真正触发构建。必须显式指定项目和环境（test 或 prod，绝不能省略或默认）。可选传 branch 覆盖预设分支。注意：你只负责生成建议，必须等用户确认后才会真正发版；严禁直接调用 mcp__<server>__trigger_build（会被拒绝）。".into(),
+            json!({
+                "type": "object",
+                "properties": {
+                    "project": { "type": "string", "description": "项目别名（与发版预设里配置的项目名一致）" },
+                    "environment": { "type": "string", "description": "发版环境，必须显式指定：test（测试）或 prod（生产），绝不能省略" },
+                    "branch": { "type": "string", "description": "要发版的分支（可选）；不传则用该项目该环境的预设分支" }
+                },
+                "required": ["project", "environment"],
+                "additionalProperties": false
+            }),
+        )),
         "log-task-effort" => Some((
             "给禅道任务登记工时。需要任务 ID、工时数和工作内容描述。可选指定日期（默认今天）。".into(),
             json!({
@@ -804,6 +824,31 @@ mod tests {
     fn blocked_tool_is_refused_in_loop() {
         let refusal = mcp_gate_refusal(ToolLevel::Blocked, "mcp__x__danger");
         assert!(refusal.expect("blocked 必须被拦截").contains("禁用"));
+    }
+
+    #[test]
+    fn confirm_deploy_in_forbidden_list() {
+        // 红线：confirm-deploy（真正触发发版）必须在 agent 禁用名单里，
+        // 即便有人把它塞进 allowed，execute_tool_call 也会先拦。
+        assert!(
+            AGENT_FORBIDDEN_TOOLS.contains(&"confirm-deploy"),
+            "confirm-deploy 必须在 AGENT_FORBIDDEN_TOOLS"
+        );
+        // log-task-effort 这条既有红线不能被回归掉。
+        assert!(AGENT_FORBIDDEN_TOOLS.contains(&"log-task-effort"));
+        // 反向：prepare-deploy 是提案、agent 可调，绝不能进禁用名单。
+        assert!(!AGENT_FORBIDDEN_TOOLS.contains(&"prepare-deploy"));
+    }
+
+    #[test]
+    fn prepare_deploy_is_agent_callable_with_schema() {
+        // prepare-deploy 在默认白名单里，且有 schema（否则不会注入给 LLM）。
+        assert!(DEFAULT_AGENT_TOOLS.contains(&"prepare-deploy"));
+        let (_desc, params) = tool_schema("prepare-deploy").expect("prepare-deploy 应有 schema");
+        // project + environment 必填。
+        let required = params["required"].as_array().expect("required 数组");
+        assert!(required.iter().any(|v| v == "project"));
+        assert!(required.iter().any(|v| v == "environment"));
     }
 
     // ---- MCP Tool → ToolDefinition 转换 ----

@@ -30,6 +30,7 @@ pub(super) async fn maybe_handle_confirmation(
 
     let result = match action.kind.as_str() {
         "log-task-effort" => tools::dispatch("log-task-effort", action.payload.clone()).await,
+        "mcp-deploy" => tools::dispatch("confirm-deploy", action.payload.clone()).await,
         _ => Err(format!("未知待确认操作: {}", action.kind)),
     };
     let _ = std::fs::remove_file(&path);

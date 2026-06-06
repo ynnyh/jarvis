@@ -12,6 +12,8 @@
 //   analyze_risk      → zentao.get_my_tasks + heuristic (+ 可选 LLM 改写)
 //   log-task-effort   → zentao.add_effort（带审计日志）
 //   prepare-log-task-effort → 生成待确认写工时建议（不写入）
+//   prepare-deploy    → 生成待确认发版建议（不触发，agent 可调）
+//   confirm-deploy    → 真正触发 Jenkins 构建（带审计日志，agent 不可调）
 //   ask-llm           → llm.chat（直接转发）
 //   cc_switch_import  → 读 ~/.cc-switch/{settings.json,cc-switch.db}
 //   chat_send         → chat_agent::run_agent
@@ -24,6 +26,7 @@ pub mod cc_switch_import;
 pub mod chat_tool;
 pub mod cost_report;
 pub mod daily_review_tool;
+pub mod deploy;
 pub mod effort_logging;
 pub mod effort_report;
 pub mod llm_passthrough;
@@ -53,6 +56,8 @@ pub async fn dispatch(name: &str, input: Value) -> Result<Value, String> {
         "analyze_risk" => self::risk_analysis::analyze_risk(input).await,
         "prepare-log-task-effort" => self::effort_logging::prepare_log_task_effort(input).await,
         "log-task-effort" => self::effort_logging::log_task_effort(input).await,
+        "prepare-deploy" => self::deploy::prepare_deploy(input).await,
+        "confirm-deploy" => self::deploy::confirm_deploy(input).await,
         "ask-llm" => self::llm_passthrough::ask_llm(input).await,
         "cc_switch_import" => self::cc_switch_import::cc_switch_import(input).await,
         "cost_report" => self::cost_report::cost_report(input).await,

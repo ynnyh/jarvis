@@ -448,7 +448,12 @@ async fn spawn_running(cfg: &McpServerConfig) -> Result<Running, String> {
     let mut cmd = Command::new(&cfg.command);
     cmd.args(&cfg.args);
     for (k, v) in &cfg.env {
-        cmd.env(k, v);
+        // 每个 env 值先过 resolve_env_value：`keychain:` 前缀的从 OS 密钥链取，
+        // 让 Jenkins token 等敏感值不落明文配置（满足 DoD「token 不出现在明文配置」）。
+        // 解析失败（引用的密钥不存在）→ 直接返回 spawn 错误，由 spawn_all_from_config
+        // eprintln 记录后跳过该 server，绝不静默 let _ = 吞掉。
+        let resolved = resolve_env_value(v)?;
+        cmd.env(k, resolved);
     }
 
     let transport =
@@ -459,6 +464,22 @@ async fn spawn_running(cfg: &McpServerConfig) -> Result<Running, String> {
         .serve(transport)
         .await
         .map_err(|e| format!("MCP initialize 握手失败: {}", e))
+}
+
+/// 解析 env 值：`keychain:<key>` 形态从 OS 密钥链取对应密钥；其余原样返回。
+///
+/// 通用机制——任何 MCP server 都能把敏感值（token/密码）放进密钥链，配置里只写
+/// `"JENKINS_ENV_TEST_TOKEN": "keychain:jenkins-test-token"`，spawn 时才解出注入子进程。
+/// 引用的密钥不存在/为空 → Err（绝不静默注入空值，否则 server 拿空 token 静默失败、难排查）。
+fn resolve_env_value(v: &str) -> Result<String, String> {
+    match v.strip_prefix("keychain:") {
+        Some(key) => {
+            let key = key.trim();
+            crate::settings::secret_get(key)
+                .ok_or_else(|| format!("env 引用的 keychain 密钥 '{}' 不存在", key))
+        }
+        None => Ok(v.to_string()),
+    }
 }
 
 /// 从 `CallToolResult` 取第一个文本块（jenkins-mcp 每个结果就是单个 text 块）。
@@ -666,6 +687,27 @@ mod tests {
         let json2 = r#"{ "servers": { "a": { "command": "x" } } }"#;
         let cfg2: McpServersConfig = serde_json::from_str(json2).unwrap();
         assert!(cfg2.servers.get("a").unwrap().tool_policy.is_empty());
+    }
+
+    // ---- keychain env 注入：resolve_env_value ----
+
+    #[test]
+    fn resolve_env_value_passes_through_literal() {
+        // 无 keychain: 前缀的字面值原样返回（确定性，不碰密钥链）。
+        assert_eq!(resolve_env_value("http://x.local").unwrap(), "http://x.local");
+        assert_eq!(resolve_env_value("").unwrap(), "");
+        // 仅 "keychain" 而非 "keychain:" 不触发前缀解析，按字面值处理。
+        assert_eq!(resolve_env_value("keychain").unwrap(), "keychain");
+    }
+
+    #[test]
+    fn resolve_env_value_missing_keychain_key_errs() {
+        // keychain: 前缀但密钥不存在 → Err（绝不静默注入空值）。
+        // 用极不可能存在的 account 名，确保走 NoEntry 分支、不依赖本机已存的密钥。
+        let key = "jarvis-test-nonexistent-key-9f3a7b21";
+        let err = resolve_env_value(&format!("keychain:{}", key)).unwrap_err();
+        assert!(err.contains(key), "错误应点名缺失的密钥: {}", err);
+        assert!(err.contains("不存在"), "实得: {}", err);
     }
 
     // 真·冒烟：spawn jenkins-mcp 并列出 8 个工具。

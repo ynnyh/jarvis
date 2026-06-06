@@ -1,2 +1,4 @@
 {"file": ".trellis/tasks/06-06-jenkins-deploy/research/rmcp-stdio-client.md", "reason": "review 核对 rmcp API 用法与调研/真实 docs 一致；tool 失败按 isError 处理而非 Err"}
 {"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "检查是否复用现有确认基建（pending_actions）而非新造"}
+{"file": ".trellis/spec/backend/mcp-client.md", "reason": "confirm-deploy 调 call_tool 必须遵两层错误(Err vs is_error)；keychain env 注入"}
+{"file": ".trellis/spec/backend/mcp-agent-integration.md", "reason": "PR3 必须保留红线：agent 不直调 trigger_build；prepare/confirm 拆分不绕门禁"}
