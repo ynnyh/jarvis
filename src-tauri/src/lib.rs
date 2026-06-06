@@ -228,6 +228,19 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 });
             }
+
+            // 启动全局 MCP client 管理器：读 ~/.jarvis/mcp-servers.json，spawn 所有 enabled
+            // 的 stdio MCP server。没配文件 → Ok([])，正常启动（无 MCP server）。单个 server
+            // 起不来不阻断 app（spawn_all_from_config 内部已逐个打日志）。
+            tauri::async_runtime::spawn(async move {
+                match crate::mcp_client::manager().spawn_all_from_config().await {
+                    Ok(started) if !started.is_empty() => {
+                        eprintln!("[mcp_client] 已启动 MCP server: {:?}", started);
+                    }
+                    Ok(_) => {}
+                    Err(e) => eprintln!("[mcp_client] 启动 MCP server 失败: {}", e),
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

@@ -40,6 +40,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use once_cell::sync::Lazy;
 use rmcp::model::{CallToolRequestParams, CallToolResult, Tool};
 use rmcp::service::{RoleClient, RunningService};
 use rmcp::transport::TokioChildProcess;
@@ -51,6 +52,15 @@ use tokio::sync::Mutex;
 
 use crate::settings::jarvis_dir;
 
+/// 单次 MCP 请求（list_tools / call_tool）的硬超时。
+///
+/// rmcp 默认 `PeerRequestOptions::no_options()` 不带 timeout：子进程若**活着但不回**
+/// （卡死、死循环），`list_all_tools().await` / `call_tool().await` 会**永久挂起**。
+/// 这两个调用都发生在 agent loop 内（loop 启动列工具 + 每次 MCP 调用前重新分类），
+/// 一旦挂死整个对话就卡住。故在管理器侧统一包一层 `tokio::time::timeout` 兜底，
+/// 超时按普通错误返回，让 agent 退化（少这个 server 的工具）而非冻结。
+const MCP_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// 已连接的 MCP server 句柄类型别名。
 ///
 /// 持有 `RunningService` 本体（而非只留 `Peer`）—— 一旦 drop，rmcp 会关闭
@@ -61,8 +71,8 @@ type Running = RunningService<RoleClient, ()>;
 // 配置模型：~/.jarvis/mcp-servers.json
 // ============================================================================
 //
-// PR1 先用最小形态，够 spawn 即可。`toolPolicy`（动态安全分类）、账号/项目
-// 参数预设等留给 PR2/PR3，故意不在这里建模，避免过度设计。
+// PR1 用最小形态，够 spawn 即可。PR2 加了 `toolPolicy`（动态安全分类）；
+// 账号/项目参数预设仍留给 PR3，避免过度设计。
 
 /// 单个 MCP server 的 spawn 配置。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,6 +90,11 @@ pub struct McpServerConfig {
     /// 是否启用。默认 true；置 false 则 spawn_all 跳过。
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// 工具安全策略（PR2 新增）：工具名 → 级别（"auto"/"confirm"/"blocked"）。
+    /// 支持 "*" 通配兜底。最高优先级，覆盖 annotations。
+    /// 如 Jenkins：`{"trigger_build":"confirm","cancel_build":"confirm","*":"auto"}`。
+    #[serde(default)]
+    pub tool_policy: HashMap<String, String>,
 }
 
 fn default_true() -> bool {
@@ -113,6 +128,112 @@ pub fn load_mcp_servers_config() -> Result<McpServersConfig, String> {
     };
     serde_json::from_str(&content)
         .map_err(|e| format!("解析 {} 失败: {}", path.display(), e))
+}
+
+// ============================================================================
+// 动态工具安全分类（PR2）
+// ============================================================================
+//
+// 运行时发现的 MCP 工具无法靠硬编码白名单管控，需要通用机制判定 agent 能否直调。
+// 每个工具定一个级别，决定它在 agent loop 里的待遇：
+//   - auto：纯只读、安全，agent 可在 loop 内直接调。
+//   - confirm（默认）：写/高危操作，agent 不能直接执行，必须走用户确认（PR3 实现确认流；
+//     PR2 只负责"拦下、不执行"）。
+//   - blocked：彻底禁止，agent 永远不能调（危险工具熔断）。
+//
+// 级别从三处来源定，**就高不就低**（strictest-wins，冲突取最严）：
+//   1. 用户在 mcp-servers.json 的 toolPolicy 显式标注（最高优先，含 "*" 通配）。
+//   2. MCP annotations（server 提供时）：readOnlyHint=true 倾向 auto、destructiveHint=true 倾向 confirm。
+//   3. 兜底：无 policy 无 annotations → 一律 confirm，绝不默认 auto。
+//
+// 理由：贴合 Jarvis「写操作永不自动 + 用户确认」铁律；不依赖 server 是否给 annotations
+// （jenkins-mcp 老 SDK 没有 annotations，其工具全落到 toolPolicy 或默认 confirm）。
+
+/// 工具安全级别。严格程度 blocked > confirm > auto（数值越大越严）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ToolLevel {
+    /// agent 可在 loop 内直接调用（纯只读工具）。
+    Auto,
+    /// agent 不能直接执行，需用户确认（写操作默认级别）。
+    Confirm,
+    /// agent 永远不能调用（熔断）。
+    Blocked,
+}
+
+impl ToolLevel {
+    /// 从配置字符串解析。无法识别 → None（交给调用方走更低优先级来源）。
+    fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "auto" => Some(ToolLevel::Auto),
+            "confirm" => Some(ToolLevel::Confirm),
+            "blocked" => Some(ToolLevel::Blocked),
+            _ => None,
+        }
+    }
+
+    /// agent 是否可以在 loop 内直接执行此级别的工具。
+    pub fn is_auto(self) -> bool {
+        matches!(self, ToolLevel::Auto)
+    }
+}
+
+/// 从 toolPolicy 查某个工具的显式级别：先精确匹配工具名，再退到 "*" 通配。
+/// 值无法解析为合法级别时按"未标注"处理（返回 None）。
+fn policy_level(policy: &HashMap<String, String>, tool: &str) -> Option<ToolLevel> {
+    policy
+        .get(tool)
+        .or_else(|| policy.get("*"))
+        .and_then(|s| ToolLevel::parse(s))
+}
+
+/// 从 MCP annotations 推断级别（仅作参考，且只在 toolPolicy 未命中时采信）。
+///   - readOnlyHint=true → Auto 倾向
+///   - destructiveHint=true → Confirm 倾向
+/// 两者都没有有意义信号 → None（落到默认 confirm）。
+fn annotation_level(tool: &Tool) -> Option<ToolLevel> {
+    let ann = tool.annotations.as_ref()?;
+    // destructive 优先：只读但破坏性的极端情况下取严。
+    if ann.destructive_hint == Some(true) {
+        return Some(ToolLevel::Confirm);
+    }
+    if ann.read_only_hint == Some(true) {
+        return Some(ToolLevel::Auto);
+    }
+    None
+}
+
+/// 综合判定一个 MCP 工具的安全级别。严格"就高不就低"：
+///   1. toolPolicy 显式标注（最高优先，直接采用，不再被 annotations 放宽）。
+///   2. 否则采信 annotations（若 server 给了）。
+///   3. 否则兜底 **Confirm**（绝不默认 Auto）。
+///
+/// 注：当 toolPolicy 把某工具标成 auto，而 annotations 说 destructive 时，仍以
+/// toolPolicy 为准（用户显式标注代表知情授权，是最高优先级，符合 PRD「用户可主动把
+/// 只读工具降 auto」）。annotations 只在用户没标注时兜底收严。
+pub fn classify_tool(policy: &HashMap<String, String>, tool: &Tool) -> ToolLevel {
+    if let Some(level) = policy_level(policy, tool.name.as_ref()) {
+        return level;
+    }
+    if let Some(level) = annotation_level(tool) {
+        return level;
+    }
+    ToolLevel::Confirm
+}
+
+// ============================================================================
+// 全局 McpClientManager 单例（PR2）
+// ============================================================================
+//
+// agent loop 从多处入口被触达（Tauri 命令、channels、chat_tool 递归），且这些路径都
+// 不串 Tauri State。沿用本仓库的「模块级全局」惯例（如 settings::CONFIG_WRITE_LOCK），
+// 用 once_cell::Lazy 持有一个全局 manager。`McpClientManager` 内部是 Arc<Mutex>，
+// Clone 廉价，全局只是给各处一个共同句柄。
+
+static GLOBAL_MANAGER: Lazy<McpClientManager> = Lazy::new(McpClientManager::new);
+
+/// 取全局 MCP client 管理器。app 启动时 spawn_all_from_config，之后各处共享。
+pub fn manager() -> &'static McpClientManager {
+    &GLOBAL_MANAGER
 }
 
 // ============================================================================
@@ -191,15 +312,25 @@ impl McpClientManager {
 
     /// 列出某个已连接 server 的全部工具（自动翻页）。
     pub async fn list_tools(&self, id: &str) -> Result<Vec<Tool>, String> {
-        let map = self.servers.lock().await;
-        let running = map
-            .get(id)
-            .ok_or_else(|| format!("MCP server '{}' 未连接", id))?;
-        // RunningService Deref 到 Peer<RoleClient>，可直接调。
-        running
-            .list_all_tools()
-            .await
-            .map_err(|e| format!("list_tools('{}') 失败: {}", id, e))
+        // 只在持锁期间 clone 出 Peer（Clone 廉价：内部就是 mpsc sender + Arc），
+        // 随即释放锁再做 stdio 往返——绝不持锁 await，否则一个卡死的 server
+        // 会把整个管理器锁死（后续所有 list/call/discover 全堵）。
+        let peer = {
+            let map = self.servers.lock().await;
+            map.get(id)
+                .ok_or_else(|| format!("MCP server '{}' 未连接", id))?
+                .peer()
+                .clone()
+        };
+        // 超时兜底：活着但不回的子进程不会让 list_all_tools 永久挂起。
+        match tokio::time::timeout(MCP_REQUEST_TIMEOUT, peer.list_all_tools()).await {
+            Ok(r) => r.map_err(|e| format!("list_tools('{}') 失败: {}", id, e)),
+            Err(_) => Err(format!(
+                "list_tools('{}') 超时（{}s 未响应）",
+                id,
+                MCP_REQUEST_TIMEOUT.as_secs()
+            )),
+        }
     }
 
     /// 调用某个已连接 server 的某个工具。
@@ -214,26 +345,72 @@ impl McpClientManager {
         tool_name: &str,
         arguments: Option<Map<String, Value>>,
     ) -> Result<CallToolResult, String> {
-        let map = self.servers.lock().await;
-        let running = map
-            .get(id)
-            .ok_or_else(|| format!("MCP server '{}' 未连接", id))?;
+        // 同 list_tools：持锁只为 clone Peer，stdio 往返不持锁，并加超时兜底。
+        let peer = {
+            let map = self.servers.lock().await;
+            map.get(id)
+                .ok_or_else(|| format!("MCP server '{}' 未连接", id))?
+                .peer()
+                .clone()
+        };
         // CallToolRequestParams 是 #[non_exhaustive]，跨 crate 不能用结构体字面量，
         // 走 new()/with_arguments() builder。
         let mut params = CallToolRequestParams::new(tool_name.to_string());
         if let Some(args) = arguments {
             params = params.with_arguments(args);
         }
-        running
-            .call_tool(params)
-            .await
-            .map_err(|e| format!("call_tool('{}/{}') 失败: {}", id, tool_name, e))
+        match tokio::time::timeout(MCP_REQUEST_TIMEOUT, peer.call_tool(params)).await {
+            Ok(r) => r.map_err(|e| format!("call_tool('{}/{}') 失败: {}", id, tool_name, e)),
+            Err(_) => Err(format!(
+                "call_tool('{}/{}') 超时（{}s 未响应）",
+                id,
+                tool_name,
+                MCP_REQUEST_TIMEOUT.as_secs()
+            )),
+        }
     }
 
     /// 当前已连接的 server id 列表。
     pub async fn connected_ids(&self) -> Vec<String> {
         let map = self.servers.lock().await;
         map.keys().cloned().collect()
+    }
+
+    /// 聚合所有已连接 server 的工具，给 agent 用。
+    ///
+    /// 对每个连接的 server：读其在 mcp-servers.json 里的 toolPolicy，list_tools，
+    /// 再逐工具 classify_tool 定级。返回 `(server_id, Tool, ToolLevel)` 列表，
+    /// 供 agent 一次性构建工具定义 + 分类查询表（避免每次调用都读配置/列工具）。
+    ///
+    /// 单个 server 列工具失败不阻断其它（打日志后跳过）。没有任何已连接 server →
+    /// 返回空 Vec（不报错，agent 退化为只用 native 工具）。
+    pub async fn discover_for_agent(&self) -> Vec<(String, Tool, ToolLevel)> {
+        let ids = self.connected_ids().await;
+        if ids.is_empty() {
+            return Vec::new();
+        }
+        // 读配置拿各 server 的 toolPolicy。配置读不出来时退化为空策略（全落默认 confirm）。
+        let cfg = load_mcp_servers_config().unwrap_or_default();
+        let mut out = Vec::new();
+        for id in ids {
+            let tools = match self.list_tools(&id).await {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("[mcp_client] {}", e);
+                    continue;
+                }
+            };
+            let policy = cfg
+                .servers
+                .get(&id)
+                .map(|c| c.tool_policy.clone())
+                .unwrap_or_default();
+            for tool in tools {
+                let level = classify_tool(&policy, &tool);
+                out.push((id.clone(), tool, level));
+            }
+        }
+        out
     }
 
     /// 关停并移除某个 server（优雅 cancel → 杀子进程）。
@@ -296,6 +473,32 @@ pub fn first_text(result: &CallToolResult) -> Option<String> {
         .find_map(|c| c.as_text().map(|t| t.text.clone()))
 }
 
+// ============================================================================
+// 命名空间工具名：mcp__<server>__<tool>（PR2）
+// ============================================================================
+//
+// 发现的 MCP 工具注入 agent 时统一加 `mcp__<server>__<tool>` 前缀，避免与 native
+// 工具名/跨 server 工具名冲突；agent loop 见到 `mcp__` 前缀即路由到 McpClientManager。
+// server id 本身不含 "__"（mcp-servers.json 的 key 一般是简单 id 如 "jenkins"），
+// 故用首个 "__" 切出 server、剩余整体为 tool 名（tool 名理论上可含 "__"）。
+
+pub const MCP_TOOL_PREFIX: &str = "mcp__";
+
+/// 拼出命名空间工具名：("jenkins","list_jobs") → "mcp__jenkins__list_jobs"。
+pub fn namespaced_tool_name(server: &str, tool: &str) -> String {
+    format!("{}{}__{}", MCP_TOOL_PREFIX, server, tool)
+}
+
+/// 把命名空间工具名拆回 (server, tool)。非 `mcp__` 前缀或缺第二段分隔符 → None。
+pub fn parse_namespaced_tool_name(name: &str) -> Option<(String, String)> {
+    let rest = name.strip_prefix(MCP_TOOL_PREFIX)?;
+    let (server, tool) = rest.split_once("__")?;
+    if server.is_empty() || tool.is_empty() {
+        return None;
+    }
+    Some((server.to_string(), tool.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -338,6 +541,133 @@ mod tests {
         assert!(cfg.servers.is_empty());
     }
 
+    // ---- 命名空间工具名 round-trip / 拆分 ----
+
+    #[test]
+    fn namespaced_name_round_trips() {
+        let n = namespaced_tool_name("jenkins", "list_jobs");
+        assert_eq!(n, "mcp__jenkins__list_jobs");
+        assert_eq!(
+            parse_namespaced_tool_name(&n),
+            Some(("jenkins".to_string(), "list_jobs".to_string()))
+        );
+    }
+
+    #[test]
+    fn parse_namespaced_handles_tool_name_with_double_underscore() {
+        // server id 用首个 "__" 切出，剩余整体是 tool 名（可含 "__"）。
+        assert_eq!(
+            parse_namespaced_tool_name("mcp__jenkins__weird__tool"),
+            Some(("jenkins".to_string(), "weird__tool".to_string()))
+        );
+    }
+
+    #[test]
+    fn parse_namespaced_rejects_non_mcp_and_malformed() {
+        assert_eq!(parse_namespaced_tool_name("get_tasks"), None); // 非 mcp__ 前缀
+        assert_eq!(parse_namespaced_tool_name("mcp__jenkins"), None); // 缺 tool 段
+        assert_eq!(parse_namespaced_tool_name("mcp____list"), None); // server 空
+        assert_eq!(parse_namespaced_tool_name("mcp__jenkins__"), None); // tool 空
+    }
+
+    // ---- 动态安全分类：toolPolicy > annotations > 默认 confirm，就高不就低 ----
+
+    fn tool_named(name: &str) -> Tool {
+        Tool::new(
+            name.to_string(),
+            "test".to_string(),
+            Arc::new(Map::new()),
+        )
+    }
+
+    fn tool_with_annotations(name: &str, read_only: Option<bool>, destructive: Option<bool>) -> Tool {
+        let ann = rmcp::model::ToolAnnotations::from_raw(None, read_only, destructive, None, None);
+        tool_named(name).with_annotations(ann)
+    }
+
+    fn policy(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn classify_defaults_to_confirm_with_no_policy_no_annotations() {
+        // jenkins-mcp 工具就是这种：无 annotations、无 toolPolicy → 兜底 confirm，绝不 auto。
+        let t = tool_named("trigger_build");
+        assert_eq!(classify_tool(&HashMap::new(), &t), ToolLevel::Confirm);
+    }
+
+    #[test]
+    fn classify_jenkins_tool_policy() {
+        // PRD 给的 Jenkins 策略：写工具 confirm、其余 "*" auto。
+        let pol = policy(&[
+            ("trigger_build", "confirm"),
+            ("cancel_build", "confirm"),
+            ("*", "auto"),
+        ]);
+        assert_eq!(classify_tool(&pol, &tool_named("trigger_build")), ToolLevel::Confirm);
+        assert_eq!(classify_tool(&pol, &tool_named("cancel_build")), ToolLevel::Confirm);
+        // 只读工具命中 "*" 通配 → auto，agent 可直调。
+        assert_eq!(classify_tool(&pol, &tool_named("list_jobs")), ToolLevel::Auto);
+        assert_eq!(classify_tool(&pol, &tool_named("get_build_status")), ToolLevel::Auto);
+    }
+
+    #[test]
+    fn classify_policy_overrides_annotations_both_directions() {
+        // toolPolicy 是最高优先：即便 annotations 说 destructive，policy=auto 仍 auto
+        // （用户显式标注 = 知情授权；PRD「用户可主动把只读工具降 auto」）。
+        let t = tool_with_annotations("x", Some(false), Some(true));
+        assert_eq!(classify_tool(&policy(&[("x", "auto")]), &t), ToolLevel::Auto);
+        // 反向：annotations 说 read_only，但 policy=confirm → 仍 confirm（取严由 policy 定）。
+        let t2 = tool_with_annotations("y", Some(true), None);
+        assert_eq!(classify_tool(&policy(&[("y", "confirm")]), &t2), ToolLevel::Confirm);
+        // policy=blocked 最严。
+        let t3 = tool_with_annotations("z", Some(true), None);
+        assert_eq!(classify_tool(&policy(&[("z", "blocked")]), &t3), ToolLevel::Blocked);
+    }
+
+    #[test]
+    fn classify_annotations_when_no_policy() {
+        // 无 policy 时采信 annotations：readOnlyHint → auto。
+        let ro = tool_with_annotations("a", Some(true), None);
+        assert_eq!(classify_tool(&HashMap::new(), &ro), ToolLevel::Auto);
+        // destructiveHint → confirm（即便也标了 read_only，destructive 优先取严）。
+        let de = tool_with_annotations("b", Some(true), Some(true));
+        assert_eq!(classify_tool(&HashMap::new(), &de), ToolLevel::Confirm);
+        // 有 annotations 但无 read_only/destructive 信号 → 仍兜底 confirm。
+        let empty_ann = tool_with_annotations("c", None, None);
+        assert_eq!(classify_tool(&HashMap::new(), &empty_ann), ToolLevel::Confirm);
+    }
+
+    #[test]
+    fn classify_invalid_policy_value_falls_through() {
+        // toolPolicy 写了无法识别的值 → 视为未标注，落到下一来源（这里无 annotations → confirm）。
+        let pol = policy(&[("trigger_build", "garbage")]);
+        assert_eq!(classify_tool(&pol, &tool_named("trigger_build")), ToolLevel::Confirm);
+    }
+
+    #[test]
+    fn tool_policy_parses_from_config_json() {
+        let json = r#"{
+            "servers": {
+                "jenkins": {
+                    "command": "node",
+                    "toolPolicy": { "trigger_build": "confirm", "*": "auto" }
+                }
+            }
+        }"#;
+        let cfg: McpServersConfig = serde_json::from_str(json).unwrap();
+        let jenkins = cfg.servers.get("jenkins").unwrap();
+        assert_eq!(jenkins.tool_policy.get("trigger_build").map(String::as_str), Some("confirm"));
+        assert_eq!(jenkins.tool_policy.get("*").map(String::as_str), Some("auto"));
+        // 没配 toolPolicy 的 server → 空 map（默认）。
+        let json2 = r#"{ "servers": { "a": { "command": "x" } } }"#;
+        let cfg2: McpServersConfig = serde_json::from_str(json2).unwrap();
+        assert!(cfg2.servers.get("a").unwrap().tool_policy.is_empty());
+    }
+
     // 真·冒烟：spawn jenkins-mcp 并列出 8 个工具。
     //
     // 默认 #[ignore]，因为它依赖隔壁 jenkins-mcp 仓库已 `npm run build` 出
@@ -365,6 +695,7 @@ mod tests {
             args: vec![index_js.to_string()],
             env,
             enabled: true,
+            tool_policy: HashMap::new(),
         };
 
         let mgr = McpClientManager::new();

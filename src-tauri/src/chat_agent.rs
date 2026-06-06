@@ -119,7 +119,7 @@ pub async fn run_agent(opts: RunAgentOptions<'_>) -> RunAgentResult {
     }
     messages.extend(opts.messages.into_iter());
 
-    let tools = build_tool_definitions(opts.allowed_tools);
+    let tools = build_all_tool_definitions(opts.allowed_tools).await;
     let mut new_messages: Vec<ChatMessage> = Vec::new();
     let mut steps: Vec<AgentStep> = Vec::new();
     let mut tokens_in = 0u64;
@@ -242,7 +242,7 @@ pub async fn run_agent_streaming(
     }
     messages.extend(opts.messages.into_iter());
 
-    let tools = build_tool_definitions(opts.allowed_tools);
+    let tools = build_all_tool_definitions(opts.allowed_tools).await;
     let mut new_messages: Vec<ChatMessage> = Vec::new();
     let mut steps: Vec<AgentStep> = Vec::new();
     let mut tokens_in = 0u64;
@@ -373,6 +373,15 @@ pub async fn run_agent_streaming(
 
 async fn execute_tool_call(call: &ToolCall, allowed: &[String]) -> ChatMessage {
     let name = call.function.name.clone();
+
+    // ---- MCP 工具路由（mcp__<server>__<tool>）----
+    // MCP 工具不走 native 的 allowed 白名单（那张表只管 native 工具），改由动态安全分类管控：
+    //   auto → 直接调；confirm/blocked → 拦下不执行（与 AGENT_FORBIDDEN_TOOLS 同样的「红线」语义）。
+    // 真正的 confirm → pending action → 执行闭环是 PR3；PR2 只保证 auto 能跑、confirm/blocked 被拒。
+    if crate::mcp_client::parse_namespaced_tool_name(&name).is_some() {
+        return execute_mcp_tool_call(call).await;
+    }
+
     // 红线第二道防线：无论 allowed 列表怎么传，agent 都不能直接调用写禅道的工具。
     // 写工时必须走 prepare-log-task-effort + 用户确认。
     const AGENT_FORBIDDEN_TOOLS: &[&str] = &["log-task-effort"];
@@ -429,11 +438,119 @@ async fn execute_tool_call(call: &ToolCall, allowed: &[String]) -> ChatMessage {
     }
 }
 
+/// 执行一个 MCP 工具调用（name 已确认是 `mcp__<server>__<tool>` 形态）。
+///
+/// 流程：拆 server/tool → 查动态安全分类 →
+///   - blocked：彻底拒，告知模型该工具被禁用。
+///   - confirm：拒绝直调，告知模型该工具需用户确认（PR3 接确认流；PR2 只拦）。
+///   - auto：解析参数 → McpClientManager::call_tool → 处理两层错误（传输错 vs is_error）。
+async fn execute_mcp_tool_call(call: &ToolCall) -> ChatMessage {
+    use crate::mcp_client;
+
+    let name = call.function.name.clone();
+    let tool_err = |msg: String| ChatMessage {
+        role: Role::Tool,
+        content: json!({ "error": msg }).to_string(),
+        tool_calls: None,
+        tool_call_id: Some(call.id.clone()),
+        name: Some(name.clone()),
+    };
+
+    let Some((server, tool)) = mcp_client::parse_namespaced_tool_name(&name) else {
+        // 理论上不会到这（调用方已校验前缀），稳妥兜底。
+        return tool_err(format!("无法解析 MCP 工具名 {}", name));
+    };
+
+    let mgr = mcp_client::manager();
+
+    // 重新发现一次，拿该工具当前分类。discover_for_agent 已读 toolPolicy + annotations 定级。
+    // server 未连接 / 工具不存在 → 视为不可用拦下（绝不放行未知工具）。
+    let level = mgr
+        .discover_for_agent()
+        .await
+        .into_iter()
+        .find(|(s, t, _)| s == &server && t.name.as_ref() == tool)
+        .map(|(_, _, lvl)| lvl);
+
+    let level = match level {
+        Some(l) => l,
+        None => {
+            return tool_err(format!(
+                "MCP 工具 {} 当前不可用（server 未连接或工具不存在）。",
+                name
+            ));
+        }
+    };
+
+    // 红线：confirm/blocked 一律不直调。这是 PR2 的安全验收点。
+    // 拦截判定抽成纯函数 mcp_gate_refusal，便于无 live server 的单测覆盖。
+    if let Some(refusal) = mcp_gate_refusal(level, &name) {
+        return tool_err(refusal);
+    }
+
+    // auto：真正调用。参数转成 Option<Map<String,Value>>（MCP call_tool 的入参形态）。
+    let arguments: Option<serde_json::Map<String, Value>> = if call.function.arguments.is_empty() {
+        None
+    } else {
+        match serde_json::from_str::<Value>(&call.function.arguments) {
+            Ok(Value::Object(map)) => Some(map),
+            Ok(Value::Null) => None,
+            Ok(_) => {
+                return tool_err("MCP 工具参数必须是 JSON 对象".to_string());
+            }
+            Err(e) => {
+                return tool_err(format!("参数 JSON 解析失败: {}", e));
+            }
+        }
+    };
+
+    match mgr.call_tool(&server, &tool, arguments).await {
+        // 传输/协议层错误（子进程死、方法不存在等）→ call_tool 返回 Err。
+        Err(e) => tool_err(e),
+        // 工具自身失败走 Ok(is_error==Some(true))，不是 Rust Err，必须显式查。
+        Ok(result) => {
+            let text = mcp_client::first_text(&result).unwrap_or_default();
+            if result.is_error == Some(true) {
+                tool_err(if text.is_empty() {
+                    format!("MCP 工具 {} 执行失败", name)
+                } else {
+                    text
+                })
+            } else {
+                ChatMessage {
+                    role: Role::Tool,
+                    content: truncate_for_context(&text, 12_000),
+                    tool_calls: None,
+                    tool_call_id: Some(call.id.clone()),
+                    name: Some(name),
+                }
+            }
+        }
+    }
+}
+
 fn stringify(v: &Value) -> String {
     if let Some(s) = v.as_str() {
         return s.to_string();
     }
     serde_json::to_string_pretty(v).unwrap_or_else(|_| v.to_string())
+}
+
+/// 给定工具分类级别，返回 agent 在 loop 内直调时应回给模型的"拒绝理由"。
+/// `None` = 放行（auto）；`Some(msg)` = 拦下，msg 作为 tool-result error 回给模型。
+///
+/// PR2 的安全核心：confirm/blocked 都拦。confirm 的真正确认流（pending action）是 PR3，
+/// 这里只负责"不在 loop 内直接执行"。
+fn mcp_gate_refusal(level: crate::mcp_client::ToolLevel, name: &str) -> Option<String> {
+    use crate::mcp_client::ToolLevel;
+    match level {
+        ToolLevel::Auto => None,
+        ToolLevel::Blocked => Some(format!("工具 {} 已被禁用（blocked），agent 不能调用。", name)),
+        ToolLevel::Confirm => Some(format!(
+            "工具 {} 是高危/写操作，需用户确认后才能执行，agent 不允许直接调用。请向用户说明将要执行的操作并等待确认。",
+            name
+        )),
+    }
 }
 
 fn truncate_for_context(s: &str, max: usize) -> String {
@@ -467,6 +584,43 @@ fn build_tool_definitions(allowed: &[String]) -> Vec<ToolDefinition> {
         }
     }
     out
+}
+
+/// 构建给 LLM 的完整工具定义：native 工具（来自 `allowed` + 内联 schema）
+/// + 动态发现的 MCP 工具（命名空间 `mcp__<server>__<tool>`）。
+///
+/// 因为列 MCP 工具是 async（要跨进程 list_tools），整个函数做成 async；
+/// 两个 agent loop 入口都在 async 上下文里，loop 启动时调一次即可。
+///
+/// 没有任何已连接 MCP server 时，MCP 部分为空，等价于原来的纯 native 行为
+/// （不报错——"还没配 MCP server"是正常态）。
+async fn build_all_tool_definitions(allowed: &[String]) -> Vec<ToolDefinition> {
+    let mut out = build_tool_definitions(allowed);
+    for (server, tool, _level) in crate::mcp_client::manager().discover_for_agent().await {
+        out.push(mcp_tool_to_definition(&server, &tool));
+    }
+    out
+}
+
+/// 把一个 rmcp `Tool` 转成 agent 的 `ToolDefinition`，工具名加 `mcp__<server>__` 前缀。
+///
+/// - name：`mcp__<server>__<tool>`（命名空间，避免与 native / 跨 server 冲突）。
+/// - description：rmcp `Tool.description: Option<Cow>`，缺省给空串（字段非 Option）。
+/// - parameters：`Tool.schema_as_json_value()` 把 `Arc<JsonObject>` 取成
+///   `Value::Object(..)`，正是 ToolDefinitionFunction.parameters 期望的 JSON Schema。
+fn mcp_tool_to_definition(server: &str, tool: &rmcp::model::Tool) -> ToolDefinition {
+    ToolDefinition {
+        kind: "function".to_string(),
+        function: ToolDefinitionFunction {
+            name: crate::mcp_client::namespaced_tool_name(server, tool.name.as_ref()),
+            description: tool
+                .description
+                .as_ref()
+                .map(|d| d.to_string())
+                .unwrap_or_default(),
+            parameters: tool.schema_as_json_value(),
+        },
+    }
 }
 
 fn tool_schema(name: &str) -> Option<(String, Value)> {
@@ -619,3 +773,125 @@ fn tool_schema(name: &str) -> Option<(String, Value)> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mcp_client::ToolLevel;
+
+    // ---- PR2 安全验收：MCP 工具的 in-loop 拦截判定 ----
+    //
+    // 这些是 PRD「agent 调 trigger_build 被拦截不执行」的纯逻辑验收点：
+    // 不依赖 live server，直接测分类级别 → 拒绝/放行 的映射。
+    // 真正的 spawn+call 由 mcp_client::tests::smoke_jenkins_list_tools(#[ignore]) 覆盖。
+
+    #[test]
+    fn auto_tool_is_allowed_in_loop() {
+        // auto（如只读的 list_jobs）→ 放行，agent 可直调。
+        assert_eq!(mcp_gate_refusal(ToolLevel::Auto, "mcp__jenkins__list_jobs"), None);
+    }
+
+    #[test]
+    fn confirm_tool_is_refused_in_loop() {
+        // confirm（如 trigger_build）→ 拦下，回模型一段"需确认"的拒绝理由，不执行。
+        let refusal = mcp_gate_refusal(ToolLevel::Confirm, "mcp__jenkins__trigger_build");
+        let msg = refusal.expect("trigger_build 必须被拦截");
+        assert!(msg.contains("确认"), "拒绝理由应提示需用户确认: {}", msg);
+        assert!(msg.contains("trigger_build"));
+    }
+
+    #[test]
+    fn blocked_tool_is_refused_in_loop() {
+        let refusal = mcp_gate_refusal(ToolLevel::Blocked, "mcp__x__danger");
+        assert!(refusal.expect("blocked 必须被拦截").contains("禁用"));
+    }
+
+    // ---- MCP Tool → ToolDefinition 转换 ----
+
+    #[test]
+    fn mcp_tool_converts_to_namespaced_definition() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": { "jobName": { "type": "string" } },
+            "required": ["jobName"]
+        });
+        let map = schema.as_object().unwrap().clone();
+        let tool = rmcp::model::Tool::new(
+            "trigger_build".to_string(),
+            "触发 Jenkins 构建".to_string(),
+            std::sync::Arc::new(map),
+        );
+        let def = mcp_tool_to_definition("jenkins", &tool);
+        assert_eq!(def.kind, "function");
+        assert_eq!(def.function.name, "mcp__jenkins__trigger_build");
+        assert_eq!(def.function.description, "触发 Jenkins 构建");
+        // parameters 应是原 input_schema 的 JSON object（含 properties）。
+        assert_eq!(def.function.parameters["type"], "object");
+        assert!(def.function.parameters["properties"]["jobName"].is_object());
+    }
+
+    // ---- 真·端到端：用 PRD 的 Jenkins toolPolicy 对真实发现的工具定级 ----
+    //
+    // 证明 PRD 验收：真实 jenkins-mcp 工具（无 annotations）+ PRD 策略
+    // {"trigger_build":"confirm","cancel_build":"confirm","*":"auto"} 下，
+    // list_jobs → Auto（agent 可直调）、trigger_build → Confirm（被 gate 拦下）。
+    // 默认 #[ignore]，同 smoke_jenkins_list_tools：需隔壁 jenkins-mcp 已 build + 本机有 node。
+    //   cargo test --lib chat_agent::tests::classify_live_jenkins_tools_with_prd_policy -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore = "需要隔壁 jenkins-mcp 已 npm run build + 本机有 node；手动 --ignored 跑"]
+    async fn classify_live_jenkins_tools_with_prd_policy() {
+        use crate::mcp_client::{classify_tool, McpClientManager, McpServerConfig};
+        use std::collections::HashMap;
+
+        let mut env = HashMap::new();
+        for (k, v) in [
+            ("JENKINS_ENV_TEST_URL", "http://dummy.local"),
+            ("JENKINS_ENV_TEST_USERNAME", "dummy"),
+            ("JENKINS_ENV_TEST_TOKEN", "dummy"),
+        ] {
+            env.insert(k.to_string(), v.to_string());
+        }
+        let cfg = McpServerConfig {
+            command: "node".to_string(),
+            args: vec![r"D:\coding\my-mcp-servers\jenkins-mcp\dist\index.js".to_string()],
+            env,
+            enabled: true,
+            tool_policy: HashMap::new(),
+        };
+        let mgr = McpClientManager::new();
+        mgr.spawn_server("jenkins", &cfg).await.expect("spawn");
+        let tools = mgr.list_tools("jenkins").await.expect("list");
+
+        // PRD 的 Jenkins 策略。
+        let policy: HashMap<String, String> = [
+            ("trigger_build", "confirm"),
+            ("cancel_build", "confirm"),
+            ("*", "auto"),
+        ]
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+
+        let find = |name: &str| tools.iter().find(|t| t.name.as_ref() == name).unwrap().clone();
+
+        // 写工具 → Confirm，且 gate 拦下。
+        let trigger = find("trigger_build");
+        assert_eq!(classify_tool(&policy, &trigger), ToolLevel::Confirm);
+        let nm = crate::mcp_client::namespaced_tool_name("jenkins", "trigger_build");
+        assert!(
+            mcp_gate_refusal(classify_tool(&policy, &trigger), &nm).is_some(),
+            "trigger_build 必须被 in-loop 拦截"
+        );
+
+        // 只读工具 → Auto，且 gate 放行。
+        let list = find("list_jobs");
+        assert_eq!(classify_tool(&policy, &list), ToolLevel::Auto);
+        assert!(
+            mcp_gate_refusal(classify_tool(&policy, &list), "mcp__jenkins__list_jobs").is_none(),
+            "list_jobs 应放行"
+        );
+
+        mgr.shutdown_all().await;
+    }
+}
+

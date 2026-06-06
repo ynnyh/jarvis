@@ -151,4 +151,7 @@ if r.is_error == Some(true) { return Err(first_text(&r).unwrap_or_default()); }
 
 ## Design Decision：最小配置模型
 
-PR1 只建模 `command/args/env/enabled`，**故意不建** `toolPolicy`（动态安全分类）/ 账号·项目参数预设 —— 那些随 PR2/PR3 的确认流一起加，避免过度设计。`McpClientManager` 用 `Arc<Mutex<..>>` 包裹是为 PR2 放进 Tauri 共享状态多处 clone 持有铺路。
+PR1 只建模 `command/args/env/enabled`。PR2 加了 `toolPolicy`（动态安全分类，见
+[mcp-agent-integration.md](./mcp-agent-integration.md)）；账号·项目参数预设仍随 PR3 的确认流一起加，
+避免过度设计。`McpClientManager` 用 `Arc<Mutex<..>>` 包裹是为放进共享状态多处 clone 持有铺路
+（PR2 已落地为 `once_cell::Lazy` 全局单例 `mcp_client::manager()`）。
