@@ -38,6 +38,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(voice::global_shortcut_plugin())
         .manage(commands::WriteHoursState::default())
         .manage(channels::ChannelServiceState::default())
         .manage(memory::MemoryState::new(&memory::default_db_path()))
@@ -242,6 +243,12 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                     Err(e) => eprintln!("[mcp_client] 启动 MCP server 失败: {}", e),
                 }
             });
+            // 启动时按当前开关状态注册语音全局热键：voiceInputEnabled=true 且资产就绪才注册，
+            // 否则保持不占用。前端开关翻转 / 下载完成后还会再调 voice_hotkey_sync 校准。
+            if let Err(e) = crate::voice::sync_hotkey(app.handle()) {
+                eprintln!("[voice] 启动注册语音热键失败: {}", e);
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -327,8 +334,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             worklog::worklog_session_write_confirmed,
             repo_recommender::recommend_repos_for_task,
             voice::voice_assets_status,
+            voice::voice_download_assets,
             voice::voice_start,
             voice::voice_stop_and_transcribe,
+            voice::voice_hotkey_sync,
         ])
         .build(tauri::generate_context!())?
         .run(|_app_handle, _event| {});

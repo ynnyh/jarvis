@@ -40,7 +40,7 @@ const { openReview } = useDailyReview()
 
 // ===== Alert state (forward-declared before composable consumers that call showAlert) =====
 
-type JarvisState = 'idle' | 'thinking' | 'working' | 'warning' | 'happy' | 'morning' | 'coffee' | 'late'
+type JarvisState = 'idle' | 'thinking' | 'working' | 'warning' | 'happy' | 'morning' | 'coffee' | 'late' | 'listening' | 'transcribing'
 
 const state = ref<JarvisState>('idle')
 const showMenu = ref(false)
@@ -231,6 +231,22 @@ const stateMap: Record<JarvisState, StateConfig> = {
     glowColor: 'rgba(167, 139, 250, 0.35)',
     animation: 'breathe',
     description: '别熬太晚了',
+  },
+  listening: {
+    text: '正在听',
+    emotion: '🎙️',
+    color: '#ef4444',
+    glowColor: 'rgba(239, 68, 68, 0.45)',
+    animation: 'alert',
+    description: '说话吧，再按一次热键结束',
+  },
+  transcribing: {
+    text: '正在识别',
+    emotion: '✍️',
+    color: '#3b82f6',
+    glowColor: 'rgba(59, 130, 246, 0.4)',
+    animation: 'think',
+    description: '正在把语音转成文字…',
   },
 }
 const current = computed(() => stateMap[state.value])
@@ -529,6 +545,9 @@ onMounted(() => {
 // 首次启动 snapshot 不存在时返回空 diff，老用户升级时不会被存量任务轰炸。
 let unlistenNewTasks: UnlistenFn | null = null
 let unlistenSettingsClosed: UnlistenFn | null = null
+let unlistenVoiceState: UnlistenFn | null = null
+let unlistenVoiceTranscribed: UnlistenFn | null = null
+let unlistenVoiceError: UnlistenFn | null = null
 onMounted(async () => {
   unlistenNewTasks = await listen<Array<{ id: string; title: string; priority: string; deadline: string }>>(
     'new-tasks-detected',
@@ -546,6 +565,39 @@ onMounted(async () => {
   unlistenSettingsClosed = await listen('settings-detail-closed', () => {
     closeAllPanels()
     configStore.showSettingsWindow = true
+  })
+
+  // ===== 语音输入状态反馈（后端全局热键触发，emit 到 avatar 窗口）=====
+  // voice-state: 录音/转写期间切小人状态，让用户知道何时该说话、何时在转写。
+  unlistenVoiceState = await listen<{ state: 'listening' | 'transcribing' | 'idle' }>(
+    'voice-state',
+    (event) => {
+      const s = event.payload?.state
+      if (s === 'listening') {
+        // 进入录音：常驻状态（不自动消失），等再次按热键停录。
+        closeAllPanels()
+        state.value = 'listening'
+      } else if (s === 'transcribing') {
+        state.value = 'transcribing'
+      } else {
+        // idle：转写结束/出错时归位（成功/失败的气泡由下面两个事件单独给）。
+        if (state.value === 'listening' || state.value === 'transcribing') {
+          state.value = 'idle'
+        }
+      }
+    }
+  )
+  // 转写成功：短暂提示注入的文字（截断防过长）。
+  unlistenVoiceTranscribed = await listen<{ text: string }>('voice-transcribed', (event) => {
+    const text = (event.payload?.text || '').trim()
+    if (!text) return
+    const preview = text.length > 24 ? text.slice(0, 24) + '…' : text
+    showAlert(`已输入：${preview}`, '✅', 'happy', 3000)
+  })
+  // 出错：警告气泡。
+  unlistenVoiceError = await listen<{ message: string }>('voice-error', (event) => {
+    const msg = (event.payload?.message || '语音输入出错').trim()
+    showAlert(msg, '⚠️', 'warning', 5000)
   })
 })
 
@@ -571,6 +623,9 @@ onUnmounted(() => {
   unlistenNewTasks?.()
   unlistenSettingsClosed?.()
   unlistenFocus?.()
+  unlistenVoiceState?.()
+  unlistenVoiceTranscribed?.()
+  unlistenVoiceError?.()
 })
 </script>
 

@@ -35,8 +35,34 @@ use crate::settings::jarvis_dir;
 /// whisper 要求的目标采样率：16 kHz 单声道 f32。
 const TARGET_SAMPLE_RATE: u32 = 16_000;
 
-/// 默认模型文件名（base 量化版，约 57MB；下载交由 PR2）。
-const DEFAULT_MODEL_FILE: &str = "ggml-base-q5_1.bin";
+/// 全局触发热键（toggle）。设为常量便于以后做成可配置项。
+/// `CommandOrControl+Shift+Space`：macOS 上是 ⌘，Windows/Linux 上是 Ctrl，
+/// 加 Shift+Space 这组不易和常见软件冲突。
+const DEFAULT_HOTKEY: &str = "CommandOrControl+Shift+Space";
+
+/// 默认模型文件名：large-v3-turbo 量化版（q5_0，约 574MB）。
+/// turbo 是 2024 下半年加的解码器，转写又快又准，中英混输够用；q5_0 量化压体积。
+const DEFAULT_MODEL_FILE: &str = "ggml-large-v3-turbo-q5_0.bin";
+
+// ============================================================================
+// 资产下载源（已用 GitHub API + whisper.cpp 源码核实，见任务 research）
+// ============================================================================
+//
+// whisper-cli 预编译二进制：whisper.cpp 官方 release 的 CPU 版 zip。
+//   - 仓库已从 ggerganov 迁到 ggml-org（旧名仍 302 重定向，但用新名最稳）。
+//   - 选 v1.8.6（2026-06-02 发布，远晚于 turbo 加入时间 → 支持 large-v3-turbo）。
+//   - whisper-bin-x64.zip 是纯 CPU 构建（4.1MB，不带 CUDA/BLAS），最轻、无显卡依赖。
+//   - zip 内是 Compress-Archive 打的 build/bin 全量（已核实 examples/cli/CMakeLists.txt
+//     里 `set(TARGET whisper-cli)`）：whisper-cli.exe + whisper.dll / ggml.dll /
+//     ggml-base.dll / ggml-cpu.dll / SDL2.dll，全平铺在 zip 根，解压到 voice_dir 即可用。
+const WHISPER_BIN_URL: &str =
+    "https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.6/whisper-bin-x64.zip";
+
+/// 模型直链：走国内可达的 hf-mirror.com 镜像。
+/// 实测：huggingface.co 在国内被墙不通；whisper.cpp 的 HF 仓库虽已从 ggerganov 改名 ggml-org，
+/// 但 hf-mirror.com 镜像仍只认旧名 ggerganov（HEAD 返回 200，新名在镜像上不通）。
+const MODEL_URL: &str =
+    "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin";
 
 // ============================================================================
 // 资产路径
@@ -56,7 +82,7 @@ pub fn whisper_cli_path() -> PathBuf {
     voice_dir().join(name)
 }
 
-/// 默认模型路径 `~/.jarvis/voice/ggml-base-q5_1.bin`。
+/// 默认模型路径 `~/.jarvis/voice/ggml-large-v3-turbo-q5_0.bin`。
 pub fn model_path() -> PathBuf {
     voice_dir().join(DEFAULT_MODEL_FILE)
 }
@@ -371,6 +397,259 @@ fn inject_text(text: &str) -> Result<(), String> {
 }
 
 // ============================================================================
+// 资产下载（reqwest 流式 → 解压 → 落 voice_dir）
+// ============================================================================
+
+/// 流式下载一个 URL 到本地文件，边下边 emit 进度。
+///
+/// 要点：
+/// - 写**临时文件** `<dest>.part`，下完原子 rename 到目标——中断不会留下半截被当成完整资产。
+/// - 从 `Content-Length` 拿总大小（HF/GitHub 都给）；拿不到时 total=0，前端按「未知总量」处理。
+/// - 进度事件 `voice-download-progress { phase, downloaded, total, percent }`，phase 标明在下哪块。
+async fn download_to_file(
+    app: &tauri::AppHandle,
+    url: &str,
+    dest: &PathBuf,
+    phase: &str,
+) -> Result<(), String> {
+    use futures_util::StreamExt;
+    use std::io::Write;
+    use tauri::Emitter;
+
+    if let Some(dir) = dest.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("创建语音目录失败: {}", e))?;
+    }
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("下载请求失败（{}）: {}", phase, e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!(
+            "下载 {} 失败：HTTP {}（{}）",
+            phase,
+            resp.status().as_u16(),
+            url
+        ));
+    }
+
+    let total = resp.content_length().unwrap_or(0);
+    let part = dest.with_extension("part");
+    let mut file =
+        std::fs::File::create(&part).map_err(|e| format!("创建临时下载文件失败: {}", e))?;
+
+    let mut downloaded: u64 = 0;
+    let mut last_emit: u64 = 0;
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk_result) = stream.next().await {
+        let chunk = chunk_result.map_err(|e| format!("下载流读取错误（{}）: {}", phase, e))?;
+        file.write_all(&chunk)
+            .map_err(|e| format!("写下载文件失败: {}", e))?;
+        downloaded += chunk.len() as u64;
+
+        // 节流：每累计 ~1MB 才 emit 一次，避免大模型（574MB）刷爆事件通道。
+        if downloaded - last_emit >= 1_000_000 || (total > 0 && downloaded >= total) {
+            last_emit = downloaded;
+            let percent = if total > 0 {
+                (downloaded as f64 / total as f64 * 100.0) as u32
+            } else {
+                0
+            };
+            let _ = app.emit(
+                "voice-download-progress",
+                json!({
+                    "phase": phase,
+                    "downloaded": downloaded,
+                    "total": total,
+                    "percent": percent,
+                }),
+            );
+        }
+    }
+
+    // 显式 flush + drop，确保字节全落盘再 rename。
+    file.flush().map_err(|e| format!("刷新下载文件失败: {}", e))?;
+    drop(file);
+
+    std::fs::rename(&part, dest).map_err(|e| {
+        let _ = std::fs::remove_file(&part);
+        format!("下载文件改名失败: {}", e)
+    })?;
+    Ok(())
+}
+
+/// 解压 whisper-cli zip 到 `voice_dir()`。
+///
+/// 官方 zip 是 Compress-Archive 打的 `build/bin` 全量（whisper-cli.exe + 一堆 DLL，平铺在根）。
+/// 用纯 Rust `zip` crate（deflate-flate2 后端，无需 cmake）逐条解出，**只取文件名**（防 zip-slip：
+/// 丢弃任何带路径分隔/`..` 的条目），平铺写进 voice_dir。
+fn extract_whisper_zip(zip_path: &PathBuf) -> Result<(), String> {
+    let dir = voice_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建语音目录失败: {}", e))?;
+
+    let file = std::fs::File::open(zip_path).map_err(|e| format!("打开下载的 zip 失败: {}", e))?;
+    let mut archive =
+        zip::ZipArchive::new(file).map_err(|e| format!("读取 zip 失败: {}", e))?;
+
+    let mut extracted = 0usize;
+    for i in 0..archive.len() {
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| format!("读取 zip 条目失败: {}", e))?;
+        if entry.is_dir() {
+            continue;
+        }
+        // 防 zip-slip：只用 enclosed_name 的最末文件名，平铺到 voice_dir。
+        let name = match entry.enclosed_name() {
+            Some(p) => match p.file_name() {
+                Some(f) => f.to_owned(),
+                None => continue,
+            },
+            None => continue,
+        };
+        let out_path = dir.join(&name);
+        let mut out =
+            std::fs::File::create(&out_path).map_err(|e| format!("写解压文件失败: {}", e))?;
+        std::io::copy(&mut entry, &mut out).map_err(|e| format!("解压拷贝失败: {}", e))?;
+        extracted += 1;
+    }
+
+    if extracted == 0 {
+        return Err("zip 解压后没有任何文件".to_string());
+    }
+    if !whisper_cli_path().is_file() {
+        return Err(format!(
+            "解压完成但缺 whisper-cli 可执行（期望 {}）",
+            whisper_cli_path().display()
+        ));
+    }
+    Ok(())
+}
+
+// ============================================================================
+// 全局热键（tauri-plugin-global-shortcut，toggle 触发）
+// ============================================================================
+//
+// 设计：注册逻辑全在 Rust，前端只在开关翻转 / 启动时调一次 `voice_hotkey_sync`。
+// 热键命中后按 toggle：没在录 → 开录；正在录 → 停录+转写+注入。后者阻塞（whisper
+// 子进程要几秒），丢到后台线程跑，避免卡住 global-shortcut 的回调线程。
+// 录音/转写期间往 avatar 窗口 emit `voice-state` 事件，前端据此切小人状态（listening
+// / transcribing / idle），让用户知道何时该说话、何时在转写。出错 emit `voice-error`。
+
+use tauri::Emitter;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
+
+/// 读 `~/.jarvis/config.json` 里的 `voiceInputEnabled`（缺/解析失败按 false）。
+/// 后端以磁盘上的 config 为单一数据源，不另维护一份开关状态——前端 config_save 已落盘。
+fn voice_input_enabled() -> bool {
+    crate::settings::load_raw_config()
+        .and_then(|v| v.get("voiceInputEnabled").and_then(|b| b.as_bool()))
+        .unwrap_or(false)
+}
+
+/// 把默认热键字符串解析成 `Shortcut`。常量写错才会失败，统一转成 String 错误。
+fn default_shortcut() -> Result<Shortcut, String> {
+    DEFAULT_HOTKEY
+        .parse::<Shortcut>()
+        .map_err(|e| format!("解析热键 '{}' 失败: {}", DEFAULT_HOTKEY, e))
+}
+
+/// 给 avatar 窗口发语音状态事件（best-effort，发不出去不影响主流程）。
+/// state: "listening"（录音中）/ "transcribing"（转写中）/ "idle"（结束/空闲）。
+fn emit_voice_state(app: &tauri::AppHandle, state: &str) {
+    let _ = app.emit("voice-state", json!({ "state": state }));
+}
+
+/// 全局热键命中时的 toggle 处理：仅 Pressed 边沿响应。
+/// 门禁：开关关 / 资产没就绪 → 忽略（eprintln 留痕，不打扰用户）。
+fn on_hotkey_pressed(app: &tauri::AppHandle) {
+    if !voice_input_enabled() {
+        eprintln!("[voice] 热键触发但语音输入未开启，忽略");
+        return;
+    }
+    if !voice_assets_ready() {
+        eprintln!("[voice] 热键触发但语音资产未就绪，忽略");
+        return;
+    }
+
+    // 当前是否在录：决定本次是「开录」还是「停录+转写」。
+    let recording = VOICE_STATE
+        .lock()
+        .map(|g| g.is_some())
+        .unwrap_or(false);
+
+    if !recording {
+        // 开始录音：进入 listening 态。
+        match start_recording() {
+            Ok(()) => emit_voice_state(app, "listening"),
+            Err(e) => {
+                eprintln!("[voice] 开始录音失败: {}", e);
+                let _ = app.emit("voice-error", json!({ "message": e }));
+            }
+        }
+        return;
+    }
+
+    // 停录 → 转写 → 注入：阻塞活儿丢后台线程，回调线程立刻返回。
+    // 先切 transcribing 态，让用户知道已停录、正在识别。
+    emit_voice_state(app, "transcribing");
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let result = stop_transcribe_inject();
+        match result {
+            Ok(text) => {
+                emit_voice_state(&app, "idle");
+                let _ = app.emit("voice-transcribed", json!({ "text": text }));
+            }
+            Err(e) => {
+                eprintln!("[voice] 停录/转写/注入失败: {}", e);
+                emit_voice_state(&app, "idle");
+                let _ = app.emit("voice-error", json!({ "message": e }));
+            }
+        }
+    });
+}
+
+/// 按当前开关状态注册/注销热键：
+/// `voiceInputEnabled=true` 且资产就绪 → 注册；否则注销（不在关闭态占用全局热键）。
+/// 幂等：重复注册先注销旧的；前端开关翻转、启动校准都调它。
+pub fn sync_hotkey(app: &tauri::AppHandle) -> Result<(), String> {
+    let shortcut = default_shortcut()?;
+    let gs = app.global_shortcut();
+    let want = voice_input_enabled() && voice_assets_ready();
+
+    if want {
+        // 先确保干净（已注册则先撤），再注册，避免重复注册报错。
+        if gs.is_registered(shortcut) {
+            let _ = gs.unregister(shortcut);
+        }
+        gs.register(shortcut)
+            .map_err(|e| format!("注册语音热键失败: {}", e))?;
+    } else if gs.is_registered(shortcut) {
+        gs.unregister(shortcut)
+            .map_err(|e| format!("注销语音热键失败: {}", e))?;
+    }
+    Ok(())
+}
+
+/// 构建 global-shortcut 插件（带 toggle 处理 handler）。在 lib.rs 的 Builder 链上 `.plugin(...)`。
+/// handler 对所有已注册热键触发；这里只有一个语音热键，命中 Pressed 边沿走 toggle。
+/// 注意：仅 `.plugin(...)` 不会注册任何热键，实际注册要等 `sync_hotkey`（开关开启时）。
+/// 用默认 Wry 运行时（全 app 一致），handler 拿到的 AppHandle 即 `tauri::AppHandle`。
+pub fn global_shortcut_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
+    tauri_plugin_global_shortcut::Builder::new()
+        .with_handler(|app, _shortcut, event| {
+            if event.state() == ShortcutState::Pressed {
+                on_hotkey_pressed(app);
+            }
+        })
+        .build()
+}
+
+// ============================================================================
 // Tauri 命令（在 lib.rs invoke_handler 注册）
 // ============================================================================
 
@@ -385,6 +664,33 @@ pub fn voice_assets_status() -> Result<Value, String> {
     }))
 }
 
+/// 下载语音资产到 `~/.jarvis/voice/`：① whisper-cli 二进制 zip → 解压；② large-v3-turbo 模型。
+///
+/// 已存在的部分跳过（幂等）：二进制齐了就不重下，模型在了就不重下——支持中断后重试只补缺的。
+/// 全程 emit `voice-download-progress`（phase=`"binary"`/`"model"`）。下完校验 `voice_assets_ready()`。
+#[tauri::command]
+pub async fn voice_download_assets(app: tauri::AppHandle) -> Result<Value, String> {
+    // ① whisper-cli 二进制：缺就下 zip → 解压（解压内部会校验 whisper-cli 在不在）。
+    if !whisper_cli_path().is_file() {
+        let zip_path = voice_dir().join("whisper-bin-x64.zip");
+        download_to_file(&app, WHISPER_BIN_URL, &zip_path, "binary").await?;
+        extract_whisper_zip(&zip_path)?;
+        // 解压完删掉 zip（best-effort，省空间）。
+        let _ = std::fs::remove_file(&zip_path);
+    }
+
+    // ② 模型：缺就下（574MB，下载耗时最久，进度务必顺滑）。
+    if !model_path().is_file() {
+        let model = model_path();
+        download_to_file(&app, MODEL_URL, &model, "model").await?;
+    }
+
+    if !voice_assets_ready() {
+        return Err("下载完成但资产仍不就绪（缺 whisper-cli 或模型）".to_string());
+    }
+    Ok(json!({ "ready": true }))
+}
+
 /// 开始录音。资产没就绪 / 已在录 → Err。
 #[tauri::command]
 pub fn voice_start() -> Result<(), String> {
@@ -394,10 +700,9 @@ pub fn voice_start() -> Result<(), String> {
     start_recording()
 }
 
-/// 停录 → 写 WAV → whisper-cli 转写 → 注入聚焦框 → 返回 `{text}`。
-/// 错误分清「没在录」「转写失败」「注入失败」三类，便于前端给出对应提示。
-#[tauri::command]
-pub fn voice_stop_and_transcribe() -> Result<Value, String> {
+/// 停录 → 写 WAV → whisper-cli 转写 → 注入聚焦框 → 返回转写文本。
+/// 命令层与热键处理共用这段，错误分清「没在录」「转写失败」「注入失败」三类。
+fn stop_transcribe_inject() -> Result<String, String> {
     let samples = stop_recording()?;
     if samples.is_empty() {
         return Err("没有采集到音频（录音太短或麦克风无输入）".to_string());
@@ -414,7 +719,25 @@ pub fn voice_stop_and_transcribe() -> Result<Value, String> {
     }
 
     inject_text(&text)?;
+    Ok(text)
+}
+
+/// 停录 → 写 WAV → whisper-cli 转写 → 注入聚焦框 → 返回 `{text}`。
+#[tauri::command]
+pub fn voice_stop_and_transcribe() -> Result<Value, String> {
+    let text = stop_transcribe_inject()?;
     Ok(json!({ "text": text }))
+}
+
+/// 按当前开关状态注册/注销全局热键。前端在开关翻转、下载完成、首启校准时调用。
+/// 返回当前是否已注册热键 + 用的键位，方便前端给提示。
+#[tauri::command]
+pub fn voice_hotkey_sync(app: tauri::AppHandle) -> Result<Value, String> {
+    sync_hotkey(&app)?;
+    Ok(json!({
+        "registered": voice_input_enabled() && voice_assets_ready(),
+        "hotkey": DEFAULT_HOTKEY,
+    }))
 }
 
 #[cfg(test)]
