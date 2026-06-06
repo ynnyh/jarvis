@@ -266,28 +266,7 @@ pub(crate) fn list_cc_switch_providers() -> Result<Vec<CcSwitchProviderSummary>,
         };
 
         let has_api_key = extract_api_key_from_config(&config).is_some();
-        let toml_text = config
-            .get("config")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let parsed = parse_codex_toml(toml_text);
-
-        let (base_url, model, wire_api) = if app_type == "claude" {
-            (
-                parsed.base_url.unwrap_or_default(),
-                parsed.model.unwrap_or_else(|| "claude-sonnet-4-20250514".into()),
-                "chat".to_string(),
-            )
-        } else {
-            (
-                parsed.base_url.unwrap_or_default(),
-                parsed.model.unwrap_or_else(|| "gpt-4o-mini".into()),
-                parsed
-                    .wire_api
-                    .filter(|w| w == "responses")
-                    .unwrap_or_else(|| "chat".to_string()),
-            )
-        };
+        let (base_url, model, wire_api) = resolve_endpoint(&app_type, &config);
 
         providers.push(CcSwitchProviderSummary {
             id,
@@ -303,14 +282,57 @@ pub(crate) fn list_cc_switch_providers() -> Result<Vec<CcSwitchProviderSummary>,
     Ok(providers)
 }
 
-/// 从 settings_config JSON 中提取 apiKey（先 OPENAI_API_KEY 再 ANTHROPIC_API_KEY）。
+/// 从 settings_config JSON 中提取 apiKey。
+///
+/// codex provider 把 key 存在 `auth.OPENAI_API_KEY`；
+/// claude provider 把 key 存在 `settings_config.env.ANTHROPIC_AUTH_TOKEN`
+/// （cc-switch claude 走 AUTH_TOKEN；保险起见也尝试 env.ANTHROPIC_API_KEY 和 auth.ANTHROPIC_API_KEY）。
 fn extract_api_key_from_config(config: &Value) -> Option<String> {
-    let auth = config.get("auth")?;
-    auth.get("OPENAI_API_KEY")
-        .or_else(|| auth.get("ANTHROPIC_API_KEY"))
+    let auth = config.get("auth");
+    let env = config.get("env");
+    auth.and_then(|a| a.get("OPENAI_API_KEY"))
+        .or_else(|| env.and_then(|e| e.get("ANTHROPIC_AUTH_TOKEN")))
+        .or_else(|| env.and_then(|e| e.get("ANTHROPIC_API_KEY")))
+        .or_else(|| auth.and_then(|a| a.get("ANTHROPIC_API_KEY")))
         .and_then(|v| v.as_str())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+/// 按 app_type 从 settings_config 解出 (base_url, model, wire_api)，供 list / import 复用。
+///
+/// - claude：base_url/model 来自 `settings_config.env.ANTHROPIC_BASE_URL` / `ANTHROPIC_MODEL`，
+///   wire_api 固定 `anthropic`（model 无值给默认 claude-sonnet-4-20250514）。
+/// - 其它（codex）：base_url/model/wire_api 来自 Codex 风格 TOML（parse_codex_toml）；
+///   wire_api 仅当 TOML 写明 `responses` 时为 responses，否则 chat。
+fn resolve_endpoint(app_type: &str, config: &Value) -> (String, String, String) {
+    if app_type == "claude" {
+        let env = config.get("env");
+        let base_url = env
+            .and_then(|e| e.get("ANTHROPIC_BASE_URL"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_default();
+        let model = env
+            .and_then(|e| e.get("ANTHROPIC_MODEL"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "claude-sonnet-4-20250514".into());
+        (base_url, model, "anthropic".to_string())
+    } else {
+        let toml_text = config.get("config").and_then(|v| v.as_str()).unwrap_or("");
+        let parsed = parse_codex_toml(toml_text);
+        (
+            parsed.base_url.unwrap_or_default(),
+            parsed.model.unwrap_or_else(|| "gpt-4o-mini".into()),
+            parsed
+                .wire_api
+                .filter(|w| w == "responses")
+                .unwrap_or_else(|| "chat".to_string()),
+        )
+    }
 }
 
 /// 为 provider 生成确定性 profile ID。
@@ -346,13 +368,7 @@ pub(crate) async fn import_cc_switch_provider_by_id(
 
     let api_key = extract_api_key_from_config(&config).unwrap_or_default();
 
-    let toml_text = config
-        .get("config")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let parsed = parse_codex_toml(toml_text);
-    let base_url = parsed.base_url.unwrap_or_default();
-    let model = parsed.model.unwrap_or_else(|| "gpt-4o-mini".into());
+    let (base_url, model, wire_api_str) = resolve_endpoint(&app_type, &config);
 
     let profile_id = cc_provider_profile_id(&id);
 
@@ -364,14 +380,6 @@ pub(crate) async fn import_cc_switch_provider_by_id(
         "baseUrl": base_url,
         "model": model,
     });
-    let wire_api_str = if app_type == "claude" {
-        "chat".to_string()
-    } else {
-        parsed
-            .wire_api
-            .filter(|w| w == "responses")
-            .unwrap_or_else(|| "chat".to_string())
-    };
     profile
         .as_object_mut()
         .unwrap()
@@ -446,4 +454,99 @@ fn home_dir() -> PathBuf {
         .or_else(|_| std::env::var("HOME"))
         .map(PathBuf::from)
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 仿真 cc-switch claude provider 的 settings_config（假 token，非真密钥）。
+    fn fake_claude_config() -> Value {
+        serde_json::json!({
+            "env": {
+                "ANTHROPIC_AUTH_TOKEN": "sk-ant-test-xxx",
+                "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+                "ANTHROPIC_MODEL": "claude-x"
+            }
+        })
+    }
+
+    #[test]
+    fn extract_api_key_reads_claude_auth_token_from_env() {
+        let config = fake_claude_config();
+        assert_eq!(
+            extract_api_key_from_config(&config),
+            Some("sk-ant-test-xxx".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_api_key_falls_back_to_anthropic_api_key() {
+        let config = serde_json::json!({
+            "env": { "ANTHROPIC_API_KEY": "  sk-ant-alt  " }
+        });
+        // trim 后取到
+        assert_eq!(
+            extract_api_key_from_config(&config),
+            Some("sk-ant-alt".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_api_key_still_reads_codex_openai_key() {
+        let config = serde_json::json!({
+            "auth": { "OPENAI_API_KEY": "sk-openai-test" }
+        });
+        assert_eq!(
+            extract_api_key_from_config(&config),
+            Some("sk-openai-test".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_api_key_empty_string_filtered() {
+        let config = serde_json::json!({ "env": { "ANTHROPIC_AUTH_TOKEN": "   " } });
+        assert_eq!(extract_api_key_from_config(&config), None);
+    }
+
+    #[test]
+    fn resolve_endpoint_claude_uses_env_and_anthropic_wire() {
+        let config = fake_claude_config();
+        let (base_url, model, wire_api) = resolve_endpoint("claude", &config);
+        assert_eq!(base_url, "https://api.anthropic.com");
+        assert_eq!(model, "claude-x");
+        assert_eq!(wire_api, "anthropic");
+    }
+
+    #[test]
+    fn resolve_endpoint_claude_defaults_model_when_missing() {
+        let config = serde_json::json!({
+            "env": { "ANTHROPIC_BASE_URL": "https://relay.example.com" }
+        });
+        let (base_url, model, wire_api) = resolve_endpoint("claude", &config);
+        assert_eq!(base_url, "https://relay.example.com");
+        assert_eq!(model, "claude-sonnet-4-20250514");
+        assert_eq!(wire_api, "anthropic");
+    }
+
+    #[test]
+    fn resolve_endpoint_codex_uses_toml_and_chat_wire() {
+        // codex provider 的 base_url/model 来自 TOML，wire_api 默认 chat
+        let config = serde_json::json!({
+            "config": "model = \"gpt-4o\"\nmodel_provider = \"openai\"\n[model_providers.openai]\nbase_url = \"https://api.openai.com/v1\"\n"
+        });
+        let (base_url, model, wire_api) = resolve_endpoint("codex", &config);
+        assert_eq!(base_url, "https://api.openai.com/v1");
+        assert_eq!(model, "gpt-4o");
+        assert_eq!(wire_api, "chat");
+    }
+
+    #[test]
+    fn resolve_endpoint_codex_responses_wire_preserved() {
+        let config = serde_json::json!({
+            "config": "model = \"gpt-5-codex\"\nmodel_provider = \"oai\"\n[model_providers.oai]\nbase_url = \"http://host/codex\"\nwire_api = \"responses\"\n"
+        });
+        let (_base_url, _model, wire_api) = resolve_endpoint("codex", &config);
+        assert_eq!(wire_api, "responses");
+    }
 }

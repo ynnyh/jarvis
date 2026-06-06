@@ -15,7 +15,7 @@ const form = ref({
   baseUrl: 'https://api.deepseek.com',
   model: 'deepseek-chat',
   apiKey: '',
-  wireApi: 'chat' as 'chat' | 'responses',
+  wireApi: 'chat' as 'chat' | 'responses' | 'anthropic',
 })
 const showKey = ref(false)
 const keyDirty = ref(false)
@@ -129,7 +129,9 @@ async function importFromCcSwitch() {
     form.value.apiKey = data.provider.apiKey
     form.value.baseUrl = data.provider.baseUrl
     form.value.model = data.provider.model
-    form.value.wireApi = data.provider.wireApi === 'responses' ? 'responses' : 'chat'
+    form.value.wireApi = (['responses', 'anthropic'] as const).includes(data.provider.wireApi as any)
+      ? (data.provider.wireApi as 'responses' | 'anthropic')
+      : 'chat'
     keyDirty.value = true
     if (!form.value.name.trim()) {
       form.value.name = data.provider.name
@@ -138,6 +140,9 @@ async function importFromCcSwitch() {
     let msg = `已导入「${data.provider.name}」：${data.provider.model}`
     if (data.provider.wireApi === 'responses') {
       msg += '\n✓ 检测到 Codex responses API，已切到 /v1/responses 协议'
+    }
+    if (data.provider.wireApi === 'anthropic') {
+      msg += '\n✓ 检测到 Anthropic 协议，已切到 /v1/messages'
     }
     ccImportMessage.value = msg
   } catch (e: any) {
@@ -195,6 +200,7 @@ function genId(): string {
       <select class="settings-input" v-model="form.wireApi">
         <option value="chat">Chat Completions（/v1/chat/completions，默认）</option>
         <option value="responses">Responses（/v1/responses，Codex 协议）</option>
+        <option value="anthropic">Anthropic Messages（/v1/messages，Claude 协议）</option>
       </select>
     </label>
 

@@ -73,8 +73,8 @@ export interface JarvisConfig {
     baseUrl: string           // 厂商根域名，客户端按 wireApi 拼端点
     model: string             // 如 deepseek-chat / deepseek-reasoner / gpt-4o
     apiKey: string
-    /** 'chat'=/v1/chat/completions（默认）；'responses'=/v1/responses（Codex CLI 协议） */
-    wireApi?: 'chat' | 'responses'
+    /** 'chat'=/v1/chat/completions（默认）；'responses'=/v1/responses（Codex CLI 协议）；'anthropic'=/v1/messages（Claude 协议） */
+    wireApi?: 'chat' | 'responses' | 'anthropic'
   }
   /** 已保存的 LLM 配置列表，方便快速切换 */
   llmProfiles: LlmProfile[]
@@ -141,7 +141,7 @@ export interface LlmProfile {
   baseUrl: string
   model: string
   apiKey: string
-  wireApi?: 'chat' | 'responses'
+  wireApi?: 'chat' | 'responses' | 'anthropic'
 }
 
 const defaultConfig = (): JarvisConfig => ({
@@ -253,7 +253,9 @@ export const useConfigStore = defineStore('config', () => {
           baseUrl: remote.llm?.baseUrl?.trim() ? remote.llm.baseUrl : defaults.llm.baseUrl,
           model: remote.llm?.model?.trim() ? remote.llm.model : defaults.llm.model,
           apiKey: remote.llm?.apiKey ?? defaults.llm.apiKey,
-          wireApi: remote.llm?.wireApi === 'responses' ? 'responses' : 'chat',
+          wireApi: (['responses', 'anthropic'] as const).includes(remote.llm?.wireApi as any)
+            ? (remote.llm!.wireApi as 'responses' | 'anthropic')
+            : 'chat',
         },
         channels: {
           autoStart: remote.channels?.autoStart ?? defaults.channels.autoStart,

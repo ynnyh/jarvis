@@ -176,6 +176,7 @@ pub fn get_llm_credentials() -> LlmCredentials {
             .unwrap_or_default(),
         wire_api: match profile_s("wireApi").or_else(|| llm_s("wireApi")).as_deref() {
             Some("responses") => "responses".to_string(),
+            Some("anthropic") => "anthropic".to_string(),
             _ => "chat".to_string(),
         },
     }

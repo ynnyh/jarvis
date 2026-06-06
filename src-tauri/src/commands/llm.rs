@@ -377,6 +377,7 @@ pub async fn llm_profile_test(
         api_key: resolved_key,
         wire_api: match wire_api.as_deref() {
             Some("responses") => "responses".to_string(),
+            Some("anthropic") => "anthropic".to_string(),
             _ => "chat".to_string(),
         },
     };
