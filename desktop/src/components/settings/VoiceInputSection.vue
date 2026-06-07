@@ -73,13 +73,187 @@ const showManual = ref(false)
 // 「重新检测」按钮忙碌态。
 const rechecking = ref(false)
 
+// ====== 自定义快捷键录制 ======
+// 是否处于录制态（点输入框进入，监听 keydown 捕获组合键）。
+const recording = ref(false)
+// 录制中实时显示的组合键（accelerator 字符串），未捕获到合法组合时为空。
+const draftHotkey = ref('')
+// 改键提交忙碌态（写盘 + 重注册期间禁用按钮）。
+const savingHotkey = ref(false)
+// 改键结果消息（与下载消息区分开，单独一行显示在录制框下）。
+const hotkeyMsg = ref('')
+const hotkeyMsgKind = ref<'ok' | 'fail' | 'info'>('info')
+
 let unlistenProgress: UnlistenFn | null = null
+
+// 当前生效热键（展示用）：取 store 里的 voiceHotkey，空则给默认值兜底。
+const currentHotkey = computed<string>(
+  () => store.config.voiceHotkey || 'CommandOrControl+Shift+Space',
+)
+
+// 把 accelerator 字符串拆段，给 <kbd> 逐键渲染（如 "CommandOrControl+Shift+Space" → 3 段）。
+function hotkeyParts(accel: string): string[] {
+  return accel.split('+').filter(Boolean)
+}
+
+// 单段 accelerator 的人类可读名：CommandOrControl 按平台显示 ⌘/Ctrl，其余原样。
+function prettyKey(part: string): string {
+  if (part === 'CommandOrControl') return isMac.value ? 'Cmd' : 'Ctrl'
+  return part
+}
+
+// 平台判断（影响 Ctrl/Cmd 文案与映射）：navigator.platform 含 'mac' 视为 macOS。
+const isMac = computed<boolean>(() =>
+  /mac/i.test(typeof navigator !== 'undefined' ? navigator.platform : ''),
+)
+
+// 浏览器 KeyboardEvent.key → Tauri accelerator「主键」段的映射。
+// 命中映射 → 返回对应 accelerator 段；返回 null → 这个键不支持作主键（提示重录）。
+function mainKeyToken(e: KeyboardEvent): string | null {
+  const key = e.key
+  // 单个可见字符：字母统一大写（Tauri 认大写字母）；数字/符号里挑常见的。
+  if (key.length === 1) {
+    const code = key.toUpperCase()
+    if (/^[A-Z0-9]$/.test(code)) return code
+    // 空格的 key 是 ' '，单独处理（下面 ' ' 命中）。
+    if (key === ' ') return 'Space'
+    return null // 其它符号（,.;/ 等）随键盘布局多变，先不收，提示重录更稳。
+  }
+  // 具名键：映射到 Tauri 认的 token。
+  const named: Record<string, string> = {
+    ' ': 'Space',
+    Spacebar: 'Space',
+    ArrowUp: 'Up',
+    ArrowDown: 'Down',
+    ArrowLeft: 'Left',
+    ArrowRight: 'Right',
+    Enter: 'Enter',
+    Tab: 'Tab',
+    Backspace: 'Backspace',
+    Delete: 'Delete',
+    Insert: 'Insert',
+    Home: 'Home',
+    End: 'End',
+    PageUp: 'PageUp',
+    PageDown: 'PageDown',
+    Escape: 'Escape',
+  }
+  if (named[key]) return named[key]
+  // 功能键 F1~F24。
+  if (/^F([1-9]|1[0-9]|2[0-4])$/.test(key)) return key
+  return null
+}
+
+/** KeyboardEvent → Tauri accelerator 字符串（如 "CommandOrControl+Shift+Space"）。
+ *  - 修饰键：Ctrl→CommandOrControl、Meta(⌘/Win)→CommandOrControl、Shift→Shift、Alt→Alt。
+ *    Ctrl 与 Meta 都归一到 CommandOrControl，跨平台一致（macOS=⌘、Win/Linux=Ctrl）。
+ *  - 主键：见 mainKeyToken；拿不到合法主键 → 返回 null（调用方提示重录）。
+ *  顺序固定 CommandOrControl→Alt→Shift→主键，和 Tauri 习惯一致、避免抖动。 */
+function eventToAccelerator(e: KeyboardEvent): string | null {
+  const main = mainKeyToken(e)
+  if (!main) return null
+  const mods: string[] = []
+  // Ctrl 或 Meta 任一按下都算 CommandOrControl（只加一次）。
+  if (e.ctrlKey || e.metaKey) mods.push('CommandOrControl')
+  if (e.altKey) mods.push('Alt')
+  if (e.shiftKey) mods.push('Shift')
+  // 校验：至少一个修饰键（避免纯单键误触）。
+  if (mods.length === 0) return null
+  return [...mods, main].join('+')
+}
+
+/** 进入录制态：清草稿/消息，挂全局 keydown 监听捕获下一组合键。 */
+function startRecording() {
+  if (savingHotkey.value) return
+  recording.value = true
+  draftHotkey.value = ''
+  hotkeyMsg.value = ''
+  window.addEventListener('keydown', onRecordKeydown, true)
+}
+
+/** 退出录制态：摘监听、清草稿。 */
+function stopRecording() {
+  recording.value = false
+  draftHotkey.value = ''
+  window.removeEventListener('keydown', onRecordKeydown, true)
+}
+
+/** 录制中的 keydown 处理：阻断默认/冒泡，纯修饰键不收（等主键），合法组合写进草稿。 */
+function onRecordKeydown(e: KeyboardEvent) {
+  e.preventDefault()
+  e.stopPropagation()
+  // Esc：取消录制，保留旧值。
+  if (e.key === 'Escape') {
+    stopRecording()
+    hotkeyMsgKind.value = 'info'
+    hotkeyMsg.value = '已取消录制，保留原快捷键。'
+    return
+  }
+  // 只按了修饰键、还没按主键：先不收，提示继续按主键。
+  if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) {
+    draftHotkey.value = ''
+    return
+  }
+  const accel = eventToAccelerator(e)
+  if (!accel) {
+    // 没有修饰键，或主键不支持 → 提示重录（不退出录制态，让用户接着试）。
+    draftHotkey.value = ''
+    hotkeyMsgKind.value = 'fail'
+    hotkeyMsg.value = '需至少一个修饰键（Ctrl/Cmd/Shift/Alt）+ 一个主键，且主键需为字母/数字/空格/方向键/功能键等常见键，请重录。'
+    return
+  }
+  // 捕获到合法组合：写草稿、退出监听，落键交给 applyHotkey。
+  draftHotkey.value = accel
+  hotkeyMsg.value = ''
+  window.removeEventListener('keydown', onRecordKeydown, true)
+  recording.value = false
+  void applyHotkey(accel)
+}
+
+/** 落键：写 config.voiceHotkey → 落盘 → 通知后端重注册。
+ *  成功提示新键位；失败（冲突/无效）回显错误并把 config 恢复旧值（后端会用旧值重注册）。 */
+async function applyHotkey(accel: string) {
+  const prev = store.config.voiceHotkey
+  if (accel === prev) {
+    hotkeyMsgKind.value = 'info'
+    hotkeyMsg.value = '快捷键未变化。'
+    return
+  }
+  savingHotkey.value = true
+  hotkeyMsg.value = ''
+  try {
+    store.config.voiceHotkey = accel
+    await store.save()
+    // 后端按新 config 重注册（先撤旧键再注册新键）。注册失败会抛错。
+    const res = await invoke<{ registered: boolean; hotkey: string }>('voice_hotkey_sync')
+    hotkeyMsgKind.value = 'ok'
+    hotkeyMsg.value = store.config.voiceInputEnabled
+      ? `快捷键已更新为 ${res.hotkey || accel}。`
+      : `快捷键已保存为 ${res.hotkey || accel}（启用语音输入后生效）。`
+  } catch (e) {
+    // 注册失败（被占用/无效）：回退旧值并让后端按旧值重注册，避免悬空。
+    store.config.voiceHotkey = prev
+    try {
+      await store.save()
+      await invoke('voice_hotkey_sync')
+    } catch (e2) {
+      console.error('[voice] 回退旧快捷键失败:', e2)
+    }
+    hotkeyMsgKind.value = 'fail'
+    hotkeyMsg.value = `设置快捷键失败（可能被其它程序占用或无效）：${errText(e)}，已保留原快捷键。`
+  } finally {
+    savingHotkey.value = false
+    draftHotkey.value = ''
+  }
+}
 
 // 组件挂载即拉一次资产状态：好在下载前就显示代理提示 + 让手动兜底区可用。
 void refreshAssets()
 
 onUnmounted(() => {
   unlistenProgress?.()
+  // 若卸载时仍在录制，摘掉全局 keydown 监听，避免泄漏。
+  window.removeEventListener('keydown', onRecordKeydown, true)
 })
 
 // 开关用本地代理：拦截「打开」动作先走资产门禁，门禁通过/已就绪才真正写进 store；
@@ -128,7 +302,7 @@ async function requestEnable() {
       store.config.voiceInputEnabled = true
       await syncHotkey()
       messageKind.value = 'ok'
-      message.value = '语音输入已启用，可按 Ctrl/Cmd+Shift+空格 说话。'
+      message.value = `语音输入已启用，可按 ${currentHotkey.value} 说话。`
     } else {
       // 资产没就绪 → 弹确认（此时 store 仍是 false，开关视觉保持关闭直到下载成功）。
       showConfirm.value = true
@@ -219,7 +393,7 @@ async function runDownload() {
     store.config.voiceInputEnabled = true
     await syncHotkey()
     messageKind.value = 'ok'
-    message.value = '语音引擎与模型已就绪，语音输入已启用，可按 Ctrl/Cmd+Shift+空格 说话。'
+    message.value = `语音引擎与模型已就绪，语音输入已启用，可按 ${currentHotkey.value} 说话。`
   } catch (e) {
     // 失败：保持关闭（store 没被置 true），进入显式失败态 → 模板渲染「重试下载」按钮，
     // 并自动展开手动兜底区（自动下不动就引导用户手动下）。
@@ -296,6 +470,50 @@ function errText(e: unknown): string {
       本地语音转写，默认关闭。启用后可按热键 / 点小人说话，转写文字直接注入当前聚焦的输入框（本地处理，不上云）。
       首次启用需下载语音引擎与模型（约 600MB）。
     </p>
+
+    <!-- 自定义快捷键 -->
+    <div class="voice-hotkey">
+      <div class="voice-hotkey-row">
+        <span class="voice-hotkey-label">触发快捷键</span>
+        <button
+          type="button"
+          class="voice-hotkey-box"
+          :class="{ 'voice-hotkey-recording': recording }"
+          :disabled="savingHotkey"
+          @click="recording ? stopRecording() : startRecording()"
+        >
+          <template v-if="recording">
+            <span v-if="draftHotkey" class="voice-hotkey-keys">
+              <kbd v-for="(part, i) in hotkeyParts(draftHotkey)" :key="i">{{ prettyKey(part) }}</kbd>
+            </span>
+            <span v-else class="voice-hotkey-hint-text">请按下组合键…（Esc 取消）</span>
+          </template>
+          <template v-else>
+            <span class="voice-hotkey-keys">
+              <kbd v-for="(part, i) in hotkeyParts(currentHotkey)" :key="i">{{ prettyKey(part) }}</kbd>
+            </span>
+          </template>
+        </button>
+        <button
+          type="button"
+          class="settings-btn voice-hotkey-action"
+          :disabled="savingHotkey"
+          @click="recording ? stopRecording() : startRecording()"
+        >
+          {{ recording ? '取消' : (savingHotkey ? '应用中…' : '录制') }}
+        </button>
+      </div>
+      <p class="voice-hotkey-tip">
+        点「录制」后按下组合键（需至少一个修饰键 Ctrl/Cmd/Shift/Alt + 一个主键），松开即生效。
+      </p>
+      <p
+        v-if="hotkeyMsg"
+        class="settings-msg"
+        :class="`settings-msg-${hotkeyMsgKind === 'info' ? 'testing' : hotkeyMsgKind}`"
+      >
+        {{ hotkeyMsg }}
+      </p>
+    </div>
 
     <!-- 下载进度 -->
     <div v-if="downloading && progress" class="voice-progress">
@@ -392,6 +610,73 @@ function errText(e: unknown): string {
 </template>
 
 <style scoped>
+/* 自定义快捷键 */
+.voice-hotkey {
+  margin-top: 10px;
+}
+.voice-hotkey-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.voice-hotkey-label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.voice-hotkey-box {
+  flex: 1;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  font-size: 11.5px;
+  text-align: left;
+  color: var(--text);
+  background: var(--surface-2);
+  border: var(--divider);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.voice-hotkey-box:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.voice-hotkey-box:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.voice-hotkey-recording {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.voice-hotkey-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.voice-hotkey-keys kbd {
+  padding: 1px 6px;
+  font-family: var(--mono, monospace);
+  font-size: 10.5px;
+  color: var(--text);
+  background: var(--surface);
+  border: var(--divider);
+  border-radius: 4px;
+}
+.voice-hotkey-hint-text {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.voice-hotkey-action {
+  flex: none;
+}
+.voice-hotkey-tip {
+  margin: 6px 0 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--text-faint);
+}
+
 .voice-progress {
   display: flex;
   flex-direction: column;

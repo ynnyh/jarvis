@@ -35,9 +35,9 @@ use crate::settings::jarvis_dir;
 /// whisper 要求的目标采样率：16 kHz 单声道 f32。
 const TARGET_SAMPLE_RATE: u32 = 16_000;
 
-/// 全局触发热键（toggle）。设为常量便于以后做成可配置项。
+/// 全局触发热键（toggle）的**默认值**。用户没配 / 配的无效时回退到它。
 /// `CommandOrControl+Shift+Space`：macOS 上是 ⌘，Windows/Linux 上是 Ctrl，
-/// 加 Shift+Space 这组不易和常见软件冲突。
+/// 加 Shift+Space 这组不易和常见软件冲突。实际生效键位读 config 的 `voiceHotkey`。
 const DEFAULT_HOTKEY: &str = "CommandOrControl+Shift+Space";
 
 /// 默认模型文件名：large-v3-turbo 量化版（q5_0，约 574MB）。
@@ -823,11 +823,39 @@ fn voice_input_enabled() -> bool {
         .unwrap_or(false)
 }
 
-/// 把默认热键字符串解析成 `Shortcut`。常量写错才会失败，统一转成 String 错误。
-fn default_shortcut() -> Result<Shortcut, String> {
-    DEFAULT_HOTKEY
-        .parse::<Shortcut>()
-        .map_err(|e| format!("解析热键 '{}' 失败: {}", DEFAULT_HOTKEY, e))
+/// 读 `~/.jarvis/config.json` 里的 `voiceHotkey`（trim 后非空才用）；缺/空回退默认。
+/// 只返回字符串，是否能解析成合法 `Shortcut` 由 `configured_shortcut` 把关。
+fn voice_hotkey_str() -> String {
+    crate::settings::load_raw_config()
+        .and_then(|v| {
+            v.get("voiceHotkey")
+                .and_then(|s| s.as_str())
+                .map(|s| s.trim().to_string())
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| DEFAULT_HOTKEY.to_string())
+}
+
+/// 记住「上次成功注册的」accelerator 字符串：换键时据此精确注销旧键，避免残留占用。
+/// 用全局单例（同 VOICE_STATE 的 once_cell::Lazy + Mutex 范式）。None = 当前没注册任何热键。
+static REGISTERED_HOTKEY: Lazy<Mutex<Option<String>>> = Lazy::new(|| Mutex::new(None));
+
+/// 把 config 里的 `voiceHotkey` 解析成 `(accelerator 字符串, Shortcut)`。
+/// 配置值解析失败（无效键位）→ 自动回退默认键并再解析；连默认都解析不了（常量写错）才返回 Err。
+fn configured_shortcut() -> Result<(String, Shortcut), String> {
+    let accel = voice_hotkey_str();
+    match accel.parse::<Shortcut>() {
+        Ok(s) => Ok((accel, s)),
+        Err(e) => {
+            // 用户配了非法键位：退回默认键，保证语音输入仍可用（并留痕）。
+            eprintln!("[voice] 配置热键 '{}' 无效（{}），回退默认 '{}'", accel, e, DEFAULT_HOTKEY);
+            let fallback = DEFAULT_HOTKEY.to_string();
+            let shortcut = fallback
+                .parse::<Shortcut>()
+                .map_err(|e| format!("解析默认热键 '{}' 失败: {}", DEFAULT_HOTKEY, e))?;
+            Ok((fallback, shortcut))
+        }
+    }
 }
 
 /// 给 avatar 窗口发语音状态事件（best-effort，发不出去不影响主流程）。
@@ -886,25 +914,48 @@ fn on_hotkey_pressed(app: &tauri::AppHandle) {
     });
 }
 
-/// 按当前开关状态注册/注销热键：
-/// `voiceInputEnabled=true` 且资产就绪 → 注册；否则注销（不在关闭态占用全局热键）。
-/// 幂等：重复注册先注销旧的；前端开关翻转、启动校准都调它。
+/// 按当前开关状态 + 配置键位注册/注销全局热键，并支持**换键**：
+/// - `voiceInputEnabled=true` 且资产就绪 → 注册 config 的 `voiceHotkey`（无效则回退默认）。
+/// - 否则 → 注销当前已注册的热键（不在关闭态占用全局热键）。
+///
+/// 换键正确性：用全局 `REGISTERED_HOTKEY` 记住「上次成功注册的 accelerator」。每次先按它
+/// 精确注销旧键（哪怕和新键不同），再注册新键——这样改键不会残留旧热键占用。注册失败
+/// （键位无效 / 被别的程序占用）返回中文 Err，且把记录清成 None（旧键已注销、新键没成功）。
+/// 幂等：前端开关翻转、改键、下载完成、首启校准都调它。
 pub fn sync_hotkey(app: &tauri::AppHandle) -> Result<(), String> {
-    let shortcut = default_shortcut()?;
     let gs = app.global_shortcut();
     let want = voice_input_enabled() && voice_assets_ready();
 
-    if want {
-        // 先确保干净（已注册则先撤），再注册，避免重复注册报错。
-        if gs.is_registered(shortcut) {
-            let _ = gs.unregister(shortcut);
+    let mut registered = REGISTERED_HOTKEY
+        .lock()
+        .map_err(|_| "热键注册状态锁中毒".to_string())?;
+
+    // 先注销「上次注册的」键：换键时这一步保证旧键被撤、不残留占用。
+    // 按记录里的字符串重新解析出 Shortcut 来撤（与注册时同一来源，确保撤的是同一个键）。
+    if let Some(prev_accel) = registered.take() {
+        if let Ok(prev) = prev_accel.parse::<Shortcut>() {
+            if gs.is_registered(prev) {
+                let _ = gs.unregister(prev);
+            }
         }
-        gs.register(shortcut)
-            .map_err(|e| format!("注册语音热键失败: {}", e))?;
-    } else if gs.is_registered(shortcut) {
-        gs.unregister(shortcut)
-            .map_err(|e| format!("注销语音热键失败: {}", e))?;
     }
+
+    if !want {
+        // 关闭态：旧键已在上面注销，记录已清成 None，直接返回。
+        return Ok(());
+    }
+
+    // 开启态：注册 config 的键位（无效自动回退默认）。
+    let (accel, shortcut) = configured_shortcut()?;
+    // 双保险：极端情况下该键可能已被注册（如外部状态不同步），先撤再注册避免「已注册」报错。
+    if gs.is_registered(shortcut) {
+        let _ = gs.unregister(shortcut);
+    }
+    gs.register(shortcut)
+        .map_err(|e| format!("注册语音热键 '{}' 失败（可能被其它程序占用或键位无效）: {}", accel, e))?;
+
+    // 注册成功才记下来，供下次换键时精确注销。
+    *registered = Some(accel);
     Ok(())
 }
 
@@ -1060,14 +1111,18 @@ pub fn voice_stop_and_transcribe() -> Result<Value, String> {
     Ok(json!({ "text": text }))
 }
 
-/// 按当前开关状态注册/注销全局热键。前端在开关翻转、下载完成、首启校准时调用。
-/// 返回当前是否已注册热键 + 用的键位，方便前端给提示。
+/// 按当前开关状态注册/注销全局热键。前端在开关翻转、改键、下载完成、首启校准时调用。
+/// 返回当前是否已注册热键 + 实际生效的键位（读 config 的 voiceHotkey，无效则回退默认）。
 #[tauri::command]
 pub fn voice_hotkey_sync(app: tauri::AppHandle) -> Result<Value, String> {
     sync_hotkey(&app)?;
+    // 回实际生效键位：configured_shortcut 已处理无效回退，取它的 accelerator 最准。
+    let hotkey = configured_shortcut()
+        .map(|(accel, _)| accel)
+        .unwrap_or_else(|_| DEFAULT_HOTKEY.to_string());
     Ok(json!({
         "registered": voice_input_enabled() && voice_assets_ready(),
-        "hotkey": DEFAULT_HOTKEY,
+        "hotkey": hotkey,
     }))
 }
 

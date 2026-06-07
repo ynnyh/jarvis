@@ -125,6 +125,8 @@ export interface JarvisConfig {
   deployEnabled: boolean
   /** 语音输入功能开关，默认关闭。开启后热键/点小人可语音转写并注入聚焦框（PR2 接 UI） */
   voiceInputEnabled: boolean
+  /** 语音输入全局热键（Tauri accelerator，如 "CommandOrControl+Shift+Space"）。可在设置里录制自定义 */
+  voiceHotkey: string
 }
 
 export interface ScheduledReminder {
@@ -210,6 +212,7 @@ const defaultConfig = (): JarvisConfig => ({
   costFeatureEnabled: false,
   deployEnabled: false,
   voiceInputEnabled: false,
+  voiceHotkey: 'CommandOrControl+Shift+Space',
 })
 
 function todayStr(): string {
@@ -297,6 +300,7 @@ export const useConfigStore = defineStore('config', () => {
         costFeatureEnabled: remote.costFeatureEnabled ?? defaults.costFeatureEnabled,
         deployEnabled: remote.deployEnabled ?? defaults.deployEnabled,
         voiceInputEnabled: remote.voiceInputEnabled ?? defaults.voiceInputEnabled,
+        voiceHotkey: (remote.voiceHotkey ?? '').trim() || defaults.voiceHotkey,
         todayPlan: {
           date: remote.todayPlan?.date ?? defaults.todayPlan.date,
           taskIds: Array.isArray(remote.todayPlan?.taskIds)

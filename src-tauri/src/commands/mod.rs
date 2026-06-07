@@ -190,7 +190,8 @@ pub(crate) fn default_config() -> serde_json::Value {
         "repoRoots": [],
         "leftClickAction": "tasks",
         "deployEnabled": false,
-        "voiceInputEnabled": false
+        "voiceInputEnabled": false,
+        "voiceHotkey": "CommandOrControl+Shift+Space"
     })
 }
 
