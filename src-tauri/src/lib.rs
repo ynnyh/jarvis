@@ -335,6 +335,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             repo_recommender::recommend_repos_for_task,
             voice::voice_assets_status,
             voice::voice_download_assets,
+            voice::voice_open_dir,
             voice::voice_start,
             voice::voice_stop_and_transcribe,
             voice::voice_hotkey_sync,

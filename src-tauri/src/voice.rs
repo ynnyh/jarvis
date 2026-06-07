@@ -69,8 +69,70 @@ const WHISPER_BIN_URLS: &[&str] = &[
 /// 模型直链：走国内可达的 hf-mirror.com 镜像。
 /// 实测：huggingface.co 在国内被墙不通；whisper.cpp 的 HF 仓库虽已从 ggerganov 改名 ggml-org，
 /// 但 hf-mirror.com 镜像仍只认旧名 ggerganov（HEAD 返回 200，新名在镜像上不通）。
+/// 注意：hf-mirror 对大文件只回 302 跳到 HF 美国 Xet 存储（cas-bridge.xethub.hf.co），
+/// 574MB 从美国直传国内必断流。故配合「走用户代理 + 断点续传」两道保险才稳（见下方下载逻辑）。
 const MODEL_URL: &str =
     "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin";
+
+/// 模型 HF 原始直链（手动兜底用：给用户在浏览器/下载工具里手动下）。
+/// 自动下载默认走 hf-mirror（配代理时直连 HF 也行），但手动场景把原始链一并列出。
+const MODEL_URL_RAW: &str =
+    "https://huggingface.co/ggml-org/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin";
+
+/// whisper-cli 二进制 zip 的 GitHub 原始直链（手动兜底用，列给用户看）。
+const WHISPER_BIN_URL_RAW: &str =
+    "https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.6/whisper-bin-x64.zip";
+
+/// 单次下载流的 HTTP 超时（连接+读取）。大文件靠断点续传扛断流，单流别设太长，
+/// 让卡死的流尽早超时进入续传重试，比死等强。
+const DOWNLOAD_TIMEOUT_SECS: u64 = 60;
+
+/// 断点续传最大尝试次数（含首次）。每次失败 backoff 后用当前 .part 大小续传。
+const MAX_DOWNLOAD_ATTEMPTS: u32 = 8;
+
+/// 手动跟随 302 的最大跳数（hf-mirror → HF → Xet 存储一般 1~2 跳，给足余量）。
+const MAX_REDIRECTS: u32 = 6;
+
+// ============================================================================
+// 下载代理 + HTTP client
+// ============================================================================
+
+/// 读用户 `~/.jarvis/config.json` 里的 `channels.telegram.proxy`（能翻墙的本地代理，
+/// 如 `http://127.0.0.1:7897`）。trim 后非空才返回——voice 下载复用它，让原始 GitHub/HF
+/// 源在国内也能稳连。和 channels/telegram.rs 读同一处配置，保持单一数据源。
+pub fn download_proxy() -> Option<String> {
+    crate::settings::load_raw_config()
+        .and_then(|v| {
+            v.get("channels")
+                .and_then(|c| c.get("telegram"))
+                .and_then(|t| t.get("proxy"))
+                .and_then(|p| p.as_str())
+                .map(|s| s.trim().to_string())
+        })
+        .filter(|s| !s.is_empty())
+}
+
+/// 建下载专用 reqwest client：
+/// - `.no_gzip().no_brotli().no_deflate()`：二进制/模型不是压缩流，禁自动解码，避免把原始字节当压缩流解坏。
+/// - `redirect(Policy::none())`：**手动**跟 302——reqwest 跨 host 重定向会丢自定义头（Range / Accept-Encoding），
+///   续传必须每跳都自己带上，故关掉自动跟随。
+/// - 若用户配了代理就 `proxy(all)` 走它（GitHub/HF 原始源在国内才稳）。
+fn build_download_client(proxy: Option<&str>) -> Result<reqwest::Client, String> {
+    let mut builder = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
+        .redirect(reqwest::redirect::Policy::none())
+        .no_gzip()
+        .no_brotli()
+        .no_deflate();
+    if let Some(proxy) = proxy.map(str::trim).filter(|s| !s.is_empty()) {
+        let proxy =
+            reqwest::Proxy::all(proxy).map_err(|e| format!("下载代理配置无效: {}", e))?;
+        builder = builder.proxy(proxy);
+    }
+    builder
+        .build()
+        .map_err(|e| format!("下载 HTTP client 构造失败: {}", e))
+}
 
 // ============================================================================
 // 资产路径
@@ -408,49 +470,99 @@ fn inject_text(text: &str) -> Result<(), String> {
 // 资产下载（reqwest 流式 → 解压 → 落 voice_dir）
 // ============================================================================
 
-/// 流式下载一个 URL 到本地文件，边下边 emit 进度。
+/// 流式下载一个 URL 到本地文件，**断点续传 + 自动重试 + 手动跟随 302**，边下边 emit 进度。
 ///
-/// 要点：
-/// - 写**临时文件** `<dest>.part`，下完原子 rename 到目标——中断不会留下半截被当成完整资产。
-/// - 从 `Content-Length` 拿总大小（HF/GitHub 都给）；拿不到时 total=0，前端按「未知总量」处理。
-/// - 进度事件 `voice-download-progress { phase, downloaded, total, percent }`，phase 标明在下哪块。
+/// 抗断流设计（针对 hf-mirror 302→HF 美国 Xet 大文件必断的场景）：
+/// - 下到 `<dest>.part`，每次（重）开始按已有字节 N 带 `Range: bytes=N-` **追加写**；
+///   流中途出错 → backoff(1~3s) → 用当前 .part 大小续传，最多 `MAX_DOWNLOAD_ATTEMPTS` 次。
+/// - 总大小从 `Content-Range`（带 Range 时回 206）或 `Content-Length`（首个 200）拿；
+///   累计达总大小才算完成 → 原子 rename 到目标。
+/// - 跨 host 302 手动跟：每跳都带 `Range` + `Accept-Encoding: identity`（reqwest 自动跟随会丢这些头）。
+/// - 进度事件 `voice-download-progress { phase, downloaded, total, percent, bytesPerSec }`，
+///   续传时 downloaded 从 .part 已有字节起步、不回退。
 async fn download_to_file(
     app: &tauri::AppHandle,
     url: &str,
     dest: &PathBuf,
     phase: &str,
+    proxy: Option<&str>,
+) -> Result<(), String> {
+    if let Some(dir) = dest.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("创建语音目录失败: {}", e))?;
+    }
+
+    let client = build_download_client(proxy)?;
+    let part = dest.with_extension("part");
+
+    let mut last_err = String::new();
+    for attempt in 1..=MAX_DOWNLOAD_ATTEMPTS {
+        // 续传起点 = 当前 .part 已有字节（首次没有则 0）。
+        let resume_from = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+
+        match download_attempt(app, &client, url, &part, phase, resume_from).await {
+            Ok(()) => {
+                // 下完原子 rename；失败清掉 .part。
+                std::fs::rename(&part, dest).map_err(|e| {
+                    let _ = std::fs::remove_file(&part);
+                    format!("下载文件改名失败: {}", e)
+                })?;
+                return Ok(());
+            }
+            Err(e) => {
+                last_err = e;
+                eprintln!(
+                    "[voice] 下载{}第 {}/{} 次中断（已存 {} 字节）：{}",
+                    phase, attempt, MAX_DOWNLOAD_ATTEMPTS, resume_from, last_err
+                );
+                if attempt < MAX_DOWNLOAD_ATTEMPTS {
+                    // backoff 1~3s（随尝试次递增，封顶 3s），给对端/网络喘口气再续传。
+                    let secs = (attempt as u64).min(3);
+                    tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+                }
+            }
+        }
+    }
+    Err(format!(
+        "下载 {} 失败（已续传重试 {} 次仍未完成）：{}",
+        phase, MAX_DOWNLOAD_ATTEMPTS, last_err
+    ))
+}
+
+/// 单次下载尝试：从 `resume_from` 字节起带 Range 拉流、追加写 `.part`，下到流结束。
+/// 返回 Ok 表示本次累计已达总大小（真正下完）；流中途断开返回 Err（交由上层 backoff 续传）。
+async fn download_attempt(
+    app: &tauri::AppHandle,
+    client: &reqwest::Client,
+    url: &str,
+    part: &PathBuf,
+    phase: &str,
+    resume_from: u64,
 ) -> Result<(), String> {
     use futures_util::StreamExt;
     use std::io::Write;
     use tauri::Emitter;
 
-    if let Some(dir) = dest.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("创建语音目录失败: {}", e))?;
-    }
+    // 手动跟随 302：每跳带 Range + Accept-Encoding: identity。
+    // is_partial=true 表示服务器认了 Range（回 206、接着续传）；false 表示回了整个 200
+    // （服务器忽略了 Range），这时必须从头覆盖写，不能往 .part 后追加（否则会拼坏文件）。
+    let (resp, total, is_partial) = fetch_with_redirects(client, url, resume_from, phase).await?;
 
-    let client = reqwest::Client::new();
-    let resp = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| format!("下载请求失败（{}）: {}", phase, e))?;
+    // 续传起点：服务器认 Range（206）→ 接着已有字节追加；否则（200 整包）从头覆盖。
+    let start = if is_partial { resume_from } else { 0 };
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(start > 0)
+        .write(true)
+        .truncate(start == 0)
+        .open(part)
+        .map_err(|e| format!("打开下载临时文件失败: {}", e))?;
 
-    if !resp.status().is_success() {
-        return Err(format!(
-            "下载 {} 失败：HTTP {}（{}）",
-            phase,
-            resp.status().as_u16(),
-            url
-        ));
-    }
+    let mut downloaded: u64 = start;
+    let mut last_emit: u64 = downloaded;
+    // 速度估算：记一个采样点（时刻 + 已下字节），相邻 emit 之间算 bytesPerSec。
+    let mut sample_at = std::time::Instant::now();
+    let mut sample_bytes = downloaded;
 
-    let total = resp.content_length().unwrap_or(0);
-    let part = dest.with_extension("part");
-    let mut file =
-        std::fs::File::create(&part).map_err(|e| format!("创建临时下载文件失败: {}", e))?;
-
-    let mut downloaded: u64 = 0;
-    let mut last_emit: u64 = 0;
     let mut stream = resp.bytes_stream();
     while let Some(chunk_result) = stream.next().await {
         let chunk = chunk_result.map_err(|e| format!("下载流读取错误（{}）: {}", phase, e))?;
@@ -458,8 +570,20 @@ async fn download_to_file(
             .map_err(|e| format!("写下载文件失败: {}", e))?;
         downloaded += chunk.len() as u64;
 
-        // 节流：每累计 ~1MB 才 emit 一次，避免大模型（574MB）刷爆事件通道。
+        // 节流：每累计 ~1MB（或到顶）emit 一次，避免 574MB 刷爆事件通道。
         if downloaded - last_emit >= 1_000_000 || (total > 0 && downloaded >= total) {
+            let now = std::time::Instant::now();
+            let dt = now.duration_since(sample_at).as_secs_f64();
+            let bytes_per_sec = if dt > 0.05 {
+                ((downloaded - sample_bytes) as f64 / dt) as u64
+            } else {
+                0
+            };
+            if dt >= 0.5 {
+                // 每 ~0.5s 刷新一次速度采样基准，避免瞬时抖动。
+                sample_at = now;
+                sample_bytes = downloaded;
+            }
             last_emit = downloaded;
             let percent = if total > 0 {
                 (downloaded as f64 / total as f64 * 100.0) as u32
@@ -473,20 +597,124 @@ async fn download_to_file(
                     "downloaded": downloaded,
                     "total": total,
                     "percent": percent,
+                    "bytesPerSec": bytes_per_sec,
                 }),
             );
         }
     }
 
-    // 显式 flush + drop，确保字节全落盘再 rename。
     file.flush().map_err(|e| format!("刷新下载文件失败: {}", e))?;
     drop(file);
 
-    std::fs::rename(&part, dest).map_err(|e| {
-        let _ = std::fs::remove_file(&part);
-        format!("下载文件改名失败: {}", e)
-    })?;
+    // 流正常结束但没下满 → 视为中途断开，返回 Err 让上层续传。
+    if total > 0 && downloaded < total {
+        return Err(format!(
+            "下载流提前结束（{} / {} 字节），将续传",
+            downloaded, total
+        ));
+    }
     Ok(())
+}
+
+/// 手动跟随 302 发起带 Range 的下载请求，返回（最终响应, 总字节数, 是否部分响应 206）。
+///
+/// 每一跳都带 `Range: bytes=N-` + `Accept-Encoding: identity`——reqwest 关掉自动跟随后由我们
+/// 逐跳重发，跨 host（hf-mirror→HF→Xet）才不会丢这两个关键头。
+/// - 206（认 Range）：总大小取 `Content-Range` 的 `bytes N-M/TOTAL` 末段；is_partial=true。
+/// - 200（忽略 Range，回整包）：总大小就是 `Content-Length`（整文件）；is_partial=false，
+///   上层据此从头覆盖写，避免往半截 .part 后面追加拼坏文件。
+async fn fetch_with_redirects(
+    client: &reqwest::Client,
+    url: &str,
+    resume_from: u64,
+    phase: &str,
+) -> Result<(reqwest::Response, u64, bool), String> {
+    use reqwest::header::{ACCEPT_ENCODING, CONTENT_RANGE, LOCATION, RANGE};
+
+    let mut current = url.to_string();
+    for _ in 0..=MAX_REDIRECTS {
+        let resp = client
+            .get(&current)
+            .header(RANGE, format!("bytes={}-", resume_from))
+            .header(ACCEPT_ENCODING, "identity")
+            .send()
+            .await
+            .map_err(|e| format!("下载请求失败（{}）: {}", phase, e))?;
+
+        let status = resp.status();
+
+        // 3xx：手动跟随到 Location（拼相对地址）。
+        if status.is_redirection() {
+            let loc = resp
+                .headers()
+                .get(LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .ok_or_else(|| format!("下载 {} 收到 {} 重定向但缺 Location 头", phase, status))?;
+            // Location 可能是相对路径，用当前 URL 作 base 解析成绝对地址。
+            current = resolve_redirect(&current, loc)?;
+            continue;
+        }
+
+        if !status.is_success() {
+            return Err(format!(
+                "下载 {} 失败：HTTP {}（{}）",
+                phase,
+                status.as_u16(),
+                current
+            ));
+        }
+
+        // 206 PARTIAL_CONTENT → 服务器认了 Range，可续传。
+        let is_partial = status == reqwest::StatusCode::PARTIAL_CONTENT;
+        let total = if is_partial {
+            // 206：总长在 Content-Range 末段；缺则用 resume_from + 本段长度兜底。
+            resp.headers()
+                .get(CONTENT_RANGE)
+                .and_then(|v| v.to_str().ok())
+                .and_then(parse_content_range_total)
+                .or_else(|| resp.content_length().map(|len| resume_from + len))
+                .unwrap_or(0)
+        } else {
+            // 200：Content-Length 就是整文件大小（从头下）。
+            resp.content_length().unwrap_or(0)
+        };
+
+        return Ok((resp, total, is_partial));
+    }
+    Err(format!("下载 {} 重定向次数过多（>{}）", phase, MAX_REDIRECTS))
+}
+
+/// 把（可能是相对路径的）Location 解析成绝对 URL。无外部 url crate，做最小够用的拼接：
+/// 绝对地址（http/https 开头）直接用；`//host/..` 协议相对补 https；`/path` 绝对路径拼 origin；
+/// 其余相对路径拼到当前路径目录。
+fn resolve_redirect(base: &str, loc: &str) -> Result<String, String> {
+    let loc = loc.trim();
+    if loc.starts_with("http://") || loc.starts_with("https://") {
+        return Ok(loc.to_string());
+    }
+    if let Some(rest) = loc.strip_prefix("//") {
+        return Ok(format!("https://{}", rest));
+    }
+    // 取 base 的 scheme://host 部分。
+    let scheme_end = base.find("://").ok_or_else(|| format!("无法解析重定向基地址: {}", base))?;
+    let after_scheme = &base[scheme_end + 3..];
+    let host_end = after_scheme.find('/').unwrap_or(after_scheme.len());
+    let origin = &base[..scheme_end + 3 + host_end]; // scheme://host[:port]
+    if loc.starts_with('/') {
+        return Ok(format!("{}{}", origin, loc));
+    }
+    // 相对当前路径目录。
+    let base_path = &base[..base.rfind('/').unwrap_or(base.len())];
+    Ok(format!("{}/{}", base_path, loc))
+}
+
+/// 解析 `Content-Range: bytes N-M/TOTAL` 里的 TOTAL。`*` 或解析失败返回 None。
+fn parse_content_range_total(value: &str) -> Option<u64> {
+    let total = value.rsplit('/').next()?.trim();
+    if total == "*" {
+        return None;
+    }
+    total.parse::<u64>().ok()
 }
 
 /// 按顺序尝试一组 URL 下载到同一目标文件：前一个连不上/出错就试下一个，
@@ -500,10 +728,11 @@ async fn download_to_file_multi(
     urls: &[&str],
     dest: &PathBuf,
     phase: &str,
+    proxy: Option<&str>,
 ) -> Result<(), String> {
     let mut errors: Vec<String> = Vec::new();
     for (i, url) in urls.iter().enumerate() {
-        match download_to_file(app, url, dest, phase).await {
+        match download_to_file(app, url, dest, phase, proxy).await {
             Ok(()) => return Ok(()),
             Err(e) => {
                 eprintln!(
@@ -697,15 +926,68 @@ pub fn global_shortcut_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
 // Tauri 命令（在 lib.rs invoke_handler 注册）
 // ============================================================================
 
-/// 查询语音资产就绪状态。供 PR2 的设置/下载流程判断是否需要下载。
+/// 查询语音资产就绪状态 + 下载相关信息。
+///
+/// 除就绪态外，一并回手动兜底所需的全部信息：代理（前端显示「下载将通过代理 …」）、
+/// 目标目录、两个文件名、各自的原始下载直链（二进制 zip 解压后平铺、模型 .bin 直接放）。
+/// 前端据此渲染「手动下载」区，自动下不动时用户照链手动下、丢进目录即可。
 #[tauri::command]
 pub fn voice_assets_status() -> Result<Value, String> {
+    #[cfg(windows)]
+    let bin_name = "whisper-cli.exe";
+    #[cfg(not(windows))]
+    let bin_name = "whisper-cli";
+
     Ok(json!({
         "ready": voice_assets_ready(),
         "voiceDir": voice_dir().to_string_lossy(),
         "hasBinary": whisper_cli_path().is_file(),
         "hasModel": model_path().is_file(),
+        // 下载是否走代理 + 代理地址（None → 直连）。前端显示知情。
+        "proxy": download_proxy(),
+        // 手动兜底信息：文件名 + 原始直链。
+        "binaryName": bin_name,
+        "modelName": DEFAULT_MODEL_FILE,
+        "binaryUrl": WHISPER_BIN_URL_RAW,
+        "modelUrl": MODEL_URL_RAW,
+        "modelMirrorUrl": MODEL_URL,
     }))
+}
+
+/// 用系统文件管理器打开语音资产目录 `~/.jarvis/voice/`（手动放文件用）。
+/// 目录不存在则先建——首次还没下过时点「打开目录」也不报错，直接开空目录给用户放文件。
+/// 平台做法与 commands/mod.rs 的 open_url_in_browser 同款（Windows explorer / macOS open / Linux xdg-open）。
+#[tauri::command]
+pub fn voice_open_dir() -> Result<(), String> {
+    let dir = voice_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建语音目录失败: {}", e))?;
+
+    #[cfg(windows)]
+    {
+        // explorer 打开目录；用 silent_command 走 CREATE_NO_WINDOW，不弹黑窗。
+        // explorer 打开成功时退出码也可能非 0，这里只看能否 spawn，不判 status。
+        silent_command(&PathBuf::from("explorer"))
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| format!("打开目录失败: {}", e))?;
+        return Ok(());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| format!("打开目录失败: {}", e))?;
+        return Ok(());
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| format!("打开目录失败: {}", e))?;
+        return Ok(());
+    }
 }
 
 /// 下载语音资产到 `~/.jarvis/voice/`：① whisper-cli 二进制 zip → 解压；② large-v3-turbo 模型。
@@ -714,10 +996,15 @@ pub fn voice_assets_status() -> Result<Value, String> {
 /// 全程 emit `voice-download-progress`（phase=`"binary"`/`"model"`）。下完校验 `voice_assets_ready()`。
 #[tauri::command]
 pub async fn voice_download_assets(app: tauri::AppHandle) -> Result<Value, String> {
+    // 读用户代理（若 config 里 channels.telegram.proxy 有值）——下载全程复用它，
+    // 让原始 GitHub/HF 源在国内也能稳连，配合断点续传两道保险。
+    let proxy = download_proxy();
+    let proxy_ref = proxy.as_deref();
+
     // ① whisper-cli 二进制：缺就下 zip → 解压（解压内部会校验 whisper-cli 在不在）。
     if !whisper_cli_path().is_file() {
         let zip_path = voice_dir().join("whisper-bin-x64.zip");
-        download_to_file_multi(&app, WHISPER_BIN_URLS, &zip_path, "binary").await?;
+        download_to_file_multi(&app, WHISPER_BIN_URLS, &zip_path, "binary", proxy_ref).await?;
         extract_whisper_zip(&zip_path)?;
         // 解压完删掉 zip（best-effort，省空间）。
         let _ = std::fs::remove_file(&zip_path);
@@ -726,7 +1013,7 @@ pub async fn voice_download_assets(app: tauri::AppHandle) -> Result<Value, Strin
     // ② 模型：缺就下（574MB，下载耗时最久，进度务必顺滑）。
     if !model_path().is_file() {
         let model = model_path();
-        download_to_file(&app, MODEL_URL, &model, "model").await?;
+        download_to_file(&app, MODEL_URL, &model, "model", proxy_ref).await?;
     }
 
     if !voice_assets_ready() {
@@ -837,5 +1124,35 @@ mod tests {
         assert!(cli.ends_with("whisper-cli.exe"));
         #[cfg(not(windows))]
         assert!(cli.ends_with("whisper-cli"));
+    }
+
+    #[test]
+    fn parse_content_range_total_extracts_total() {
+        // 标准 `bytes N-M/TOTAL`：取末段总长。
+        assert_eq!(parse_content_range_total("bytes 100-573/574"), Some(574));
+        assert_eq!(parse_content_range_total("bytes 0-0/12345"), Some(12345));
+        // 总长未知（`*`）或脏数据 → None。
+        assert_eq!(parse_content_range_total("bytes 100-573/*"), None);
+        assert_eq!(parse_content_range_total("garbage"), None);
+    }
+
+    #[test]
+    fn resolve_redirect_handles_absolute_and_relative() {
+        let base = "https://hf-mirror.com/a/b/file.bin";
+        // 绝对地址原样返回。
+        assert_eq!(
+            resolve_redirect(base, "https://cas-bridge.xethub.hf.co/x").unwrap(),
+            "https://cas-bridge.xethub.hf.co/x"
+        );
+        // 协议相对 `//host/..` 补 https。
+        assert_eq!(
+            resolve_redirect(base, "//cdn.example.com/y").unwrap(),
+            "https://cdn.example.com/y"
+        );
+        // 绝对路径 `/p` 拼到 origin。
+        assert_eq!(
+            resolve_redirect(base, "/p/q.bin").unwrap(),
+            "https://hf-mirror.com/p/q.bin"
+        );
     }
 }
