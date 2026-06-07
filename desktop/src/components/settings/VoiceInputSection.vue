@@ -34,6 +34,8 @@ interface DownloadProgress {
 const showConfirm = ref(false)
 // 是否正在下载。
 const downloading = ref(false)
+// 下载失败、等待用户「重试 / 取消」（与 message 配合显式呈现失败态 + 重试按钮）。
+const downloadFailed = ref(false)
 // 最近一次进度（null = 还没开始/已结束）。
 const progress = ref<DownloadProgress | null>(null)
 // 结果消息（成功/失败提示）。
@@ -66,6 +68,7 @@ const enabledModel = computed<boolean>({
 function resetTransient() {
   showConfirm.value = false
   downloading.value = false
+  downloadFailed.value = false
   progress.value = null
 }
 
@@ -101,10 +104,23 @@ async function requestEnable() {
   }
 }
 
-/** 确认下载：监听进度 → 调下载命令 → 成功开+提示 / 失败保持关+错误。 */
+/** 确认下载：用户在确认模态点「是」，关模态后启动下载。 */
 async function confirmDownload() {
   showConfirm.value = false
+  await runDownload()
+}
+
+/** 重试下载：失败态点「重试下载」，重新调 voice_download_assets。
+ *  后端文件级幂等——已下好的部分（如二进制已就绪）会跳过，只补没下完的，故重试会接着下。 */
+async function retryDownload() {
+  await runDownload()
+}
+
+/** 实际下载流程：监听进度 → 调下载命令 → 成功开+提示 / 失败置失败态+错误（带重试按钮）。
+ *  确认下载与重试共用这段。 */
+async function runDownload() {
   downloading.value = true
+  downloadFailed.value = false
   message.value = ''
   progress.value = { phase: 'binary', downloaded: 0, total: 0, percent: 0 }
 
@@ -121,10 +137,12 @@ async function confirmDownload() {
     messageKind.value = 'ok'
     message.value = '语音引擎与模型已就绪，语音输入已启用，可按 Ctrl/Cmd+Shift+空格 说话。'
   } catch (e) {
-    // 失败：保持关闭（store 没被置 true），给出错误。半截文件后端已清/可重试。
+    // 失败：保持关闭（store 没被置 true），进入显式失败态 → 模板渲染「重试下载」按钮。
+    // 半截文件后端写的是 .part 临时文件、成功才落盘，已下好的整文件重试会跳过。
     store.config.voiceInputEnabled = false
+    downloadFailed.value = true
     messageKind.value = 'fail'
-    message.value = `下载失败：${errText(e)}\n（可稍后重新打开开关重试，已下好的部分会跳过。）`
+    message.value = `下载失败：${errText(e)}`
   } finally {
     downloading.value = false
     progress.value = null
@@ -133,9 +151,17 @@ async function confirmDownload() {
   }
 }
 
-/** 取消下载：回退到关闭，不下载。 */
+/** 取消下载：回退到关闭，不下载（确认模态点「否」时用）。 */
 function cancelDownload() {
   showConfirm.value = false
+  store.config.voiceInputEnabled = false
+  messageKind.value = 'info'
+  message.value = '已取消，语音输入保持关闭。'
+}
+
+/** 失败态点「取消」：放弃重试，回到关闭并清失败态。 */
+function dismissFailure() {
+  downloadFailed.value = false
   store.config.voiceInputEnabled = false
   messageKind.value = 'info'
   message.value = '已取消，语音输入保持关闭。'
@@ -194,6 +220,12 @@ function errText(e: unknown): string {
       {{ message }}
     </p>
 
+    <!-- 下载失败：显式失败态 + 重试 / 取消（重试接着下没下完的部分） -->
+    <div v-if="downloadFailed && !downloading" class="voice-retry">
+      <button class="settings-btn voice-retry-primary" @click="retryDownload">重试下载</button>
+      <button class="settings-btn" @click="dismissFailure">取消</button>
+    </div>
+
     <!-- 确认下载模态 -->
     <div v-if="showConfirm" class="voice-modal-mask" @click.self="cancelDownload">
       <div class="voice-modal">
@@ -246,6 +278,22 @@ function errText(e: unknown): string {
 .voice-progress-sub {
   font-size: 10.5px;
   color: var(--text-faint);
+}
+
+/* 下载失败重试行 */
+.voice-retry {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.voice-retry-primary {
+  color: var(--on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.voice-retry-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 88%, #000);
+  border-color: color-mix(in srgb, var(--accent) 88%, #000);
 }
 
 /* 确认模态 */

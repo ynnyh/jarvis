@@ -55,8 +55,16 @@ const DEFAULT_MODEL_FILE: &str = "ggml-large-v3-turbo-q5_0.bin";
 //   - zip 内是 Compress-Archive 打的 build/bin 全量（已核实 examples/cli/CMakeLists.txt
 //     里 `set(TARGET whisper-cli)`）：whisper-cli.exe + whisper.dll / ggml.dll /
 //     ggml-base.dll / ggml-cpu.dll / SDL2.dll，全平铺在 zip 根，解压到 voice_dir 即可用。
-const WHISPER_BIN_URL: &str =
-    "https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.6/whisper-bin-x64.zip";
+//
+// 二进制走 GitHub，国内直连常超时/被墙（实测报 `error sending request for url`，且 app 的
+// reqwest 不走系统代理）。故按顺序尝试一组镜像，谁先连上并下完就用谁：
+//   1. ghfast.top 国内加速镜像（已实测 HTTP 206 可拉，国内优先）；
+//   2. GitHub 直连（海外 / 有代理时兜底）。
+// ghfast.top 会回 302/206，reqwest 默认跟随重定向，无需额外处理。
+const WHISPER_BIN_URLS: &[&str] = &[
+    "https://ghfast.top/https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.6/whisper-bin-x64.zip",
+    "https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.6/whisper-bin-x64.zip",
+];
 
 /// 模型直链：走国内可达的 hf-mirror.com 镜像。
 /// 实测：huggingface.co 在国内被墙不通；whisper.cpp 的 HF 仓库虽已从 ggerganov 改名 ggml-org，
@@ -481,6 +489,42 @@ async fn download_to_file(
     Ok(())
 }
 
+/// 按顺序尝试一组 URL 下载到同一目标文件：前一个连不上/出错就试下一个，
+/// 任一个成功（下完并落盘）即返回 Ok。全失败才返回 Err（汇总各 URL 的失败原因）。
+///
+/// 用途：二进制走 GitHub，国内直连常失败，需先试国内加速镜像再兜底直连。
+/// `download_to_file` 写的是 `<dest>.part` 临时文件、成功才原子 rename，故某个 URL
+/// 下到一半失败不会污染目标；下一个 URL 重新从 `.part` 起步覆盖即可，无需手动清理。
+async fn download_to_file_multi(
+    app: &tauri::AppHandle,
+    urls: &[&str],
+    dest: &PathBuf,
+    phase: &str,
+) -> Result<(), String> {
+    let mut errors: Vec<String> = Vec::new();
+    for (i, url) in urls.iter().enumerate() {
+        match download_to_file(app, url, dest, phase).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                eprintln!(
+                    "[voice] 下载源 {}/{} 失败（{}）：{}",
+                    i + 1,
+                    urls.len(),
+                    url,
+                    e
+                );
+                errors.push(format!("[{}] {}", url, e));
+            }
+        }
+    }
+    Err(format!(
+        "下载 {} 失败，已尝试 {} 个源均不可达：\n{}",
+        phase,
+        urls.len(),
+        errors.join("\n")
+    ))
+}
+
 /// 解压 whisper-cli zip 到 `voice_dir()`。
 ///
 /// 官方 zip 是 Compress-Archive 打的 `build/bin` 全量（whisper-cli.exe + 一堆 DLL，平铺在根）。
@@ -673,7 +717,7 @@ pub async fn voice_download_assets(app: tauri::AppHandle) -> Result<Value, Strin
     // ① whisper-cli 二进制：缺就下 zip → 解压（解压内部会校验 whisper-cli 在不在）。
     if !whisper_cli_path().is_file() {
         let zip_path = voice_dir().join("whisper-bin-x64.zip");
-        download_to_file(&app, WHISPER_BIN_URL, &zip_path, "binary").await?;
+        download_to_file_multi(&app, WHISPER_BIN_URLS, &zip_path, "binary").await?;
         extract_whisper_zip(&zip_path)?;
         // 解压完删掉 zip（best-effort，省空间）。
         let _ = std::fs::remove_file(&zip_path);
