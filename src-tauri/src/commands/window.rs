@@ -78,11 +78,9 @@ pub async fn chat_open(app: tauri::AppHandle) -> Result<(), String> {
     } else {
         return Err("chat 窗口未注册".into());
     }
-    if let Some(avatar) = app.get_webview_window("avatar") {
-        avatar
-            .hide()
-            .map_err(|e| format!("hide avatar 失败: {}", e))?;
-    }
+    // 故意不隐藏 avatar：聊天大窗是常驻可对话窗口，用户希望小人「不消失、保持可见」，
+    // 跟其它一开就独占的工具窗（settings/todayPlan/writeHours/...）不同。小人 alwaysOnTop +
+    // skipTaskbar，与聊天窗共存不抢任务栏、也不挡操作。其它工具窗仍维持各自的 hide avatar 行为。
     Ok(())
 }
 

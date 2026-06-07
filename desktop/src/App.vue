@@ -472,7 +472,7 @@ function menuShowSettings() {
 }
 
 function menuOpenChat() {
-  // 打开大窗对话：avatar 自动隐藏，聊天窗口接管
+  // 打开大窗对话：小人保持可见（不隐藏），聊天窗与小人共存
   closeAllPanels()
   showMenu.value = false
   invoke('chat_open').catch(e => console.error('chat_open 失败:', e))
