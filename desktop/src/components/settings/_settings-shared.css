@@ -104,7 +104,7 @@
 .settings-msg-fail { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
 .settings-msg-testing { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 
-/* 开关行 */
+/* 开关行（胶囊 / 药丸式 toggle switch） */
 .settings-toggle {
   display: flex;
   align-items: center;
@@ -115,9 +115,42 @@
   padding: 2px 0;
 }
 .settings-toggle input[type="checkbox"] {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  width: 36px;
+  height: 20px;
+  margin: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  outline: none;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+  flex-shrink: 0;
+}
+.settings-toggle input[type="checkbox"]::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
   width: 14px;
   height: 14px;
-  accent-color: var(--accent);
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.2s ease;
+  pointer-events: none;
+}
+.settings-toggle input[type="checkbox"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.settings-toggle input[type="checkbox"]:checked::after {
+  transform: translateX(16px);
+}
+.settings-toggle input[type="checkbox"]:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* 内联数字输入框（夹在文本里的「每 X 分钟」） */

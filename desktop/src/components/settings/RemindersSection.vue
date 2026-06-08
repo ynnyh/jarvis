@@ -83,6 +83,40 @@ function cronHuman(cron: string): string {
   cursor: pointer;
   flex-shrink: 0;
 }
+.reminder-toggle input[type="checkbox"] {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  width: 36px;
+  height: 20px;
+  margin: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  outline: none;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+  flex-shrink: 0;
+}
+.reminder-toggle input[type="checkbox"]::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.2s ease;
+  pointer-events: none;
+}
+.reminder-toggle input[type="checkbox"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.reminder-toggle input[type="checkbox"]:checked::after {
+  transform: translateX(16px);
+}
 .reminder-cron {
   font-family: ui-monospace, monospace;
   font-size: 11px;

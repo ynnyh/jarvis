@@ -551,18 +551,18 @@ function errText(e: unknown): string {
     <!-- 语音引擎选择：本地 SenseVoice（离线/隐私）/ 云端火山（快且准，需联网+凭证） -->
     <div class="voice-engine">
       <span class="voice-engine-label">语音引擎</span>
-      <div class="voice-engine-options">
-        <label class="voice-engine-opt" :class="{ 'voice-engine-opt-active': engine === 'local' }">
+      <div class="voice-engine-segmented">
+        <label class="voice-engine-seg" :class="{ 'voice-engine-seg-active': engine === 'local' }">
           <input type="radio" value="local" v-model="engine" />
-          <span class="voice-engine-opt-title">本地（SenseVoice）</span>
-          <span class="voice-engine-opt-desc">离线、隐私，不上云；首次需下载模型（约 250MB）</span>
+          <span class="voice-engine-seg-text">本地</span>
         </label>
-        <label class="voice-engine-opt" :class="{ 'voice-engine-opt-active': engine === 'cloud' }">
+        <label class="voice-engine-seg" :class="{ 'voice-engine-seg-active': engine === 'cloud' }">
           <input type="radio" value="cloud" v-model="engine" />
-          <span class="voice-engine-opt-title">云端（豆包·火山）</span>
-          <span class="voice-engine-opt-desc">快且准，中文强；需联网 + 火山引擎凭证（有免费额度）</span>
+          <span class="voice-engine-seg-text">云端</span>
         </label>
       </div>
+      <p class="voice-engine-desc" v-if="engine === 'local'">离线、隐私，不上云；首次需下载模型（约 250MB）</p>
+      <p class="voice-engine-desc" v-else>快且准，中文强；需联网 + 火山引擎凭证（有免费额度）</p>
     </div>
 
     <!-- 自定义快捷键 -->
@@ -766,7 +766,7 @@ function errText(e: unknown): string {
 </template>
 
 <style scoped>
-/* 语音引擎选择 */
+/* 语音引擎选择（Segmented Control） */
 .voice-engine {
   margin-top: 12px;
 }
@@ -776,37 +776,46 @@ function errText(e: unknown): string {
   font-size: 12px;
   color: var(--text-dim);
 }
-.voice-engine-options {
-  display: flex;
-  gap: 8px;
-}
-.voice-engine-opt {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 8px 10px;
+.voice-engine-segmented {
+  display: inline-flex;
   background: var(--surface-2);
-  border: var(--divider);
+  border: 1px solid var(--border);
   border-radius: 8px;
+  padding: 2px;
+  gap: 2px;
+}
+.voice-engine-seg {
+  position: relative;
   cursor: pointer;
 }
-.voice-engine-opt:hover {
-  border-color: var(--accent);
+.voice-engine-seg input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
 }
-.voice-engine-opt-active {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent) inset;
-}
-.voice-engine-opt input {
-  margin-right: 4px;
-}
-.voice-engine-opt-title {
+.voice-engine-seg-text {
+  display: inline-block;
+  padding: 5px 16px;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
+  color: var(--text-dim);
+  border-radius: 6px;
+  transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+  user-select: none;
+  white-space: nowrap;
+}
+.voice-engine-seg:hover .voice-engine-seg-text {
   color: var(--text);
 }
-.voice-engine-opt-desc {
+.voice-engine-seg-active .voice-engine-seg-text {
+  background: var(--accent);
+  color: var(--on-accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+.voice-engine-desc {
+  margin: 6px 0 0;
   font-size: 10.5px;
   line-height: 1.5;
   color: var(--text-faint);
