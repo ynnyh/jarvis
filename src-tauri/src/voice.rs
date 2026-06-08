@@ -177,6 +177,10 @@ struct Recording {
     sample_rate: u32,
     /// 设备原始声道数（如 1 / 2）。
     channels: u16,
+    /// 设备名（诊断用，stop 时打印）。
+    device_name: String,
+    /// 采样格式（诊断用，stop 时打印）。
+    sample_format: SampleFormat,
 }
 
 /// 全局语音状态。`Option<Recording>` 为空表示当前没在录。
@@ -199,6 +203,10 @@ pub fn start_recording() -> Result<(), String> {
     let device = host
         .default_input_device()
         .ok_or_else(|| "找不到默认麦克风设备".to_string())?;
+    // 设备名仅作诊断标签：cpal 0.17 标记 name() 弃用（建议 description()，但那返回结构体、
+    // 字段更繁，对一行日志不划算），这里局部 allow 沿用 name()。
+    #[allow(deprecated)]
+    let device_name = device.name().unwrap_or_else(|_| "<未知设备>".to_string());
     let supported = device
         .default_input_config()
         .map_err(|e| format!("读取麦克风默认配置失败: {}", e))?;
@@ -208,6 +216,11 @@ pub fn start_recording() -> Result<(), String> {
     let channels = supported.channels();
     let sample_format = supported.sample_format();
     let config: cpal::StreamConfig = supported.into();
+
+    eprintln!(
+        "[voice] 开始录音：设备={}, 采样率={}, 声道={}, 样本格式={:?}",
+        device_name, sample_rate, channels, sample_format
+    );
 
     let samples: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
     let err_fn = |e| eprintln!("[voice] 音频流错误: {}", e);
@@ -251,6 +264,8 @@ pub fn start_recording() -> Result<(), String> {
         samples,
         sample_rate,
         channels,
+        device_name,
+        sample_format,
     });
     Ok(())
 }
@@ -281,8 +296,43 @@ pub fn stop_recording() -> Result<Vec<f32>, String> {
         .map_err(|_| "样本 buffer 锁中毒".to_string())?
         .clone();
 
+    // 关键诊断：采集到多少样本、约多长。回调从未触发 / 麦克风静默 → 这里就是 0。
+    let frames = if recording.channels > 0 {
+        raw.len() / recording.channels as usize
+    } else {
+        raw.len()
+    };
+    let dur_secs = if recording.sample_rate > 0 {
+        frames as f64 / recording.sample_rate as f64
+    } else {
+        0.0
+    };
+    eprintln!(
+        "[voice] 采集样本数={}, 时长≈{:.2}s, 设备={}, 采样率={}, 声道={}, 格式={:?}",
+        raw.len(),
+        dur_secs,
+        recording.device_name,
+        recording.sample_rate,
+        recording.channels,
+        recording.sample_format
+    );
+
+    // 样本数为 0 / 时长≈0 → 明确报错：录音回调根本没采到东西。
+    // 常见原因：麦克风被系统隐私开关禁用、设备被别的程序独占、或物理无输入。
+    if raw.is_empty() || dur_secs < 0.05 {
+        return Err(format!(
+            "未采集到音频（设备 {}，采样数 {}）。请检查：① 麦克风设备是否选对/已插好；② Windows 设置→隐私→麦克风 是否允许桌面应用访问；③ 麦克风是否被其它程序独占",
+            recording.device_name, raw.len()
+        ));
+    }
+
     let mono = to_mono(&raw, recording.channels);
     let resampled = resample_to_16k(&mono, recording.sample_rate);
+    eprintln!(
+        "[voice] 归一化后：单声道样本数={}, 目标采样率={}",
+        resampled.len(),
+        TARGET_SAMPLE_RATE
+    );
     Ok(resampled)
 }
 
@@ -349,6 +399,13 @@ fn write_temp_wav(samples: &[f32]) -> Result<PathBuf, String> {
     writer
         .finalize()
         .map_err(|e| format!("收尾 WAV 失败: {}", e))?;
+    // 诊断：WAV 落盘大小（16k 单声道 16-bit → 约 32KB/秒；过小说明几乎没声音）。
+    let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    eprintln!(
+        "[voice] 写 WAV：{} 字节（16k 单声道 16-bit），路径={}",
+        size,
+        path.display()
+    );
     Ok(path)
 }
 
@@ -381,30 +438,77 @@ fn transcribe_wav(wav_path: &PathBuf) -> Result<String, String> {
         .arg(wav_path)
         .args(["-l", "auto", "-otxt", "-nt"]);
 
+    // 诊断：打完整命令行，便于复现/排查（模型缺失、参数错、二进制 DLL 缺失都从这看）。
+    eprintln!(
+        "[voice] 运行 whisper-cli：{} -m {} -f {} -l auto -otxt -nt",
+        cli.display(),
+        model.display(),
+        wav_path.display()
+    );
+
     let output = cmd
         .output()
-        .map_err(|e| format!("启动 whisper-cli 失败: {}", e))?;
+        .map_err(|e| format!("启动 whisper-cli 失败: {}（路径 {}，缺 .exe 或同目录 DLL？）", e, cli.display()))?;
+
+    // 始终打印 exit code + stderr 摘要（whisper 的进度/模型加载日志都走 stderr）。
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout_raw = String::from_utf8_lossy(&output.stdout);
+    eprintln!(
+        "[voice] whisper-cli 退出码={:?}\n[voice] --- whisper stderr ---\n{}\n[voice] --- whisper stdout ---\n{}\n[voice] --- end ---",
+        output.status.code(),
+        stderr.trim(),
+        stdout_raw.trim()
+    );
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        // 取 stderr 末尾若干行作摘要带回前端（whisper 报错通常在最后几行）。
+        let summary = stderr_tail(&stderr, 5);
         return Err(format!(
-            "whisper-cli 转写失败（exit {:?}）: {}",
+            "whisper-cli 转写失败（退出码 {:?}）：{}",
             output.status.code(),
-            stderr.trim()
+            summary
         ));
     }
 
     // 优先读 .txt 输出文件，失败再退回 stdout。
-    let text = std::fs::read_to_string(&txt_path)
+    let from_txt = std::fs::read_to_string(&txt_path)
         .ok()
         .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| String::from_utf8_lossy(&output.stdout).trim().to_string());
+        .filter(|s| !s.is_empty());
+    let text = from_txt.unwrap_or_else(|| stdout_raw.trim().to_string());
+    eprintln!(
+        "[voice] 转写文本（{} 字）：{}",
+        text.chars().count(),
+        text
+    );
 
     // 清理临时产物（best-effort，失败不影响结果）。
     let _ = std::fs::remove_file(&txt_path);
 
+    // 转写为空：带上 whisper stderr 摘要，便于判断是音频空 / 模型加载失败 / 参数问题。
+    if text.is_empty() {
+        return Err(format!(
+            "转写结果为空（未识别到语音内容）。whisper 日志：{}",
+            stderr_tail(&stderr, 4)
+        ));
+    }
+
     Ok(text)
+}
+
+/// 取 stderr 末尾 n 行作错误摘要（whisper 报错/关键信息一般在最后几行）。
+/// 全空则给个占位，避免把空串塞进错误消息让用户一头雾水。
+fn stderr_tail(stderr: &str, n: usize) -> String {
+    let lines: Vec<&str> = stderr
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    if lines.is_empty() {
+        return "（whisper 无错误输出，疑似音频为空或模型未正确加载）".to_string();
+    }
+    let start = lines.len().saturating_sub(n);
+    lines[start..].join(" | ")
 }
 
 /// 建不弹 console 窗口的 Command（Windows CREATE_NO_WINDOW）。
@@ -431,6 +535,7 @@ fn inject_text(text: &str) -> Result<(), String> {
     if text.is_empty() {
         return Err("转写结果为空，无可注入文本".to_string());
     }
+    eprintln!("[voice] 注入文本（{} 字，走剪贴板+Ctrl+V）：{}", text.chars().count(), text);
 
     let mut clipboard =
         arboard::Clipboard::new().map_err(|e| format!("打开剪贴板失败: {}", e))?;
@@ -463,6 +568,7 @@ fn inject_text(text: &str) -> Result<(), String> {
         let _ = clipboard.set_text(prev);
     }
 
+    eprintln!("[voice] 注入完成（已模拟 Ctrl+V）");
     Ok(())
 }
 
@@ -1073,24 +1179,40 @@ pub async fn voice_download_assets(app: tauri::AppHandle) -> Result<Value, Strin
     Ok(json!({ "ready": true }))
 }
 
-/// 开始录音。资产没就绪 / 已在录 → Err。
+/// 开始录音。资产没就绪 / 已在录 → Err（同时 emit voice-error 让小人弹警告）。
 #[tauri::command]
-pub fn voice_start() -> Result<(), String> {
-    if !voice_assets_ready() {
-        return Err("语音资产未就绪（缺 whisper-cli 或模型）".to_string());
+pub fn voice_start(app: tauri::AppHandle) -> Result<(), String> {
+    let run = || -> Result<(), String> {
+        if !voice_assets_ready() {
+            return Err("语音资产未就绪（缺 whisper-cli 或模型）".to_string());
+        }
+        start_recording()
+    };
+    match run() {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            eprintln!("[voice] voice_start 失败: {}", e);
+            let _ = app.emit("voice-error", json!({ "message": e.clone() }));
+            Err(e)
+        }
     }
-    start_recording()
 }
 
 /// 停录 → 写 WAV → whisper-cli 转写 → 注入聚焦框 → 返回转写文本。
 /// 命令层与热键处理共用这段，错误分清「没在录」「转写失败」「注入失败」三类。
+/// 每个阶段都 eprintln 留痕，配合各子函数内的诊断，全链路可见卡在哪一步。
 fn stop_transcribe_inject() -> Result<String, String> {
+    eprintln!("[voice] === 阶段1/4 停录并取样 ===");
     let samples = stop_recording()?;
+    // stop_recording 已对「采集样本为 0」做明确报错，这里是双保险。
     if samples.is_empty() {
         return Err("没有采集到音频（录音太短或麦克风无输入）".to_string());
     }
 
+    eprintln!("[voice] === 阶段2/4 写 WAV ===");
     let wav = write_temp_wav(&samples)?;
+
+    eprintln!("[voice] === 阶段3/4 whisper-cli 转写 ===");
     let text_result = transcribe_wav(&wav);
     // 转写产物 WAV 用完即删（best-effort）。
     let _ = std::fs::remove_file(&wav);
@@ -1100,15 +1222,27 @@ fn stop_transcribe_inject() -> Result<String, String> {
         return Err("转写结果为空（未识别到语音内容）".to_string());
     }
 
+    eprintln!("[voice] === 阶段4/4 注入聚焦输入框 ===");
     inject_text(&text)?;
+    eprintln!("[voice] === 全链路完成 ===");
     Ok(text)
 }
 
 /// 停录 → 写 WAV → whisper-cli 转写 → 注入聚焦框 → 返回 `{text}`。
+/// 失败时 emit voice-error（带中文原因），别让命令路径静默失败。
 #[tauri::command]
-pub fn voice_stop_and_transcribe() -> Result<Value, String> {
-    let text = stop_transcribe_inject()?;
-    Ok(json!({ "text": text }))
+pub fn voice_stop_and_transcribe(app: tauri::AppHandle) -> Result<Value, String> {
+    match stop_transcribe_inject() {
+        Ok(text) => {
+            let _ = app.emit("voice-transcribed", json!({ "text": text.clone() }));
+            Ok(json!({ "text": text }))
+        }
+        Err(e) => {
+            eprintln!("[voice] voice_stop_and_transcribe 失败: {}", e);
+            let _ = app.emit("voice-error", json!({ "message": e.clone() }));
+            Err(e)
+        }
+    }
 }
 
 /// 按当前开关状态注册/注销全局热键。前端在开关翻转、改键、下载完成、首启校准时调用。
