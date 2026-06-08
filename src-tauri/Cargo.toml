@@ -54,6 +54,10 @@ arboard = "3.6.1"
 # tar：纯 Rust，无虞。
 bzip2-rs = "0.1"
 tar = "0.4"
+# 火山引擎云端 ASR 的 WebSocket 帧需 gzip 编解码（init JSON + 每个音频块都压、响应解压）。
+# flate2 默认走 miniz_oxide **纯 Rust** 后端（非 libz-sys/zlib-ng），**不碰 cc/cmake**——
+# 且它已在依赖树里（png→tauri、image→arboard 间接引入），列为直接依赖零新增 crate、零编译风险。
+flate2 = "1"
 
 # 非 Windows 平台需要 libc::kill 来检测 daemon 进程存活
 # Windows 走 tasklist，不需要 libc

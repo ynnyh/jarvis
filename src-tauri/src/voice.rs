@@ -584,6 +584,402 @@ fn silent_command(program: &PathBuf) -> std::process::Command {
 }
 
 // ============================================================================
+// 云端转写（火山引擎 / 豆包「流式语音识别大模型」WebSocket，按 research 11/12）
+// ============================================================================
+//
+// 选型：`wss://openspeech.bytedance.com/api/v3/sauc/bigmodel`（流式大模型，默认端点）。
+// 鉴权：握手 header 放 app_id + access_token（无签名、无对象存储）。
+// 协议：二进制分帧 = 4 字节定长头 + 可选 4 字节序号(i32) + 4 字节 payload 长度(u32) + payload。
+//   ① init 帧（FullClientRequest, PositiveSeq, JSON, Gzip, seq=1）：gzip(json{user,audio,request})。
+//   ② 音频帧（AudioOnlyClient, PositiveSeq, Gzip, seq 递增）：把 f32→i16 小端 PCM 按 6400 字节/块、
+//      每块 gzip 后发；末块改 NegativeSeq + seq=-seq 标记最后一包。
+//   ③ 收 FullServerResponse：payload gzip 解开取 `result.text`；is_final（或 flag&LastNoSeq）即最终文本。
+// 关键坑（research 强调）：init 的 JSON 和每个音频块都**必须 gzip**，响应也要解 gzip——漏 gzip 直接参数错。
+// 音频格式与本机录音链路完全匹配（16k/16bit/单声道），云端路径**不写 WAV**，直接 i16 LE 裸 PCM。
+
+/// 火山流式 ASR 端点（新版控制台对应的大模型 WebSocket；默认 bigmodel，整段一次性发也 OK）。
+const VOLC_ASR_URL: &str = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel";
+
+/// 流式语音识别大模型（按时长计费）的资源 ID，固定值。
+const VOLC_RESOURCE_ID: &str = "volc.bigasr.sauc.duration";
+
+/// keychain 里火山 Access Token 的 account（仿 llm.apiKey 的 strip/hydrate 套路）。
+const VOLC_TOKEN_ACCOUNT: &str = "voice.cloud.volcAccessToken";
+
+/// 整段云端转写的总超时（建连 + 发送 + 收最终文本）。录一小段语音 15s 足够，超了多半是网络/鉴权卡死。
+const VOLC_TOTAL_TIMEOUT_SECS: u64 = 15;
+
+/// 音频分块大小：16000 * 2 字节 * 1 声道 * 0.2s = 6400 字节/块（约 200ms）。
+const VOLC_AUDIO_CHUNK_BYTES: usize = 6400;
+
+// ---- 二进制帧协议常量（4 字节头各位）----
+const VOLC_PROTOCOL_VERSION: u8 = 0b0001; // version=1
+const VOLC_HEADER_SIZE: u8 = 0b0001; // header 占 1*4=4 字节
+const VOLC_MSG_FULL_CLIENT: u8 = 0b0001; // FullClientRequest（init）
+const VOLC_MSG_AUDIO_CLIENT: u8 = 0b0010; // AudioOnlyClient（音频块）
+const VOLC_MSG_FULL_SERVER: u8 = 0b1001; // FullServerResponse（识别结果）
+const VOLC_MSG_ERROR: u8 = 0b1111; // Error（服务端错误帧）
+const VOLC_FLAG_POS_SEQ: u8 = 0b0001; // 带正序号
+const VOLC_FLAG_NEG_SEQ: u8 = 0b0011; // 末包：带负序号
+const VOLC_FLAG_LAST_NO_SEQ: u8 = 0b0010; // 服务端「最后一包」标志位
+const VOLC_SER_RAW: u8 = 0b0000; // payload 为裸字节（音频）
+const VOLC_SER_JSON: u8 = 0b0001; // payload 为 JSON
+const VOLC_COMP_GZIP: u8 = 0b0001; // gzip 压缩
+
+/// 读火山云端凭证：App ID（明文存 config.voiceCloud.volcAppId）+ Access Token（优先 keychain）。
+/// token 兜底：keychain → config 明文（非占位符，迁移用）。任一缺失返回 Err（中文提示去控制台开通）。
+fn volc_credentials() -> Result<(String, String), String> {
+    let cfg = crate::settings::load_raw_config();
+    let vc = cfg.as_ref().and_then(|v| v.get("voiceCloud"));
+    let s = |key: &str| -> Option<String> {
+        vc.and_then(|v| v.get(key))
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+
+    let app_id = s("volcAppId").ok_or_else(|| {
+        "未配置火山引擎 App ID。请在设置→语音输入→选「云端」后填入 App ID 和 Access Token".to_string()
+    })?;
+
+    // token 优先 keychain；config 里通常是占位符 ********，仅旧明文配置作迁移兜底。
+    let token = crate::settings::secret_get(VOLC_TOKEN_ACCOUNT)
+        .or_else(|| s("volcAccessToken").filter(|v| v != crate::settings::SECRET_PLACEHOLDER))
+        .ok_or_else(|| {
+            "未配置火山引擎 Access Token。请在设置→语音输入→选「云端」后填入 Access Token".to_string()
+        })?;
+
+    Ok((app_id, token))
+}
+
+/// 生成一个简易 UUID v4 字符串（X-Api-Request-Id / X-Api-Connect-Id 用）。
+/// 无 uuid crate：用进程 id + 纳秒时钟 + 计数器拼 16 字节走 RFC4122 v4 排版，足够唯一（仅作请求标识）。
+fn volc_uuid() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let pid = std::process::id() as u64;
+    let cnt = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let mut bytes = [0u8; 16];
+    bytes[0..8].copy_from_slice(&nanos.to_le_bytes());
+    bytes[8..16].copy_from_slice(&(pid ^ cnt.rotate_left(32)).to_le_bytes());
+    // 置 version(4) 与 variant(10) 位，符合 v4 排版。
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let h = |b: &[u8]| b.iter().map(|x| format!("{:02x}", x)).collect::<String>();
+    format!(
+        "{}-{}-{}-{}-{}",
+        h(&bytes[0..4]),
+        h(&bytes[4..6]),
+        h(&bytes[6..8]),
+        h(&bytes[8..10]),
+        h(&bytes[10..16])
+    )
+}
+
+/// gzip 压缩（init JSON + 每个音频块发送前都要压）。flate2 默认 miniz_oxide 纯 Rust 后端。
+fn gzip_compress(data: &[u8]) -> Result<Vec<u8>, String> {
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+    let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+    enc.write_all(data)
+        .map_err(|e| format!("gzip 压缩写入失败: {}", e))?;
+    enc.finish().map_err(|e| format!("gzip 压缩收尾失败: {}", e))
+}
+
+/// gzip 解压（服务端返回的 payload 是 gzip 后的 JSON）。
+fn gzip_decompress(data: &[u8]) -> Result<Vec<u8>, String> {
+    use flate2::read::GzDecoder;
+    use std::io::Read;
+    let mut dec = GzDecoder::new(data);
+    let mut out = Vec::new();
+    dec.read_to_end(&mut out)
+        .map_err(|e| format!("gzip 解压失败: {}", e))?;
+    Ok(out)
+}
+
+/// 手写 marshal：拼一个二进制帧 = 4 字节头 [(ver<<4)|hsize, (type<<4)|flag, (ser<<4)|comp, 0x00]
+///   + 4 字节大端序号(i32) + 4 字节大端 payload 长度(u32) + payload。
+/// 本实现所有帧都带序号（init/音频均带正或负序号），故固定写序号段。payload 已是 gzip 后的字节。
+fn volc_marshal(msg_type: u8, flags: u8, serialization: u8, sequence: i32, payload: &[u8]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(12 + payload.len());
+    buf.push((VOLC_PROTOCOL_VERSION << 4) | VOLC_HEADER_SIZE);
+    buf.push((msg_type << 4) | flags);
+    buf.push((serialization << 4) | VOLC_COMP_GZIP);
+    buf.push(0x00);
+    buf.extend_from_slice(&sequence.to_be_bytes());
+    buf.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+    buf.extend_from_slice(payload);
+    buf
+}
+
+/// 解析后的服务端帧：消息类型 + flags + 解 gzip 后的 payload 字节。
+struct VolcServerFrame {
+    msg_type: u8,
+    flags: u8,
+    payload: Vec<u8>,
+}
+
+/// 手写 parse：反解服务端二进制帧。读 4 字节头 → 按 header_size 跳头 → 若带序号读 4 字节序号 →
+/// 读 4 字节 payload 长度 → 截 payload → 若 compression=gzip 则解压。
+/// 头太短 / 长度越界返回 Err（防越界 panic，符合「禁止字节切片越界」铁律）。
+fn volc_parse(frame: &[u8]) -> Result<VolcServerFrame, String> {
+    if frame.len() < 4 {
+        return Err(format!("服务端帧过短（{} 字节，不足 4 字节头）", frame.len()));
+    }
+    let header_size = (frame[0] & 0x0f) as usize * 4; // 低 4 位是 header_size（单位：4 字节）
+    let msg_type = frame[1] >> 4;
+    let flags = frame[1] & 0x0f;
+    let compression = frame[2] & 0x0f;
+
+    let mut offset = header_size.max(4);
+    if frame.len() < offset {
+        return Err(format!("服务端帧头声明 {} 字节但实际只有 {}", offset, frame.len()));
+    }
+
+    // 带序号（正/负）→ 跳过 4 字节序号字段。
+    if flags == VOLC_FLAG_POS_SEQ || flags == VOLC_FLAG_NEG_SEQ {
+        if frame.len() < offset + 4 {
+            return Err("服务端帧缺序号字段".to_string());
+        }
+        offset += 4;
+    }
+
+    // 4 字节 payload 长度（u32 大端）。
+    if frame.len() < offset + 4 {
+        return Err("服务端帧缺 payload 长度字段".to_string());
+    }
+    let len = u32::from_be_bytes([
+        frame[offset],
+        frame[offset + 1],
+        frame[offset + 2],
+        frame[offset + 3],
+    ]) as usize;
+    offset += 4;
+
+    if frame.len() < offset + len {
+        return Err(format!(
+            "服务端帧 payload 声明 {} 字节但实际只剩 {}",
+            len,
+            frame.len() - offset
+        ));
+    }
+    let raw = &frame[offset..offset + len];
+
+    let payload = if compression == VOLC_COMP_GZIP {
+        gzip_decompress(raw)?
+    } else {
+        raw.to_vec()
+    };
+
+    Ok(VolcServerFrame {
+        msg_type,
+        flags,
+        payload,
+    })
+}
+
+/// 把 16k 单声道 f32 样本转成 i16 小端 PCM 字节（逻辑同 write_temp_wav 的 f32→i16，clamp 防溢出）。
+/// 云端路径据此直接发裸 PCM（format:"pcm", codec:"raw"），不落 WAV。
+fn samples_to_pcm_le(samples: &[f32]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(samples.len() * 2);
+    for &s in samples {
+        let v = (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16;
+        buf.extend_from_slice(&v.to_le_bytes());
+    }
+    buf
+}
+
+/// 从服务端返回的 JSON 取 `result.text`。结构：`{ "result": { "text": "...", "is_final": bool } }`。
+/// 解析不出 result.text 返回 None（中间帧可能没有/为空，由调用方累积取最后非空）。
+fn volc_extract_text(payload: &[u8]) -> Option<(String, bool)> {
+    let v: Value = serde_json::from_slice(payload).ok()?;
+    let result = v.get("result")?;
+    let text = result.get("text").and_then(|t| t.as_str()).unwrap_or("");
+    let is_final = result
+        .get("is_final")
+        .and_then(|b| b.as_bool())
+        .unwrap_or(false);
+    Some((text.trim().to_string(), is_final))
+}
+
+/// 云端转写主流程：连 WS（带 X-Api-* 鉴权头）→ 发 init 帧 → 分块发音频（末块负序号）→ 收最终文本。
+/// 入参是 stop_recording() 归一好的 16k 单声道 f32（与本地路径同源），内部转 i16 LE 裸 PCM。
+/// 全程 15s 总超时；各阶段 eprintln 留痕（连接/发送/收到文本）；凭证缺失/网络/服务端错误均中文化。
+async fn transcribe_volcengine(samples: &[f32]) -> Result<String, String> {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::Message;
+
+    let (app_id, token) = volc_credentials()?;
+    let request_id = volc_uuid();
+
+    eprintln!(
+        "[voice] 云端转写：端点={}, app_id={}, 样本数={}",
+        VOLC_ASR_URL,
+        app_id,
+        samples.len()
+    );
+
+    // 整段套 15s 超时：建连/发送/收最终文本任一卡住都不至于挂死后台线程。
+    let fut = async {
+        // 1) 构造带 X-Api-* 鉴权头的握手请求。ClientRequestBuilder 会先用 uri 生成标准
+        //    WebSocket 头（Host/Upgrade/Connection/Sec-WebSocket-*），再追加这几个自定义头。
+        let uri: tokio_tungstenite::tungstenite::http::Uri = VOLC_ASR_URL
+            .parse()
+            .map_err(|e| format!("云端 ASR 端点 URL 无效: {}", e))?;
+        let request = tokio_tungstenite::tungstenite::ClientRequestBuilder::new(uri)
+            .with_header("X-Api-App-Id", app_id.clone())
+            .with_header("X-Api-App-Key", app_id.clone()) // 部分端点也认 App-Key（值同 app_id），保险都带
+            .with_header("X-Api-Access-Key", token.clone())
+            .with_header("X-Api-Resource-Id", VOLC_RESOURCE_ID)
+            .with_header("X-Api-Request-Id", request_id.clone())
+            .with_header("X-Api-Connect-Id", volc_uuid())
+            .into_client_request()
+            .map_err(|e| format!("构造云端 ASR 握手请求失败: {}", e))?;
+
+        let (mut ws, _resp) = tokio_tungstenite::connect_async(request)
+            .await
+            .map_err(|e| {
+                format!(
+                    "连接火山云端 ASR 失败（检查网络 / App ID / Access Token 是否正确）: {}",
+                    e
+                )
+            })?;
+        eprintln!("[voice] 云端转写：WebSocket 已连接，发送 init 帧");
+
+        // 2) init 帧：gzip(json 配置)。audio 用 pcm/raw/16000/16bit/单声道，与本机录音完全匹配。
+        let init_payload = json!({
+            "user": { "uid": request_id },
+            "audio": { "format": "pcm", "codec": "raw", "rate": 16000, "bits": 16, "channel": 1 },
+            "request": {
+                "model_name": "bigmodel",
+                "enable_itn": true,
+                "enable_punc": true,
+                "enable_ddc": true,
+                "show_utterances": true,
+                "enable_nonstream": false
+            }
+        });
+        let init_bytes =
+            serde_json::to_vec(&init_payload).map_err(|e| format!("序列化 init 配置失败: {}", e))?;
+        let init_gz = gzip_compress(&init_bytes)?;
+        let init_frame = volc_marshal(
+            VOLC_MSG_FULL_CLIENT,
+            VOLC_FLAG_POS_SEQ,
+            VOLC_SER_JSON,
+            1,
+            &init_gz,
+        );
+        ws.send(Message::Binary(init_frame))
+            .await
+            .map_err(|e| format!("发送 init 帧失败: {}", e))?;
+
+        // 3) 音频帧：f32 → i16 LE 裸 PCM，按 6400 字节切块，逐块 gzip 后发；末块用负序号标记结束。
+        let pcm = samples_to_pcm_le(samples);
+        let chunks: Vec<&[u8]> = if pcm.is_empty() {
+            // 极端：没有音频也要发一个空末帧让服务端收尾（理论上不会到这，stop_recording 已挡空）。
+            vec![&[]]
+        } else {
+            pcm.chunks(VOLC_AUDIO_CHUNK_BYTES).collect()
+        };
+        let total_chunks = chunks.len();
+        eprintln!(
+            "[voice] 云端转写：PCM {} 字节，分 {} 块发送（{} 字节/块）",
+            pcm.len(),
+            total_chunks,
+            VOLC_AUDIO_CHUNK_BYTES
+        );
+
+        let mut seq: i32 = 1;
+        for (i, chunk) in chunks.iter().enumerate() {
+            seq += 1;
+            let is_last = i + 1 == total_chunks;
+            let chunk_gz = gzip_compress(chunk)?;
+            // 末块：NegativeSeq + seq=-seq；其余：PositiveSeq + seq。音频帧 serialization 用 Raw。
+            let (flags, send_seq) = if is_last {
+                (VOLC_FLAG_NEG_SEQ, -seq)
+            } else {
+                (VOLC_FLAG_POS_SEQ, seq)
+            };
+            let frame = volc_marshal(
+                VOLC_MSG_AUDIO_CLIENT,
+                flags,
+                VOLC_SER_RAW,
+                send_seq,
+                &chunk_gz,
+            );
+            ws.send(Message::Binary(frame))
+                .await
+                .map_err(|e| format!("发送音频帧（第 {}/{} 块）失败: {}", i + 1, total_chunks, e))?;
+        }
+        eprintln!("[voice] 云端转写：音频发送完毕，等待识别结果");
+
+        // 4) 收包：解析服务端帧，累积 result.text，收到 is_final（或 LastNoSeq 标志）即返回。
+        //    中间 partial 文本会渐长，取最后一条非空作最终文本（整段模式）。
+        let mut final_text = String::new();
+        while let Some(msg) = ws.next().await {
+            let msg = msg.map_err(|e| format!("接收云端 ASR 响应失败: {}", e))?;
+            let bytes = match msg {
+                Message::Binary(b) => b,
+                Message::Close(_) => break,
+                // 文本/Ping/Pong 等非二进制帧：协议里识别结果都是二进制，跳过。
+                _ => continue,
+            };
+            let parsed = volc_parse(&bytes)?;
+
+            if parsed.msg_type == VOLC_MSG_ERROR {
+                let detail = String::from_utf8_lossy(&parsed.payload);
+                return Err(format!("火山云端 ASR 返回错误: {}", detail.trim()));
+            }
+            if parsed.msg_type != VOLC_MSG_FULL_SERVER {
+                continue;
+            }
+
+            if let Some((text, is_final)) = volc_extract_text(&parsed.payload) {
+                if !text.is_empty() {
+                    final_text = text;
+                }
+                let last_by_flag = parsed.flags & VOLC_FLAG_LAST_NO_SEQ != 0;
+                if is_final || last_by_flag {
+                    eprintln!(
+                        "[voice] 云端转写：收到最终文本（{} 字）：{}",
+                        final_text.chars().count(),
+                        final_text
+                    );
+                    let _ = ws.close(None).await;
+                    return Ok(final_text);
+                }
+            }
+        }
+
+        // 连接结束仍没等到 is_final：有非空累积就用它，否则报空。
+        if final_text.is_empty() {
+            Err("云端转写结果为空（未识别到语音内容，或服务端未返回最终文本）".to_string())
+        } else {
+            eprintln!(
+                "[voice] 云端转写：连接结束，使用末次文本（{} 字）：{}",
+                final_text.chars().count(),
+                final_text
+            );
+            Ok(final_text)
+        }
+    };
+
+    match tokio::time::timeout(std::time::Duration::from_secs(VOLC_TOTAL_TIMEOUT_SECS), fut).await {
+        Ok(r) => r,
+        Err(_) => Err(format!(
+            "云端转写超时（{}s 未返回结果，请检查网络）",
+            VOLC_TOTAL_TIMEOUT_SECS
+        )),
+    }
+}
+
+// ============================================================================
 // 注入聚焦输入框（arboard + enigo）
 // ============================================================================
 
@@ -1017,6 +1413,35 @@ fn voice_input_enabled() -> bool {
         .unwrap_or(false)
 }
 
+/// 读 `~/.jarvis/config.json` 里的 `voiceEngine`："cloud" → 云端（火山）；其余（含缺失）→ "local"（本地 sherpa）。
+/// 默认本地，保持「本地优先、隐私」的产品调性；云端是用户显式选的可选项。
+fn voice_engine() -> String {
+    let v = crate::settings::load_raw_config()
+        .and_then(|v| {
+            v.get("voiceEngine")
+                .and_then(|s| s.as_str())
+                .map(|s| s.trim().to_string())
+        })
+        .unwrap_or_default();
+    if v == "cloud" {
+        "cloud".to_string()
+    } else {
+        "local".to_string()
+    }
+}
+
+/// 当前引擎是否「就绪可用」：
+/// - 云端：App ID + Access Token 都配齐即可（不依赖本地 sherpa 资产、不需要下载模型）。
+/// - 本地：sherpa 引擎 + 模型 + 词表三件套齐全（voice_assets_ready）。
+/// 用于热键门禁 / voice_start 校验：两种引擎走各自的「就绪」判断，互不牵连。
+fn voice_engine_ready() -> bool {
+    if voice_engine() == "cloud" {
+        volc_credentials().is_ok()
+    } else {
+        voice_assets_ready()
+    }
+}
+
 /// 读 `~/.jarvis/config.json` 里的 `voiceHotkey`（trim 后非空才用）；缺/空回退默认。
 /// 只返回字符串，是否能解析成合法 `Shortcut` 由 `configured_shortcut` 把关。
 fn voice_hotkey_str() -> String {
@@ -1065,8 +1490,8 @@ fn on_hotkey_pressed(app: &tauri::AppHandle) {
         eprintln!("[voice] 热键触发但语音输入未开启，忽略");
         return;
     }
-    if !voice_assets_ready() {
-        eprintln!("[voice] 热键触发但语音资产未就绪，忽略");
+    if !voice_engine_ready() {
+        eprintln!("[voice] 热键触发但当前语音引擎未就绪（本地缺资产 / 云端缺凭证），忽略");
         return;
     }
 
@@ -1118,7 +1543,7 @@ fn on_hotkey_pressed(app: &tauri::AppHandle) {
 /// 幂等：前端开关翻转、改键、下载完成、首启校准都调它。
 pub fn sync_hotkey(app: &tauri::AppHandle) -> Result<(), String> {
     let gs = app.global_shortcut();
-    let want = voice_input_enabled() && voice_assets_ready();
+    let want = voice_input_enabled() && voice_engine_ready();
 
     let mut registered = REGISTERED_HOTKEY
         .lock()
@@ -1282,12 +1707,16 @@ pub async fn voice_download_assets(app: tauri::AppHandle) -> Result<Value, Strin
     Ok(json!({ "ready": true }))
 }
 
-/// 开始录音。资产没就绪 / 已在录 → Err（同时 emit voice-error 让小人弹警告）。
+/// 开始录音。引擎没就绪 / 已在录 → Err（同时 emit voice-error 让小人弹警告）。
 #[tauri::command]
 pub fn voice_start(app: tauri::AppHandle) -> Result<(), String> {
     let run = || -> Result<(), String> {
-        if !voice_assets_ready() {
-            return Err("语音资产未就绪（缺引擎 / 模型 / 词表）".to_string());
+        if !voice_engine_ready() {
+            return Err(if voice_engine() == "cloud" {
+                "云端语音未就绪（缺 App ID / Access Token）".to_string()
+            } else {
+                "语音资产未就绪（缺引擎 / 模型 / 词表）".to_string()
+            });
         }
         start_recording()
     };
@@ -1301,9 +1730,14 @@ pub fn voice_start(app: tauri::AppHandle) -> Result<(), String> {
     }
 }
 
-/// 停录 → 写 WAV → sherpa-onnx-offline 转写 → 注入聚焦框 → 返回转写文本。
+/// 停录 → 转写（按引擎分流）→ 注入聚焦框 → 返回转写文本。
 /// 命令层与热键处理共用这段，错误分清「没在录」「转写失败」「注入失败」三类。
 /// 每个阶段都 eprintln 留痕，配合各子函数内的诊断，全链路可见卡在哪一步。
+///
+/// 引擎分流（读 config 的 voiceEngine）：
+///   - "local"（默认）→ 写临时 WAV → sherpa-onnx-offline 子进程转写。
+///   - "cloud"        → 不写 WAV，直接把 16k 单声道 f32 发火山云端 ASR。
+/// 录音、注入、热键、小人状态全链路两路共用，仅中间「转写」一段按引擎换实现。
 fn stop_transcribe_inject() -> Result<String, String> {
     eprintln!("[voice] === 阶段1/4 停录并取样 ===");
     let samples = stop_recording()?;
@@ -1312,14 +1746,26 @@ fn stop_transcribe_inject() -> Result<String, String> {
         return Err("没有采集到音频（录音太短或麦克风无输入）".to_string());
     }
 
-    eprintln!("[voice] === 阶段2/4 写 WAV ===");
-    let wav = write_temp_wav(&samples)?;
+    let engine = voice_engine();
+    let text = if engine == "cloud" {
+        // 云端：直接发裸 PCM，不落 WAV。async 流程在当前线程的临时 tokio 运行时里跑完
+        //（本函数是同步上下文，由热键后台线程 / 同步命令调用，无保证的环境运行时）。
+        eprintln!("[voice] === 阶段2-3/4 云端转写（火山引擎）===");
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| format!("创建云端转写运行时失败: {}", e))?;
+        rt.block_on(transcribe_volcengine(&samples))?
+    } else {
+        eprintln!("[voice] === 阶段2/4 写 WAV ===");
+        let wav = write_temp_wav(&samples)?;
 
-    eprintln!("[voice] === 阶段3/4 sherpa-onnx-offline 转写 ===");
-    let text_result = transcribe_wav(&wav);
-    // 转写产物 WAV 用完即删（best-effort）。
-    let _ = std::fs::remove_file(&wav);
-    let text = text_result?;
+        eprintln!("[voice] === 阶段3/4 sherpa-onnx-offline 转写 ===");
+        let text_result = transcribe_wav(&wav);
+        // 转写产物 WAV 用完即删（best-effort）。
+        let _ = std::fs::remove_file(&wav);
+        text_result?
+    };
 
     if text.is_empty() {
         return Err("转写结果为空（未识别到语音内容）".to_string());
@@ -1358,9 +1804,20 @@ pub fn voice_hotkey_sync(app: tauri::AppHandle) -> Result<Value, String> {
         .map(|(accel, _)| accel)
         .unwrap_or_else(|_| DEFAULT_HOTKEY.to_string());
     Ok(json!({
-        "registered": voice_input_enabled() && voice_assets_ready(),
+        "registered": voice_input_enabled() && voice_engine_ready(),
         "hotkey": hotkey,
     }))
+}
+
+/// 查云端（火山）语音是否就绪：App ID + Access Token 都配齐即 ready。
+/// 前端选「云端」并启用时调它做凭证校验——云端不需要下载模型，不走本地那套下载确认框。
+/// 缺凭证时回 `{ ready:false, message }`，前端据此提示去控制台开通；不抛错（避免吓人）。
+#[tauri::command]
+pub fn voice_cloud_status() -> Result<Value, String> {
+    match volc_credentials() {
+        Ok(_) => Ok(json!({ "ready": true })),
+        Err(e) => Ok(json!({ "ready": false, "message": e })),
+    }
 }
 
 #[cfg(test)]
@@ -1474,5 +1931,89 @@ mod tests {
         // 线程数恒在 [1, 8]，不依赖具体机器核数。
         let t = sherpa_threads();
         assert!((1..=8).contains(&t), "线程数 {} 不在 [1,8]", t);
+    }
+
+    // ===== 云端（火山）协议相关 =====
+
+    #[test]
+    fn gzip_roundtrip() {
+        // gzip 压缩→解压还原（init JSON / 音频块发送前都靠这压；响应靠这解）。
+        let data = b"the quick brown fox \xe4\xbd\xa0\xe5\xa5\xbd"; // 含 UTF-8 中文字节
+        let gz = gzip_compress(data).unwrap();
+        assert_eq!(gzip_decompress(&gz).unwrap(), data);
+    }
+
+    #[test]
+    fn volc_marshal_header_layout() {
+        // 头四字节布局：[(ver<<4)|hsize, (type<<4)|flag, (ser<<4)|comp, 0x00]。
+        let payload = b"abc";
+        let frame = volc_marshal(VOLC_MSG_FULL_CLIENT, VOLC_FLAG_POS_SEQ, VOLC_SER_JSON, 1, payload);
+        assert_eq!(frame[0], (VOLC_PROTOCOL_VERSION << 4) | VOLC_HEADER_SIZE); // 0x11
+        assert_eq!(frame[1], (VOLC_MSG_FULL_CLIENT << 4) | VOLC_FLAG_POS_SEQ);
+        assert_eq!(frame[2], (VOLC_SER_JSON << 4) | VOLC_COMP_GZIP);
+        assert_eq!(frame[3], 0x00);
+        // 序号(i32 大端)=1，紧跟 payload 长度(u32 大端)=3。
+        assert_eq!(&frame[4..8], &1i32.to_be_bytes());
+        assert_eq!(&frame[8..12], &3u32.to_be_bytes());
+        assert_eq!(&frame[12..], payload);
+    }
+
+    #[test]
+    fn volc_parse_roundtrips_server_frame() {
+        // 用 marshal 造一个「服务端」帧（payload gzip 后），parse 应还原类型/标志/解压后的 payload。
+        let body = r#"{"result":{"text":"你好世界","is_final":true}}"#.as_bytes();
+        let gz = gzip_compress(body).unwrap();
+        // 服务端帧带 LastNoSeq 标志（无序号字段），serialization=JSON, compression=Gzip。
+        let mut frame = Vec::new();
+        frame.push((VOLC_PROTOCOL_VERSION << 4) | VOLC_HEADER_SIZE);
+        frame.push((VOLC_MSG_FULL_SERVER << 4) | VOLC_FLAG_LAST_NO_SEQ);
+        frame.push((VOLC_SER_JSON << 4) | VOLC_COMP_GZIP);
+        frame.push(0x00);
+        frame.extend_from_slice(&(gz.len() as u32).to_be_bytes());
+        frame.extend_from_slice(&gz);
+
+        let parsed = volc_parse(&frame).unwrap();
+        assert_eq!(parsed.msg_type, VOLC_MSG_FULL_SERVER);
+        assert!(parsed.flags & VOLC_FLAG_LAST_NO_SEQ != 0);
+        let (text, is_final) = volc_extract_text(&parsed.payload).unwrap();
+        assert_eq!(text, "你好世界");
+        assert!(is_final);
+    }
+
+    #[test]
+    fn volc_parse_rejects_truncated_frame() {
+        // 越界保护：声明 payload 100 字节但实际没有 → Err 而非 panic（按字符/字节切片越界铁律）。
+        let mut frame = Vec::new();
+        frame.push((VOLC_PROTOCOL_VERSION << 4) | VOLC_HEADER_SIZE);
+        frame.push((VOLC_MSG_FULL_SERVER << 4) | 0); // NoSeq：无序号字段
+        frame.push((VOLC_SER_JSON << 4) | 0); // 不压缩
+        frame.push(0x00);
+        frame.extend_from_slice(&100u32.to_be_bytes()); // 声明 100 字节但后面啥都没有
+        assert!(volc_parse(&frame).is_err());
+        // 比 4 字节头还短：也应 Err。
+        assert!(volc_parse(&[0x11, 0x90]).is_err());
+    }
+
+    #[test]
+    fn samples_to_pcm_le_clamps_and_packs() {
+        // f32[-1,1] → i16 小端：+1.0→32767, 0→0, 超界 clamp。每样本 2 字节。
+        let pcm = samples_to_pcm_le(&[0.0, 1.0, -1.0, 2.0]);
+        assert_eq!(pcm.len(), 8);
+        assert_eq!(&pcm[0..2], &0i16.to_le_bytes());
+        assert_eq!(&pcm[2..4], &i16::MAX.to_le_bytes());
+        assert_eq!(&pcm[4..6], &(-i16::MAX).to_le_bytes()); // -1.0*MAX
+        assert_eq!(&pcm[6..8], &i16::MAX.to_le_bytes()); // 2.0 clamp 到 1.0
+    }
+
+    #[test]
+    fn volc_uuid_shape() {
+        // 形如 8-4-4-4-12，version 位为 4。
+        let u = volc_uuid();
+        let parts: Vec<&str> = u.split('-').collect();
+        assert_eq!(parts.len(), 5);
+        assert_eq!(parts.iter().map(|p| p.len()).collect::<Vec<_>>(), vec![8, 4, 4, 4, 12]);
+        assert!(parts[2].starts_with('4'));
+        // 两次生成不相等。
+        assert_ne!(volc_uuid(), volc_uuid());
     }
 }

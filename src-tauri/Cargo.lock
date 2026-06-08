@@ -2403,6 +2403,7 @@ dependencies = [
  "chrono",
  "cpal",
  "enigo",
+ "flate2",
  "futures-util",
  "hex",
  "hound",

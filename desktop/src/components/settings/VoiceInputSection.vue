@@ -33,6 +33,26 @@ import { useConfigStore } from '../../stores/config'
 
 const store = useConfigStore()
 
+const SECRET_PLACEHOLDER = '********'
+
+// 当前引擎：本地 SenseVoice / 云端火山。直接读写 store.config.voiceEngine。
+const engine = computed<'local' | 'cloud'>({
+  get: () => (store.config.voiceEngine === 'cloud' ? 'cloud' : 'local'),
+  set: (next) => { void switchEngine(next) },
+})
+
+// 切换引擎：先落 store（触发自动保存），关掉旧引擎残留态，再按当前开关重注册热键。
+// 不在这里强制校验就绪——校验发生在用户「启用」时（云端查凭证 / 本地查资产）。
+async function switchEngine(next: 'local' | 'cloud') {
+  if (store.config.voiceEngine === next) return
+  store.config.voiceEngine = next
+  resetTransient()
+  message.value = ''
+  cloudMsg.value = ''
+  // 已启用状态下换引擎：重注册热键（云端缺凭证 / 本地缺资产会自动注销，不报错打扰）。
+  if (store.config.voiceInputEnabled) await syncHotkey()
+}
+
 type Phase = 'binary' | 'model' | 'tokens'
 interface DownloadProgress {
   phase: Phase
@@ -76,6 +96,22 @@ const assets = ref<AssetsStatus | null>(null)
 const showManual = ref(false)
 // 「重新检测」按钮忙碌态。
 const rechecking = ref(false)
+
+// ====== 云端（火山引擎）凭证 ======
+// App ID 明文双向绑定 store；Access Token 走 keychain，后端保存后回填占位符 ********。
+const volcAppId = computed<string>({
+  get: () => store.config.voiceCloud.volcAppId,
+  set: (v) => { store.config.voiceCloud.volcAppId = v },
+})
+const volcAccessToken = computed<string>({
+  get: () => store.config.voiceCloud.volcAccessToken,
+  set: (v) => { store.config.voiceCloud.volcAccessToken = v },
+})
+// 云端启用/校验的结果消息（与本地下载消息分开，单独显示在云端区）。
+const cloudMsg = ref('')
+const cloudMsgKind = ref<'ok' | 'fail' | 'info'>('info')
+// 云端「启用/校验凭证」按钮忙碌态。
+const cloudChecking = ref(false)
 
 // ====== 自定义快捷键录制 ======
 // 是否处于录制态（点输入框进入，监听 keydown 捕获组合键）。
@@ -296,9 +332,16 @@ async function syncHotkey() {
   }
 }
 
-/** 用户想开启：查资产，决定「直接开」还是「弹确认下载」。 */
+/** 用户想开启：按引擎分流。
+ *  云端 → 校验火山凭证（voice_cloud_status），齐了直接开、缺了提示去填，不走下载。
+ *  本地 → 查 sherpa 资产，ready 直接开、否则弹「确认下载」模态。 */
 async function requestEnable() {
   message.value = ''
+  cloudMsg.value = ''
+  if (engine.value === 'cloud') {
+    await enableCloud()
+    return
+  }
   try {
     const status = await invoke<AssetsStatus>('voice_assets_status')
     assets.value = status
@@ -314,6 +357,34 @@ async function requestEnable() {
   } catch (e) {
     messageKind.value = 'fail'
     message.value = `检查语音资产失败：${errText(e)}`
+  }
+}
+
+/** 云端启用：先把当前 App ID / Token 落盘（token 进 keychain），再查 voice_cloud_status 校验。
+ *  齐了 → 开开关 + 同步热键；缺了 → 保持关闭并提示去控制台开通。云端不需要下载模型。 */
+async function enableCloud() {
+  cloudChecking.value = true
+  cloudMsg.value = ''
+  try {
+    // 先落盘：把刚填的 token 抽进 keychain（后端 strip_secrets_for_save），config 里留占位符。
+    await store.save()
+    const res = await invoke<{ ready: boolean; message?: string }>('voice_cloud_status')
+    if (res.ready) {
+      store.config.voiceInputEnabled = true
+      await syncHotkey()
+      cloudMsgKind.value = 'ok'
+      cloudMsg.value = `云端语音已启用，可按 ${currentHotkey.value} 说话。`
+    } else {
+      store.config.voiceInputEnabled = false
+      cloudMsgKind.value = 'fail'
+      cloudMsg.value = res.message || '请填入火山引擎 App ID 和 Access Token 后再启用。'
+    }
+  } catch (e) {
+    store.config.voiceInputEnabled = false
+    cloudMsgKind.value = 'fail'
+    cloudMsg.value = `启用云端语音失败：${errText(e)}`
+  } finally {
+    cloudChecking.value = false
   }
 }
 
@@ -470,13 +541,29 @@ function errText(e: unknown): string {
   <section class="settings-section">
     <h3 class="settings-section-title">语音输入</h3>
     <label class="settings-toggle">
-      <input type="checkbox" v-model="enabledModel" :disabled="downloading" />
+      <input type="checkbox" v-model="enabledModel" :disabled="downloading || cloudChecking" />
       <span>启用语音输入</span>
     </label>
     <p class="settings-section-hint">
-      本地语音转写，默认关闭。启用后可按热键 / 点小人说话，转写文字直接注入当前聚焦的输入框（本地处理，不上云）。
-      首次启用需下载语音引擎与模型（约 250MB）。支持中英混说，自动断句标点。
+      按热键 / 点小人说话，转写文字直接注入当前聚焦的输入框。默认关闭。支持中英混说，自动断句标点。
     </p>
+
+    <!-- 语音引擎选择：本地 SenseVoice（离线/隐私）/ 云端火山（快且准，需联网+凭证） -->
+    <div class="voice-engine">
+      <span class="voice-engine-label">语音引擎</span>
+      <div class="voice-engine-options">
+        <label class="voice-engine-opt" :class="{ 'voice-engine-opt-active': engine === 'local' }">
+          <input type="radio" value="local" v-model="engine" />
+          <span class="voice-engine-opt-title">本地（SenseVoice）</span>
+          <span class="voice-engine-opt-desc">离线、隐私，不上云；首次需下载模型（约 250MB）</span>
+        </label>
+        <label class="voice-engine-opt" :class="{ 'voice-engine-opt-active': engine === 'cloud' }">
+          <input type="radio" value="cloud" v-model="engine" />
+          <span class="voice-engine-opt-title">云端（豆包·火山）</span>
+          <span class="voice-engine-opt-desc">快且准，中文强；需联网 + 火山引擎凭证（有免费额度）</span>
+        </label>
+      </div>
+    </div>
 
     <!-- 自定义快捷键 -->
     <div class="voice-hotkey">
@@ -522,6 +609,59 @@ function errText(e: unknown): string {
       </p>
     </div>
 
+    <!-- ====== 云端（火山引擎）凭证区：仅选「云端」时显示 ====== -->
+    <div v-if="engine === 'cloud'" class="voice-cloud">
+      <div class="voice-cloud-field">
+        <label class="voice-cloud-label">App ID</label>
+        <input
+          v-model.trim="volcAppId"
+          class="settings-input"
+          type="text"
+          placeholder="火山语音控制台的 App ID（一串数字）"
+          autocomplete="off"
+        />
+      </div>
+      <div class="voice-cloud-field">
+        <label class="voice-cloud-label">Access Token</label>
+        <input
+          v-model.trim="volcAccessToken"
+          class="settings-input"
+          type="password"
+          placeholder="控制台的 Access Token（形如 volc_…）"
+          autocomplete="off"
+        />
+      </div>
+      <p class="voice-cloud-hint">
+        去
+        <a
+          class="voice-cloud-link"
+          href="https://console.volcengine.com/speech/service"
+          target="_blank"
+          rel="noreferrer"
+          >火山引擎新版语音控制台</a
+        >
+        开通「流式语音识别大模型」，拿到 App ID + Access Token 填这里（有免费额度）。务必用新版控制台，旧版鉴权方式不同。
+      </p>
+      <div class="voice-cloud-actions">
+        <button
+          class="settings-btn voice-cloud-primary"
+          :disabled="cloudChecking"
+          @click="enableCloud"
+        >
+          {{ cloudChecking ? '校验中…' : (store.config.voiceInputEnabled ? '重新校验凭证' : '校验并启用') }}
+        </button>
+      </div>
+      <p
+        v-if="cloudMsg"
+        class="settings-msg"
+        :class="`settings-msg-${cloudMsgKind === 'info' ? 'testing' : cloudMsgKind}`"
+      >
+        {{ cloudMsg }}
+      </p>
+    </div>
+
+    <!-- ====== 本地（SenseVoice）下载/状态/手动兜底区：仅选「本地」时显示 ====== -->
+    <template v-if="engine === 'local'">
     <!-- 下载进度 -->
     <div v-if="downloading && progress" class="voice-progress">
       <div class="voice-progress-head">
@@ -621,10 +761,100 @@ function errText(e: unknown): string {
         </div>
       </div>
     </div>
+    </template>
   </section>
 </template>
 
 <style scoped>
+/* 语音引擎选择 */
+.voice-engine {
+  margin-top: 12px;
+}
+.voice-engine-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.voice-engine-options {
+  display: flex;
+  gap: 8px;
+}
+.voice-engine-opt {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border: var(--divider);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.voice-engine-opt:hover {
+  border-color: var(--accent);
+}
+.voice-engine-opt-active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+.voice-engine-opt input {
+  margin-right: 4px;
+}
+.voice-engine-opt-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+.voice-engine-opt-desc {
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--text-faint);
+}
+
+/* 云端凭证区 */
+.voice-cloud {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 12px;
+  background: var(--surface-2);
+  border: var(--divider);
+  border-radius: 8px;
+}
+.voice-cloud-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.voice-cloud-label {
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+.voice-cloud-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-faint);
+}
+.voice-cloud-link {
+  color: var(--accent);
+}
+.voice-cloud-actions {
+  display: flex;
+  gap: 8px;
+}
+.voice-cloud-primary {
+  color: var(--on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.voice-cloud-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 88%, #000);
+  border-color: color-mix(in srgb, var(--accent) 88%, #000);
+}
+
 /* 自定义快捷键 */
 .voice-hotkey {
   margin-top: 10px;

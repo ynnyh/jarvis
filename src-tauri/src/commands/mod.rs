@@ -191,7 +191,12 @@ pub(crate) fn default_config() -> serde_json::Value {
         "leftClickAction": "tasks",
         "deployEnabled": false,
         "voiceInputEnabled": false,
-        "voiceHotkey": "CommandOrControl+Shift+Space"
+        "voiceHotkey": "CommandOrControl+Shift+Space",
+        "voiceEngine": "local",
+        "voiceCloud": {
+            "volcAppId": "",
+            "volcAccessToken": ""
+        }
     })
 }
 
@@ -266,6 +271,11 @@ pub(crate) fn hydrate_secret_placeholders(value: &mut serde_json::Value) {
         &["channels", "qqbot", "appSecret"],
         "channels.qqbot.appSecret",
     );
+    mark_secret_if_saved(
+        value,
+        &["voiceCloud", "volcAccessToken"],
+        "voice.cloud.volcAccessToken",
+    );
     if let Some(profiles) = value.get_mut("llmProfiles").and_then(|v| v.as_array_mut()) {
         for p in profiles.iter_mut() {
             if let Some(id) = p.get("id").and_then(|v| v.as_str()) {
@@ -288,6 +298,11 @@ pub(crate) fn strip_secrets_for_save(value: &mut serde_json::Value) -> Result<()
         value,
         &["channels", "qqbot", "appSecret"],
         "channels.qqbot.appSecret",
+    )?;
+    extract_secret_to_keychain(
+        value,
+        &["voiceCloud", "volcAccessToken"],
+        "voice.cloud.volcAccessToken",
     )?;
     if let Some(profiles) = value.get_mut("llmProfiles").and_then(|v| v.as_array_mut()) {
         for p in profiles.iter_mut() {

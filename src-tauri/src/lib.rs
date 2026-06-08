@@ -339,6 +339,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             voice::voice_start,
             voice::voice_stop_and_transcribe,
             voice::voice_hotkey_sync,
+            voice::voice_cloud_status,
         ])
         .build(tauri::generate_context!())?
         .run(|_app_handle, _event| {});

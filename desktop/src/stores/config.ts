@@ -127,6 +127,13 @@ export interface JarvisConfig {
   voiceInputEnabled: boolean
   /** 语音输入全局热键（Tauri accelerator，如 "CommandOrControl+Shift+Space"）。可在设置里录制自定义 */
   voiceHotkey: string
+  /** 语音转写引擎：'local'=本地 SenseVoice（离线/隐私，需下载模型）；'cloud'=火山引擎云端（快且准，需联网+凭证）。默认 'local' */
+  voiceEngine: 'local' | 'cloud'
+  /** 云端语音（火山引擎/豆包）凭证。AppId 明文存 config；AccessToken 由后端存 OS 密钥链，前端只留占位符 */
+  voiceCloud: {
+    volcAppId: string
+    volcAccessToken: string
+  }
 }
 
 export interface ScheduledReminder {
@@ -213,6 +220,8 @@ const defaultConfig = (): JarvisConfig => ({
   deployEnabled: false,
   voiceInputEnabled: false,
   voiceHotkey: 'CommandOrControl+Shift+Space',
+  voiceEngine: 'local',
+  voiceCloud: { volcAppId: '', volcAccessToken: '' },
 })
 
 function todayStr(): string {
@@ -301,6 +310,11 @@ export const useConfigStore = defineStore('config', () => {
         deployEnabled: remote.deployEnabled ?? defaults.deployEnabled,
         voiceInputEnabled: remote.voiceInputEnabled ?? defaults.voiceInputEnabled,
         voiceHotkey: (remote.voiceHotkey ?? '').trim() || defaults.voiceHotkey,
+        voiceEngine: remote.voiceEngine === 'cloud' ? 'cloud' : defaults.voiceEngine,
+        voiceCloud: {
+          volcAppId: remote.voiceCloud?.volcAppId ?? defaults.voiceCloud.volcAppId,
+          volcAccessToken: remote.voiceCloud?.volcAccessToken ?? defaults.voiceCloud.volcAccessToken,
+        },
         todayPlan: {
           date: remote.todayPlan?.date ?? defaults.todayPlan.date,
           taskIds: Array.isArray(remote.todayPlan?.taskIds)
@@ -336,6 +350,9 @@ export const useConfigStore = defineStore('config', () => {
       }
       if (config.value.channels.qqbot.appSecret && !isPlaceholder(config.value.channels.qqbot.appSecret)) {
         config.value.channels.qqbot.appSecret = SECRET_PLACEHOLDER
+      }
+      if (config.value.voiceCloud.volcAccessToken && !isPlaceholder(config.value.voiceCloud.volcAccessToken)) {
+        config.value.voiceCloud.volcAccessToken = SECRET_PLACEHOLDER
       }
     } catch (e) {
       console.error('保存配置失败:', e)
