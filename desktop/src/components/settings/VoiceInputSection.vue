@@ -814,6 +814,9 @@ function errText(e: unknown): string {
   color: var(--on-accent);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
 }
+.voice-engine-seg-active:hover .voice-engine-seg-text {
+  color: var(--on-accent);
+}
 .voice-engine-desc {
   margin: 6px 0 0;
   font-size: 10.5px;
