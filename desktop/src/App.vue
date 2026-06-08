@@ -568,36 +568,39 @@ onMounted(async () => {
   })
 
   // ===== 语音输入状态反馈（后端全局热键触发，emit 到 avatar 窗口）=====
-  // voice-state: 录音/转写期间切小人状态，让用户知道何时该说话、何时在转写。
+  // voice-state: 录音/转写期间切小人状态 + 气泡，让用户全程清楚 在录/在识别/成功/失败。
   unlistenVoiceState = await listen<{ state: 'listening' | 'transcribing' | 'idle' }>(
     'voice-state',
     (event) => {
       const s = event.payload?.state
       if (s === 'listening') {
-        // 进入录音：常驻状态（不自动消失），等再次按热键停录。
+        // 进入录音：常驻气泡 + 状态（duration=0 不自动消失），等再次按热键停录。
         closeAllPanels()
-        state.value = 'listening'
+        showAlert('正在听，说话吧…（再按一次热键结束）', '🎙️', 'listening', 0)
       } else if (s === 'transcribing') {
-        state.value = 'transcribing'
+        // 进入转写：常驻「识别中…」气泡（whisper 纯 CPU 要十几秒，全程挂着不消失），
+        // 直到 voice-transcribed / voice-error 用结果气泡替换它。
+        showAlert('识别中…（正在把语音转成文字）', '✍️', 'transcribing', 0)
       } else {
-        // idle：转写结束/出错时归位（成功/失败的气泡由下面两个事件单独给）。
+        // idle：转写结束/出错时归位小人状态（成功/失败的结果气泡由下面两个事件单独替换）。
+        // 不在这里清气泡——清了会让「识别中…」先消失再出结果，中间闪一下空白。
         if (state.value === 'listening' || state.value === 'transcribing') {
           state.value = 'idle'
         }
       }
     }
   )
-  // 转写成功：短暂提示注入的文字（截断防过长）。
+  // 转写成功：替换「识别中…」气泡，明确提示注入的文字（截断防过长）。4.5s 足够看清、不一闪而过。
   unlistenVoiceTranscribed = await listen<{ text: string }>('voice-transcribed', (event) => {
     const text = (event.payload?.text || '').trim()
     if (!text) return
     const preview = text.length > 24 ? text.slice(0, 24) + '…' : text
-    showAlert(`已输入：${preview}`, '✅', 'happy', 3000)
+    showAlert(`已输入：「${preview}」`, '✅', 'happy', 4500)
   })
-  // 出错：警告气泡。
+  // 出错：红色警告气泡 + 中文原因（替换「识别中…」气泡）。
   unlistenVoiceError = await listen<{ message: string }>('voice-error', (event) => {
     const msg = (event.payload?.message || '语音输入出错').trim()
-    showAlert(msg, '⚠️', 'warning', 5000)
+    showAlert(msg, '⚠️', 'warning', 6000)
   })
 })
 

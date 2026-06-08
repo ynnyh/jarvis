@@ -44,6 +44,24 @@ const DEFAULT_HOTKEY: &str = "CommandOrControl+Shift+Space";
 /// turbo 是 2024 下半年加的解码器，转写又快又准，中英混输够用；q5_0 量化压体积。
 const DEFAULT_MODEL_FILE: &str = "ggml-large-v3-turbo-q5_0.bin";
 
+/// 转写语言的**默认值**：锁定中文（`zh`）。用户群日常中文为主、夹杂英文术语，
+/// `-l auto` 在短句上会误判成日/韩等导致整段乱码，固定 zh 比 auto 稳得多
+/// （whisper 在 zh 模式下照样能识别夹在中文里的英文术语）。实际生效读 config 的 `voiceLanguage`。
+const DEFAULT_VOICE_LANGUAGE: &str = "zh";
+
+/// 术语提示词（initial prompt）的**固定前缀**：交代「中文夹英文术语」的语境，
+/// 让 whisper 偏向按这个语境解码。后面拼用户配的 `voiceTerms` 一起喂进去。
+const PROMPT_PREFIX: &str = "以下是中文语音，可能夹杂英文技术术语：";
+
+/// 术语提示词的**默认术语表**：用户没配 `voiceTerms` 时塞这一小撮常见开发术语，
+/// 偏置英文技术名词的转写正确率。用户可在设置里改成自己项目的技术栈/项目名。
+const DEFAULT_VOICE_TERMS: &str =
+    "API, bug, deploy, commit, merge, Docker, Kubernetes, Redis, PR, token";
+
+/// 初始提示词的字符上限。whisper 初始提示按 token 截断（约 224 token），
+/// 中文 1 字≈1~2 token，这里按字符保守截到 200，避免 prompt 过长挤占解码窗口或被硬截断。
+const MAX_PROMPT_CHARS: usize = 200;
+
 // ============================================================================
 // 资产下载源（已用 GitHub API + whisper.cpp 源码核实，见任务 research）
 // ============================================================================
@@ -413,10 +431,61 @@ fn write_temp_wav(samples: &[f32]) -> Result<PathBuf, String> {
 // 转写（whisper-cli 子进程）
 // ============================================================================
 
+/// 读 `~/.jarvis/config.json` 里的 `voiceLanguage`（trim 后非空才用）；缺/空回退默认 `zh`。
+/// 与 voiceHotkey 同范式：只读字符串，whisper 不认的语言码由它自己处理（极端兜底是 zh）。
+fn voice_language() -> String {
+    crate::settings::load_raw_config()
+        .and_then(|v| {
+            v.get("voiceLanguage")
+                .and_then(|s| s.as_str())
+                .map(|s| s.trim().to_string())
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| DEFAULT_VOICE_LANGUAGE.to_string())
+}
+
+/// 读 `~/.jarvis/config.json` 里的 `voiceTerms`（用户常用术语，逗号/换行分隔）。
+/// 字段缺失 → 用默认术语表；字段存在但 trim 后为空（用户特意清空）→ 返回空串（不加术语）。
+fn voice_terms() -> String {
+    match crate::settings::load_raw_config().and_then(|v| {
+        v.get("voiceTerms")
+            .and_then(|s| s.as_str())
+            .map(str::to_string)
+    }) {
+        Some(s) => s.trim().to_string(),
+        None => DEFAULT_VOICE_TERMS.to_string(),
+    }
+}
+
+/// 拼 whisper 初始提示词（initial prompt）：固定前缀 + 用户术语，按字符截断到 `MAX_PROMPT_CHARS`。
+/// 术语为空 → 只回前缀（仍交代「中文夹英文」语境）。截断按字符边界（避免 panic / 切坏多字节）。
+fn build_prompt(terms: &str) -> String {
+    let mut prompt = String::from(PROMPT_PREFIX);
+    if !terms.is_empty() {
+        prompt.push_str(terms);
+    }
+    if prompt.chars().count() > MAX_PROMPT_CHARS {
+        prompt = prompt.chars().take(MAX_PROMPT_CHARS).collect();
+    }
+    prompt
+}
+
+/// whisper-cli 的 `-t` 线程数：取 CPU 可用并行度，封顶 8。
+/// 纯 CPU 推理拉满线程是最直接的提速；封顶 8 是经验值——再多线程在 whisper 上收益递减、
+/// 且会和系统其它进程抢核。探测失败（拿不到 available_parallelism）回退到 4。
+fn whisper_threads() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .clamp(1, 8)
+}
+
 /// 跑 whisper-cli 把 WAV 转成文本。
 ///
-/// 命令：`whisper-cli -m <model> -f <wav> -l auto -otxt -nt`
-///   - `-l auto`：自动语言（中英混输）
+/// 命令：`whisper-cli -m <model> -f <wav> -t <N> -l <lang> --prompt <提示词> -otxt -nt`
+///   - `-t <N>`：CPU 线程数（拉满核心，见 whisper_threads，纯 CPU 下最明显的提速）
+///   - `-l <lang>`：转写语言，读 config 的 voiceLanguage（默认 zh，空回退 zh）
+///   - `--prompt`：初始提示词，交代「中文夹英文术语」语境 + 用户常用术语，提升英文术语转写正确率
 ///   - `-otxt`：输出纯文本到 `<wav>.txt`
 ///   - `-nt`：no timestamps，去时间戳
 /// whisper-cli 既会写 `<wav>.txt` 也会把转写打到 stdout。优先读 `.txt`（最稳），
@@ -431,19 +500,39 @@ fn transcribe_wav(wav_path: &PathBuf) -> Result<String, String> {
         PathBuf::from(p)
     };
 
+    // 语言：空回退 zh（whisper 的 zh 模式下照样能识别夹在中文里的英文术语，比 auto 短句误判稳）。
+    let lang = {
+        let l = voice_language();
+        if l.is_empty() {
+            DEFAULT_VOICE_LANGUAGE.to_string()
+        } else {
+            l
+        }
+    };
+    // 线程数 + 提示词（提示词 = 固定前缀 + 用户术语，按字符截断防超 token 上限）。
+    let threads = whisper_threads();
+    let threads_str = threads.to_string();
+    let prompt = build_prompt(&voice_terms());
+
     let mut cmd = silent_command(&cli);
     cmd.arg("-m")
         .arg(&model)
         .arg("-f")
         .arg(wav_path)
-        .args(["-l", "auto", "-otxt", "-nt"]);
+        .args(["-t", &threads_str])
+        .args(["-l", &lang])
+        .args(["--prompt", &prompt])
+        .args(["-otxt", "-nt"]);
 
     // 诊断：打完整命令行，便于复现/排查（模型缺失、参数错、二进制 DLL 缺失都从这看）。
     eprintln!(
-        "[voice] 运行 whisper-cli：{} -m {} -f {} -l auto -otxt -nt",
+        "[voice] 运行 whisper-cli：{} -m {} -f {} -t {} -l {} --prompt \"{}\" -otxt -nt",
         cli.display(),
         model.display(),
-        wav_path.display()
+        wav_path.display(),
+        threads,
+        lang,
+        prompt
     );
 
     let output = cmd
@@ -1343,5 +1432,34 @@ mod tests {
             resolve_redirect(base, "/p/q.bin").unwrap(),
             "https://hf-mirror.com/p/q.bin"
         );
+    }
+
+    #[test]
+    fn build_prompt_includes_prefix_and_terms() {
+        let p = build_prompt("API, Docker");
+        assert!(p.starts_with(PROMPT_PREFIX));
+        assert!(p.contains("API, Docker"));
+    }
+
+    #[test]
+    fn build_prompt_empty_terms_is_prefix_only() {
+        assert_eq!(build_prompt(""), PROMPT_PREFIX);
+    }
+
+    #[test]
+    fn build_prompt_truncates_by_chars_not_bytes() {
+        // 超长术语（全中文，多字节）应按字符截断到上限，且不 panic、不切坏多字节。
+        let long_terms = "术语".repeat(300);
+        let p = build_prompt(&long_terms);
+        assert_eq!(p.chars().count(), MAX_PROMPT_CHARS);
+        // 截断点落在字符边界：能无损还原成字符串即证明没切坏 UTF-8。
+        assert_eq!(p.chars().count(), p.chars().collect::<String>().chars().count());
+    }
+
+    #[test]
+    fn whisper_threads_within_bounds() {
+        // 线程数恒在 [1, 8]，不依赖具体机器核数。
+        let t = whisper_threads();
+        assert!((1..=8).contains(&t), "线程数 {} 不在 [1,8]", t);
     }
 }

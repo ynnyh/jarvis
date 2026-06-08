@@ -191,7 +191,9 @@ pub(crate) fn default_config() -> serde_json::Value {
         "leftClickAction": "tasks",
         "deployEnabled": false,
         "voiceInputEnabled": false,
-        "voiceHotkey": "CommandOrControl+Shift+Space"
+        "voiceHotkey": "CommandOrControl+Shift+Space",
+        "voiceLanguage": "zh",
+        "voiceTerms": "API, bug, deploy, commit, merge, Docker, Kubernetes, Redis, PR, token"
     })
 }
 

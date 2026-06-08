@@ -127,6 +127,10 @@ export interface JarvisConfig {
   voiceInputEnabled: boolean
   /** 语音输入全局热键（Tauri accelerator，如 "CommandOrControl+Shift+Space"）。可在设置里录制自定义 */
   voiceHotkey: string
+  /** 语音转写语言（whisper -l 的值）。默认 "zh"（锁定中文，比 auto 短句误判稳）；"en"=英文，"auto"=自动 */
+  voiceLanguage: string
+  /** 语音转写常用术语（提升英文术语识别）。逗号/换行分隔；拼进 whisper 初始提示词偏置解码 */
+  voiceTerms: string
 }
 
 export interface ScheduledReminder {
@@ -213,6 +217,8 @@ const defaultConfig = (): JarvisConfig => ({
   deployEnabled: false,
   voiceInputEnabled: false,
   voiceHotkey: 'CommandOrControl+Shift+Space',
+  voiceLanguage: 'zh',
+  voiceTerms: 'API, bug, deploy, commit, merge, Docker, Kubernetes, Redis, PR, token',
 })
 
 function todayStr(): string {
@@ -301,6 +307,9 @@ export const useConfigStore = defineStore('config', () => {
         deployEnabled: remote.deployEnabled ?? defaults.deployEnabled,
         voiceInputEnabled: remote.voiceInputEnabled ?? defaults.voiceInputEnabled,
         voiceHotkey: (remote.voiceHotkey ?? '').trim() || defaults.voiceHotkey,
+        // 语言空回退默认 zh；术语用 ?? 保留用户特意清空的空串（清空=不加术语）
+        voiceLanguage: (remote.voiceLanguage ?? '').trim() || defaults.voiceLanguage,
+        voiceTerms: remote.voiceTerms ?? defaults.voiceTerms,
         todayPlan: {
           date: remote.todayPlan?.date ?? defaults.todayPlan.date,
           taskIds: Array.isArray(remote.todayPlan?.taskIds)

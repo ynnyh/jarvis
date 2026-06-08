@@ -515,6 +515,32 @@ function errText(e: unknown): string {
       </p>
     </div>
 
+    <!-- 转写语言 + 常用术语（提升英文术语识别） -->
+    <div class="voice-recog">
+      <div class="voice-recog-row">
+        <span class="voice-recog-label">识别语言</span>
+        <select v-model="store.config.voiceLanguage" class="voice-recog-select">
+          <option value="zh">中文（推荐）</option>
+          <option value="en">英文</option>
+          <option value="auto">自动检测</option>
+        </select>
+      </div>
+      <p class="voice-recog-tip">
+        默认锁定中文：日常中文夹英文术语时，固定中文比「自动检测」更稳（短句不易误判成其它语言）。
+      </p>
+
+      <label class="voice-recog-terms-label">常用术语（提升英文术语识别）</label>
+      <textarea
+        v-model="store.config.voiceTerms"
+        class="voice-recog-terms"
+        rows="3"
+        placeholder="API, bug, deploy, Kubernetes, Redis…"
+      ></textarea>
+      <p class="voice-recog-tip">
+        把你们的项目名 / 技术栈 / 常用英文词填进来（逗号或换行分隔），转写时会据此偏置，让英文术语更准。留空则不额外提示。
+      </p>
+    </div>
+
     <!-- 下载进度 -->
     <div v-if="downloading && progress" class="voice-progress">
       <div class="voice-progress-head">
@@ -671,6 +697,64 @@ function errText(e: unknown): string {
   flex: none;
 }
 .voice-hotkey-tip {
+  margin: 6px 0 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--text-faint);
+}
+
+/* 识别语言 + 常用术语 */
+.voice-recog {
+  margin-top: 12px;
+}
+.voice-recog-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.voice-recog-label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.voice-recog-select {
+  flex: 1;
+  min-height: 30px;
+  padding: 4px 8px;
+  font-size: 11.5px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: var(--divider);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.voice-recog-select:hover {
+  border-color: var(--accent);
+}
+.voice-recog-terms-label {
+  display: block;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.voice-recog-terms {
+  width: 100%;
+  margin-top: 5px;
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--surface-2);
+  border: var(--divider);
+  border-radius: 6px;
+  resize: vertical;
+  box-sizing: border-box;
+}
+.voice-recog-terms:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.voice-recog-tip {
   margin: 6px 0 0;
   font-size: 10.5px;
   line-height: 1.5;
