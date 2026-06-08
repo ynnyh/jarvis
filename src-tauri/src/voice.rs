@@ -1,14 +1,20 @@
-// 轻量语音输入（PR1：依赖 + 录音→转写→注入后端一条龙，不含下载 UI / 热键 / 设置 section）。
+// 轻量语音输入：录音→转写→注入聚焦输入框（本地、轻量、隐私）。
 //
 // 链路：start_recording（cpal 采音）→ stop_recording（停流、归一到 16kHz 单声道 f32）
-//   → 写临时 WAV（hound）→ whisper-cli 子进程转写 → arboard+enigo 注入聚焦输入框。
+//   → 写临时 WAV（hound）→ sherpa-onnx-offline 子进程转写（SenseVoice 模型）→ arboard+enigo 注入。
 //
 // ---- 关键约束（已实测决定）----
-// 本机 **没有 CMake / clang / libclang**，CI 也没有。所以 STT 不走 whisper-rs / 不现编
-// whisper.cpp（它们要 cmake+libclang，编不过）。改用 whisper.cpp 官方**预编译命令行二进制
-// （whisper-cli）当子进程调用** + ggml 模型。二进制和模型都假定资产已在约定路径下
-// （`~/.jarvis/voice/`），下载 UI 是 PR2，本模块只在缺资产时报「没就绪」。
-// 全链路只用纯 Rust 依赖（cpal / hound / enigo / arboard），无需编译工具。
+// 本机 **没有 CMake / clang / cc**，CI 也没有。所以 STT 走预编译命令行二进制当子进程调用，
+// 全程不现编任何 C/C++。引擎与模型都假定资产已在约定路径下（`~/.jarvis/voice/`），
+// 缺资产时报「没就绪」、由设置页引导下载。
+//
+// ---- 为什么从 whisper 换成 sherpa-onnx + SenseVoice ----
+// whisper large-v3-turbo 纯 CPU 实测一句话 ~18s（光 encode 就 ~17s）、中文还不够准。
+// SenseVoice/Paraformer 是**非自回归**模型，架构上没有 whisper 那个大编码器自回归解码的包袱，
+// 纯 CPU 上一句话亚秒～1~2s，中文 + 中英混说强、**自带标点**（ITN）。sherpa-onnx 提供官方
+// Windows x64 预编译二进制（`sherpa-onnx-offline.exe`）+ 预编译 ONNX 模型，sidecar 调用即可，
+// 无需 cmake/Python；模型走 hf-mirror（国内可达）。SenseVoice 多语自动判 + 自带标点，
+// 不再需要 whisper 那套「锁语言 + initial prompt 偏置术语」的 hack，故一并删除。
 //
 // ---- 全局录音状态 ----
 // 参考 mcp_client.rs 的 `once_cell::Lazy` + `Arc<Mutex<..>>` 全局单例范式：维护一个全局
@@ -16,7 +22,7 @@
 // cpal `Stream` 在 WASAPI/CoreAudio 上是 Send（自带音频线程持有 COM 对象），故可存进全局
 // Mutex，录音期间靠 buffer 累积、stop 时 drop 掉 Stream 收尾。
 
-#![allow(dead_code)] // PR1 部分函数（voice_dir / model_path 等）供 PR2 下载/设置接入时才被调用
+#![allow(dead_code)] // 部分路径/工具函数供下载/设置接入时才被调用
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -32,7 +38,8 @@ use serde_json::{json, Value};
 
 use crate::settings::jarvis_dir;
 
-/// whisper 要求的目标采样率：16 kHz 单声道 f32。
+/// 写 WAV 的目标采样率：16 kHz 单声道。
+/// sherpa-onnx 其实能吃任意采样率（内部自己重采样），这里仍归一到 16k 既兼容又省体积。
 const TARGET_SAMPLE_RATE: u32 = 16_000;
 
 /// 全局触发热键（toggle）的**默认值**。用户没配 / 配的无效时回退到它。
@@ -40,66 +47,54 @@ const TARGET_SAMPLE_RATE: u32 = 16_000;
 /// 加 Shift+Space 这组不易和常见软件冲突。实际生效键位读 config 的 `voiceHotkey`。
 const DEFAULT_HOTKEY: &str = "CommandOrControl+Shift+Space";
 
-/// 默认模型文件名：large-v3-turbo 量化版（q5_0，约 574MB）。
-/// turbo 是 2024 下半年加的解码器，转写又快又准，中英混输够用；q5_0 量化压体积。
-const DEFAULT_MODEL_FILE: &str = "ggml-large-v3-turbo-q5_0.bin";
+/// SenseVoice 量化模型文件名（sherpa-onnx 官方预编译的 int8 ONNX，约 228MB）。
+/// 中英日韩粤多语、非自回归、自带标点（配合 --sense-voice-use-itn=1）。
+const MODEL_FILE: &str = "model.int8.onnx";
 
-/// 转写语言的**默认值**：锁定中文（`zh`）。用户群日常中文为主、夹杂英文术语，
-/// `-l auto` 在短句上会误判成日/韩等导致整段乱码，固定 zh 比 auto 稳得多
-/// （whisper 在 zh 模式下照样能识别夹在中文里的英文术语）。实际生效读 config 的 `voiceLanguage`。
-const DEFAULT_VOICE_LANGUAGE: &str = "zh";
-
-/// 术语提示词（initial prompt）的**固定前缀**：交代「中文夹英文术语」的语境，
-/// 让 whisper 偏向按这个语境解码。后面拼用户配的 `voiceTerms` 一起喂进去。
-const PROMPT_PREFIX: &str = "以下是中文语音，可能夹杂英文技术术语：";
-
-/// 术语提示词的**默认术语表**：用户没配 `voiceTerms` 时塞这一小撮常见开发术语，
-/// 偏置英文技术名词的转写正确率。用户可在设置里改成自己项目的技术栈/项目名。
-const DEFAULT_VOICE_TERMS: &str =
-    "API, bug, deploy, commit, merge, Docker, Kubernetes, Redis, PR, token";
-
-/// 初始提示词的字符上限。whisper 初始提示按 token 截断（约 224 token），
-/// 中文 1 字≈1~2 token，这里按字符保守截到 200，避免 prompt 过长挤占解码窗口或被硬截断。
-const MAX_PROMPT_CHARS: usize = 200;
+/// SenseVoice 词表文件名（与模型配套，约 308KB）。sherpa 转写必需。
+const TOKENS_FILE: &str = "tokens.txt";
 
 // ============================================================================
-// 资产下载源（已用 GitHub API + whisper.cpp 源码核实，见任务 research）
+// 资产下载源（已用 curl 实测核实 URL 可达 + 解包核对内部文件名，见任务 research 09/10）
 // ============================================================================
 //
-// whisper-cli 预编译二进制：whisper.cpp 官方 release 的 CPU 版 zip。
-//   - 仓库已从 ggerganov 迁到 ggml-org（旧名仍 302 重定向，但用新名最稳）。
-//   - 选 v1.8.6（2026-06-02 发布，远晚于 turbo 加入时间 → 支持 large-v3-turbo）。
-//   - whisper-bin-x64.zip 是纯 CPU 构建（4.1MB，不带 CUDA/BLAS），最轻、无显卡依赖。
-//   - zip 内是 Compress-Archive 打的 build/bin 全量（已核实 examples/cli/CMakeLists.txt
-//     里 `set(TARGET whisper-cli)`）：whisper-cli.exe + whisper.dll / ggml.dll /
-//     ggml-base.dll / ggml-cpu.dll / SDL2.dll，全平铺在 zip 根，解压到 voice_dir 即可用。
+// sherpa-onnx-offline 预编译二进制：官方 release 的 win-x64-shared-MT-Release 包（.tar.bz2，22MB）。
+//   - 选 `-MT-`（静态 CRT）版：不依赖目标机的 VC++ 运行库，分发最省心。
+//   - 实测解包：根目录 `sherpa-onnx-v1.13.2-win-x64-shared-MT-Release/`，其下 `bin/` 含
+//     sherpa-onnx-offline.exe + onnxruntime.dll + onnxruntime_providers_shared.dll
+//     （MT 版把 sherpa 代码静态链进各 exe，故 bin/ 里没有 sherpa-onnx-core 之类的 DLL，
+//      离线 CLI 只需这两个 onnxruntime DLL 作同目录依赖）。解包时只取 bin/ 下的 exe + dll，
+//      平铺进 voice_dir，和原 whisper-cli 平铺形态一致。
 //
-// 二进制走 GitHub，国内直连常超时/被墙（实测报 `error sending request for url`，且 app 的
-// reqwest 不走系统代理）。故按顺序尝试一组镜像，谁先连上并下完就用谁：
-//   1. ghfast.top 国内加速镜像（已实测 HTTP 206 可拉，国内优先）；
+// 二进制走 GitHub，国内直连常超时/被墙。故按顺序尝试一组镜像，谁先连上并下完就用谁：
+//   1. ghfast.top 国内加速镜像（实测 HTTP 200 可拉，国内优先）；
 //   2. GitHub 直连（海外 / 有代理时兜底）。
-// ghfast.top 会回 302/206，reqwest 默认跟随重定向，无需额外处理。
-const WHISPER_BIN_URLS: &[&str] = &[
-    "https://ghfast.top/https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.6/whisper-bin-x64.zip",
-    "https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.6/whisper-bin-x64.zip",
+const SHERPA_BIN_URLS: &[&str] = &[
+    "https://ghfast.top/https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.2/sherpa-onnx-v1.13.2-win-x64-shared-MT-Release.tar.bz2",
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.2/sherpa-onnx-v1.13.2-win-x64-shared-MT-Release.tar.bz2",
 ];
 
-/// 模型直链：走国内可达的 hf-mirror.com 镜像。
-/// 实测：huggingface.co 在国内被墙不通；whisper.cpp 的 HF 仓库虽已从 ggerganov 改名 ggml-org，
-/// 但 hf-mirror.com 镜像仍只认旧名 ggerganov（HEAD 返回 200，新名在镜像上不通）。
-/// 注意：hf-mirror 对大文件只回 302 跳到 HF 美国 Xet 存储（cas-bridge.xethub.hf.co），
-/// 574MB 从美国直传国内必断流。故配合「走用户代理 + 断点续传」两道保险才稳（见下方下载逻辑）。
+/// 模型直链：走国内可达的 hf-mirror.com 镜像（csukuangfj 的 SenseVoice sherpa-ready 包）。
+/// 实测：HEAD 经 302 跳到 HF 美国 Xet 存储（cas-bridge.xethub.hf.co），认 Range（回 206）。
+/// 228MB 从美国直传国内可能断流，故配合「走用户代理 + 断点续传」两道保险才稳（见下方下载逻辑）。
 const MODEL_URL: &str =
-    "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin";
+    "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.int8.onnx";
+
+/// 词表直链：同仓库的 tokens.txt（实测 200、315894 字节）。
+const TOKENS_URL: &str =
+    "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/tokens.txt";
 
 /// 模型 HF 原始直链（手动兜底用：给用户在浏览器/下载工具里手动下）。
-/// 自动下载默认走 hf-mirror（配代理时直连 HF 也行），但手动场景把原始链一并列出。
 const MODEL_URL_RAW: &str =
-    "https://huggingface.co/ggml-org/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin";
+    "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.int8.onnx";
 
-/// whisper-cli 二进制 zip 的 GitHub 原始直链（手动兜底用，列给用户看）。
-const WHISPER_BIN_URL_RAW: &str =
-    "https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.6/whisper-bin-x64.zip";
+/// 词表 HF 原始直链（手动兜底用）。
+const TOKENS_URL_RAW: &str =
+    "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/tokens.txt";
+
+/// sherpa-onnx 二进制 .tar.bz2 的 GitHub 原始直链（手动兜底用，列给用户看）。
+const SHERPA_BIN_URL_RAW: &str =
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.2/sherpa-onnx-v1.13.2-win-x64-shared-MT-Release.tar.bz2";
 
 /// 单次下载流的 HTTP 超时（连接+读取）。大文件靠断点续传扛断流，单流别设太长，
 /// 让卡死的流尽早超时进入续传重试，比死等强。
@@ -156,28 +151,33 @@ fn build_download_client(proxy: Option<&str>) -> Result<reqwest::Client, String>
 // 资产路径
 // ============================================================================
 
-/// 语音资产目录 `~/.jarvis/voice/`（whisper-cli 可执行 + ggml 模型都放这）。
+/// 语音资产目录 `~/.jarvis/voice/`（sherpa-onnx-offline 可执行 + onnxruntime DLL + 模型 + 词表都放这）。
 pub fn voice_dir() -> PathBuf {
     jarvis_dir().join("voice")
 }
 
-/// whisper-cli 可执行路径。Windows 用 `whisper-cli.exe`，其它平台 `whisper-cli`。
-pub fn whisper_cli_path() -> PathBuf {
+/// sherpa-onnx-offline 可执行路径。Windows 用 `sherpa-onnx-offline.exe`，其它平台 `sherpa-onnx-offline`。
+pub fn sherpa_offline_path() -> PathBuf {
     #[cfg(windows)]
-    let name = "whisper-cli.exe";
+    let name = "sherpa-onnx-offline.exe";
     #[cfg(not(windows))]
-    let name = "whisper-cli";
+    let name = "sherpa-onnx-offline";
     voice_dir().join(name)
 }
 
-/// 默认模型路径 `~/.jarvis/voice/ggml-large-v3-turbo-q5_0.bin`。
+/// SenseVoice 模型路径 `~/.jarvis/voice/model.int8.onnx`。
 pub fn model_path() -> PathBuf {
-    voice_dir().join(DEFAULT_MODEL_FILE)
+    voice_dir().join(MODEL_FILE)
 }
 
-/// 语音资产是否就绪：whisper-cli 二进制 + 模型都存在。
+/// SenseVoice 词表路径 `~/.jarvis/voice/tokens.txt`。
+pub fn tokens_path() -> PathBuf {
+    voice_dir().join(TOKENS_FILE)
+}
+
+/// 语音资产是否就绪：sherpa-onnx-offline 二进制 + 模型 + 词表三者都在。
 pub fn voice_assets_ready() -> bool {
-    whisper_cli_path().is_file() && model_path().is_file()
+    sherpa_offline_path().is_file() && model_path().is_file() && tokens_path().is_file()
 }
 
 // ============================================================================
@@ -396,7 +396,7 @@ fn resample_to_16k(mono: &[f32], src_rate: u32) -> Vec<f32> {
 // ============================================================================
 
 /// 把 16kHz 单声道 f32 样本写成临时 WAV，返回文件路径。
-/// 用 16-bit PCM（whisper-cli 通吃；体积也比 f32 小一半）。落 `std::env::temp_dir()`。
+/// 用 16-bit PCM（sherpa-onnx 要求单声道 16-bit PCM、采样率任意；体积也比 f32 小一半）。落 `std::env::temp_dir()`。
 fn write_temp_wav(samples: &[f32]) -> Result<PathBuf, String> {
     let spec = hound::WavSpec {
         channels: 1,
@@ -428,156 +428,127 @@ fn write_temp_wav(samples: &[f32]) -> Result<PathBuf, String> {
 }
 
 // ============================================================================
-// 转写（whisper-cli 子进程）
+// 转写（sherpa-onnx-offline 子进程，SenseVoice 模型）
 // ============================================================================
 
-/// 读 `~/.jarvis/config.json` 里的 `voiceLanguage`（trim 后非空才用）；缺/空回退默认 `zh`。
-/// 与 voiceHotkey 同范式：只读字符串，whisper 不认的语言码由它自己处理（极端兜底是 zh）。
-fn voice_language() -> String {
-    crate::settings::load_raw_config()
-        .and_then(|v| {
-            v.get("voiceLanguage")
-                .and_then(|s| s.as_str())
-                .map(|s| s.trim().to_string())
-        })
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| DEFAULT_VOICE_LANGUAGE.to_string())
-}
-
-/// 读 `~/.jarvis/config.json` 里的 `voiceTerms`（用户常用术语，逗号/换行分隔）。
-/// 字段缺失 → 用默认术语表；字段存在但 trim 后为空（用户特意清空）→ 返回空串（不加术语）。
-fn voice_terms() -> String {
-    match crate::settings::load_raw_config().and_then(|v| {
-        v.get("voiceTerms")
-            .and_then(|s| s.as_str())
-            .map(str::to_string)
-    }) {
-        Some(s) => s.trim().to_string(),
-        None => DEFAULT_VOICE_TERMS.to_string(),
-    }
-}
-
-/// 拼 whisper 初始提示词（initial prompt）：固定前缀 + 用户术语，按字符截断到 `MAX_PROMPT_CHARS`。
-/// 术语为空 → 只回前缀（仍交代「中文夹英文」语境）。截断按字符边界（避免 panic / 切坏多字节）。
-fn build_prompt(terms: &str) -> String {
-    let mut prompt = String::from(PROMPT_PREFIX);
-    if !terms.is_empty() {
-        prompt.push_str(terms);
-    }
-    if prompt.chars().count() > MAX_PROMPT_CHARS {
-        prompt = prompt.chars().take(MAX_PROMPT_CHARS).collect();
-    }
-    prompt
-}
-
-/// whisper-cli 的 `-t` 线程数：取 CPU 可用并行度，封顶 8。
-/// 纯 CPU 推理拉满线程是最直接的提速；封顶 8 是经验值——再多线程在 whisper 上收益递减、
-/// 且会和系统其它进程抢核。探测失败（拿不到 available_parallelism）回退到 4。
-fn whisper_threads() -> usize {
+/// sherpa-onnx-offline 的 `--num-threads` 线程数：取 CPU 可用并行度，封顶 8。
+/// 纯 CPU 推理拉满线程是最直接的提速；封顶 8 避免和系统其它进程抢核。
+/// 探测失败（拿不到 available_parallelism）回退到 4。
+fn sherpa_threads() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4)
         .clamp(1, 8)
 }
 
-/// 跑 whisper-cli 把 WAV 转成文本。
+/// 从 sherpa-onnx-offline 的 stdout 解析出转写纯文本。
 ///
-/// 命令：`whisper-cli -m <model> -f <wav> -t <N> -l <lang> --prompt <提示词> -otxt -nt`
-///   - `-t <N>`：CPU 线程数（拉满核心，见 whisper_threads，纯 CPU 下最明显的提速）
-///   - `-l <lang>`：转写语言，读 config 的 voiceLanguage（默认 zh，空回退 zh）
-///   - `--prompt`：初始提示词，交代「中文夹英文术语」语境 + 用户常用术语，提升英文术语转写正确率
-///   - `-otxt`：输出纯文本到 `<wav>.txt`
-///   - `-nt`：no timestamps，去时间戳
-/// whisper-cli 既会写 `<wav>.txt` 也会把转写打到 stdout。优先读 `.txt`（最稳），
-/// 读不到再退回 stdout。Windows 用 CREATE_NO_WINDOW 防黑窗。
-fn transcribe_wav(wav_path: &PathBuf) -> Result<String, String> {
-    let cli = whisper_cli_path();
-    let model = model_path();
-    let txt_path = {
-        // whisper-cli 的 -otxt 会在输入文件名后追加 .txt（如 a.wav → a.wav.txt）。
-        let mut p = wav_path.clone().into_os_string();
-        p.push(".txt");
-        PathBuf::from(p)
-    };
-
-    // 语言：空回退 zh（whisper 的 zh 模式下照样能识别夹在中文里的英文术语，比 auto 短句误判稳）。
-    let lang = {
-        let l = voice_language();
-        if l.is_empty() {
-            DEFAULT_VOICE_LANGUAGE.to_string()
-        } else {
-            l
+/// sherpa-onnx-offline 把每个 wav 的识别结果以 **JSON 一行**打到 stdout（源码
+/// `offline-stream.cc` 的 `GetResult().AsJsonString()`，形如
+/// `{"lang":"<|zh|>", "emotion":"...", "event":"...", "text":"识别文本", "timestamps":[...], "tokens":[...]}`，
+/// 字段用 std::quoted 转义）。文件名 / `----` 分隔 / RTF 等诊断信息走的是 stderr，不混进 stdout。
+///
+/// 解析策略：逐行找第一个能解析成 JSON 且带 `text` 字段的行，取 `text`；
+/// 万一格式变动 JSON 解析不出来，兜底把 stdout 整体 trim 当文本（best-effort，不让格式微调直接报错）。
+fn parse_sherpa_text(stdout: &str) -> String {
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() || !line.starts_with('{') {
+            continue;
         }
+        if let Ok(v) = serde_json::from_str::<Value>(line) {
+            if let Some(t) = v.get("text").and_then(|t| t.as_str()) {
+                return t.trim().to_string();
+            }
+        }
+    }
+    // 兜底：没解析出 JSON 的 text，退回整体 stdout（去掉空白）。
+    stdout.trim().to_string()
+}
+
+/// 跑 sherpa-onnx-offline 把 WAV 转成文本。
+///
+/// 命令：`sherpa-onnx-offline --tokens=<tokens.txt> --sense-voice-model=<model.int8.onnx>
+///        --num-threads=<N> --sense-voice-use-itn=1 --debug=0 <wav>`
+///   - `--tokens` / `--sense-voice-model`：词表 + SenseVoice int8 ONNX 模型。
+///   - `--num-threads=N`：CPU 线程数（拉满核心，见 sherpa_threads，纯 CPU 下最明显的提速）。
+///   - `--sense-voice-use-itn=1`：开 ITN（逆文本归一）→ 输出**带标点**、数字/日期规整。
+///   - `--debug=0`：少打调试日志。
+///   - 不传 `--sense-voice-language` → 默认 auto，自动处理中英混说（用户群中文夹英文术语场景最契合）。
+/// 结果 JSON 打到 stdout、诊断（含 RTF）走 stderr。Windows 用 CREATE_NO_WINDOW 防黑窗。
+fn transcribe_wav(wav_path: &PathBuf) -> Result<String, String> {
+    let cli = sherpa_offline_path();
+    let model = model_path();
+    let tokens = tokens_path();
+
+    let threads = sherpa_threads();
+    // sherpa 用 `--flag=value` 形式，整体作为单个 arg 传（路径含空格也安全：作为一个 OsString）。
+    let tokens_arg = {
+        let mut s = std::ffi::OsString::from("--tokens=");
+        s.push(tokens.as_os_str());
+        s
     };
-    // 线程数 + 提示词（提示词 = 固定前缀 + 用户术语，按字符截断防超 token 上限）。
-    let threads = whisper_threads();
-    let threads_str = threads.to_string();
-    let prompt = build_prompt(&voice_terms());
+    let model_arg = {
+        let mut s = std::ffi::OsString::from("--sense-voice-model=");
+        s.push(model.as_os_str());
+        s
+    };
+    let threads_arg = format!("--num-threads={}", threads);
 
     let mut cmd = silent_command(&cli);
-    cmd.arg("-m")
-        .arg(&model)
-        .arg("-f")
-        .arg(wav_path)
-        .args(["-t", &threads_str])
-        .args(["-l", &lang])
-        .args(["--prompt", &prompt])
-        .args(["-otxt", "-nt"]);
+    cmd.arg(&tokens_arg)
+        .arg(&model_arg)
+        .arg(&threads_arg)
+        .arg("--sense-voice-use-itn=1")
+        .arg("--debug=0")
+        .arg(wav_path);
 
-    // 诊断：打完整命令行，便于复现/排查（模型缺失、参数错、二进制 DLL 缺失都从这看）。
+    // 诊断：打完整命令行，便于复现/排查（模型/词表缺失、参数错、二进制 DLL 缺失都从这看）。
     eprintln!(
-        "[voice] 运行 whisper-cli：{} -m {} -f {} -t {} -l {} --prompt \"{}\" -otxt -nt",
+        "[voice] 运行 sherpa-onnx-offline：{} --tokens={} --sense-voice-model={} --num-threads={} --sense-voice-use-itn=1 --debug=0 {}",
         cli.display(),
+        tokens.display(),
         model.display(),
-        wav_path.display(),
         threads,
-        lang,
-        prompt
+        wav_path.display()
     );
 
-    let output = cmd
-        .output()
-        .map_err(|e| format!("启动 whisper-cli 失败: {}（路径 {}，缺 .exe 或同目录 DLL？）", e, cli.display()))?;
+    let output = cmd.output().map_err(|e| {
+        format!(
+            "启动 sherpa-onnx-offline 失败: {}（路径 {}，缺 .exe 或同目录 onnxruntime DLL？）",
+            e,
+            cli.display()
+        )
+    })?;
 
-    // 始终打印 exit code + stderr 摘要（whisper 的进度/模型加载日志都走 stderr）。
+    // 始终打印 exit code + stderr 摘要（sherpa 的模型加载日志、RTF 都走 stderr）+ stdout（结果 JSON）。
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout_raw = String::from_utf8_lossy(&output.stdout);
     eprintln!(
-        "[voice] whisper-cli 退出码={:?}\n[voice] --- whisper stderr ---\n{}\n[voice] --- whisper stdout ---\n{}\n[voice] --- end ---",
+        "[voice] sherpa-onnx-offline 退出码={:?}\n[voice] --- sherpa stderr ---\n{}\n[voice] --- sherpa stdout ---\n{}\n[voice] --- end ---",
         output.status.code(),
         stderr.trim(),
         stdout_raw.trim()
     );
 
     if !output.status.success() {
-        // 取 stderr 末尾若干行作摘要带回前端（whisper 报错通常在最后几行）。
+        // 取 stderr 末尾若干行作摘要带回前端（sherpa 报错通常在最后几行）。
         let summary = stderr_tail(&stderr, 5);
         return Err(format!(
-            "whisper-cli 转写失败（退出码 {:?}）：{}",
+            "sherpa-onnx-offline 转写失败（退出码 {:?}）：{}",
             output.status.code(),
             summary
         ));
     }
 
-    // 优先读 .txt 输出文件，失败再退回 stdout。
-    let from_txt = std::fs::read_to_string(&txt_path)
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    let text = from_txt.unwrap_or_else(|| stdout_raw.trim().to_string());
-    eprintln!(
-        "[voice] 转写文本（{} 字）：{}",
-        text.chars().count(),
-        text
-    );
+    // 从 stdout 的结果 JSON 取 text 字段。
+    let text = parse_sherpa_text(&stdout_raw);
+    eprintln!("[voice] 转写文本（{} 字）：{}", text.chars().count(), text);
 
-    // 清理临时产物（best-effort，失败不影响结果）。
-    let _ = std::fs::remove_file(&txt_path);
-
-    // 转写为空：带上 whisper stderr 摘要，便于判断是音频空 / 模型加载失败 / 参数问题。
+    // 转写为空：带上 sherpa stderr 摘要，便于判断是音频空 / 模型加载失败 / 参数问题。
     if text.is_empty() {
         return Err(format!(
-            "转写结果为空（未识别到语音内容）。whisper 日志：{}",
+            "转写结果为空（未识别到语音内容）。sherpa 日志：{}",
             stderr_tail(&stderr, 4)
         ));
     }
@@ -585,7 +556,7 @@ fn transcribe_wav(wav_path: &PathBuf) -> Result<String, String> {
     Ok(text)
 }
 
-/// 取 stderr 末尾 n 行作错误摘要（whisper 报错/关键信息一般在最后几行）。
+/// 取 stderr 末尾 n 行作错误摘要（sherpa 报错/关键信息一般在最后几行）。
 /// 全空则给个占位，避免把空串塞进错误消息让用户一头雾水。
 fn stderr_tail(stderr: &str, n: usize) -> String {
     let lines: Vec<&str> = stderr
@@ -594,7 +565,7 @@ fn stderr_tail(stderr: &str, n: usize) -> String {
         .filter(|l| !l.is_empty())
         .collect();
     if lines.is_empty() {
-        return "（whisper 无错误输出，疑似音频为空或模型未正确加载）".to_string();
+        return "（sherpa 无错误输出，疑似音频为空或模型未正确加载）".to_string();
     }
     let start = lines.len().saturating_sub(n);
     lines[start..].join(" | ")
@@ -949,49 +920,77 @@ async fn download_to_file_multi(
     ))
 }
 
-/// 解压 whisper-cli zip 到 `voice_dir()`。
+/// 解压 sherpa-onnx 预编译 `.tar.bz2` 到 `voice_dir()`。
 ///
-/// 官方 zip 是 Compress-Archive 打的 `build/bin` 全量（whisper-cli.exe + 一堆 DLL，平铺在根）。
-/// 用纯 Rust `zip` crate（deflate-flate2 后端，无需 cmake）逐条解出，**只取文件名**（防 zip-slip：
-/// 丢弃任何带路径分隔/`..` 的条目），平铺写进 voice_dir。
-fn extract_whisper_zip(zip_path: &PathBuf) -> Result<(), String> {
+/// 官方包内是 `sherpa-onnx-v1.13.2-win-x64-shared-MT-Release/{bin,lib,include}/...`（已解包核对）。
+/// 离线 CLI 跑起来只需 `bin/` 下的 `sherpa-onnx-offline.exe` + 同目录的 `onnxruntime.dll` /
+/// `onnxruntime_providers_shared.dll`（MT 版把 sherpa 代码静态链进 exe，没有额外 sherpa DLL）。
+/// 故只取**父目录名为 `bin` 的 `.exe` / `.dll`**，平铺写进 voice_dir（与原 whisper 平铺形态一致）；
+/// `lib/`（c-api 链接库，含重复的 onnxruntime.dll）和 `include/` 头文件一概跳过，省体积、避免重名覆盖。
+/// 防路径穿越：只用条目的最末文件名拼到 voice_dir，丢弃任何 `..` / 绝对路径。
+///
+/// 解压链：bzip2-rs（纯 Rust 解 bz2）→ tar crate（纯 Rust 解 tar）—— 全程不碰 C 编译器。
+fn extract_sherpa_tarball(tar_path: &PathBuf) -> Result<(), String> {
+    use std::ffi::OsStr;
+
     let dir = voice_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("创建语音目录失败: {}", e))?;
 
-    let file = std::fs::File::open(zip_path).map_err(|e| format!("打开下载的 zip 失败: {}", e))?;
-    let mut archive =
-        zip::ZipArchive::new(file).map_err(|e| format!("读取 zip 失败: {}", e))?;
+    let file =
+        std::fs::File::open(tar_path).map_err(|e| format!("打开下载的压缩包失败: {}", e))?;
+    // bzip2-rs 的 DecoderReader 边读边解 bz2，喂给 tar::Archive。用 BufReader 减少系统调用。
+    let bz = bzip2_rs::DecoderReader::new(std::io::BufReader::new(file));
+    let mut archive = tar::Archive::new(bz);
 
     let mut extracted = 0usize;
-    for i in 0..archive.len() {
-        let mut entry = archive
-            .by_index(i)
-            .map_err(|e| format!("读取 zip 条目失败: {}", e))?;
-        if entry.is_dir() {
+    let entries = archive
+        .entries()
+        .map_err(|e| format!("读取压缩包条目失败: {}", e))?;
+    for entry in entries {
+        let mut entry = entry.map_err(|e| format!("遍历压缩包条目失败: {}", e))?;
+        let path = entry
+            .path()
+            .map_err(|e| format!("解析压缩包内路径失败: {}", e))?
+            .into_owned();
+
+        // 只要 `.../bin/<file>`：父目录名必须是 bin（跳过 lib/include 及顶层目录条目）。
+        let in_bin = path
+            .parent()
+            .and_then(|p| p.file_name())
+            .map(|n| n == OsStr::new("bin"))
+            .unwrap_or(false);
+        if !in_bin {
             continue;
         }
-        // 防 zip-slip：只用 enclosed_name 的最末文件名，平铺到 voice_dir。
-        let name = match entry.enclosed_name() {
-            Some(p) => match p.file_name() {
-                Some(f) => f.to_owned(),
-                None => continue,
-            },
+
+        // 防路径穿越：只取最末文件名。
+        let file_name = match path.file_name() {
+            Some(f) => f.to_owned(),
             None => continue,
         };
-        let out_path = dir.join(&name);
-        let mut out =
-            std::fs::File::create(&out_path).map_err(|e| format!("写解压文件失败: {}", e))?;
+        // 只要 exe / dll（其余 sherpa 自带的辅助文件这里用不到）。
+        let keep = {
+            let lower = file_name.to_string_lossy().to_ascii_lowercase();
+            lower.ends_with(".exe") || lower.ends_with(".dll")
+        };
+        if !keep {
+            continue;
+        }
+
+        let out_path = dir.join(&file_name);
+        let mut out = std::fs::File::create(&out_path)
+            .map_err(|e| format!("写解压文件失败: {}", e))?;
         std::io::copy(&mut entry, &mut out).map_err(|e| format!("解压拷贝失败: {}", e))?;
         extracted += 1;
     }
 
     if extracted == 0 {
-        return Err("zip 解压后没有任何文件".to_string());
+        return Err("压缩包解压后没有取到任何 exe/dll".to_string());
     }
-    if !whisper_cli_path().is_file() {
+    if !sherpa_offline_path().is_file() {
         return Err(format!(
-            "解压完成但缺 whisper-cli 可执行（期望 {}）",
-            whisper_cli_path().display()
+            "解压完成但缺 sherpa-onnx-offline 可执行（期望 {}）",
+            sherpa_offline_path().display()
         ));
     }
     Ok(())
@@ -1002,8 +1001,8 @@ fn extract_whisper_zip(zip_path: &PathBuf) -> Result<(), String> {
 // ============================================================================
 //
 // 设计：注册逻辑全在 Rust，前端只在开关翻转 / 启动时调一次 `voice_hotkey_sync`。
-// 热键命中后按 toggle：没在录 → 开录；正在录 → 停录+转写+注入。后者阻塞（whisper
-// 子进程要几秒），丢到后台线程跑，避免卡住 global-shortcut 的回调线程。
+// 热键命中后按 toggle：没在录 → 开录；正在录 → 停录+转写+注入。后者阻塞（sherpa
+// 子进程要一两秒），丢到后台线程跑，避免卡住 global-shortcut 的回调线程。
 // 录音/转写期间往 avatar 窗口 emit `voice-state` 事件，前端据此切小人状态（listening
 // / transcribing / idle），让用户知道何时该说话、何时在转写。出错 emit `voice-error`。
 
@@ -1175,28 +1174,33 @@ pub fn global_shortcut_plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
 /// 查询语音资产就绪状态 + 下载相关信息。
 ///
 /// 除就绪态外，一并回手动兜底所需的全部信息：代理（前端显示「下载将通过代理 …」）、
-/// 目标目录、两个文件名、各自的原始下载直链（二进制 zip 解压后平铺、模型 .bin 直接放）。
+/// 目标目录、三个资产（引擎二进制包 / 模型 / 词表）的文件名与原始下载直链。
 /// 前端据此渲染「手动下载」区，自动下不动时用户照链手动下、丢进目录即可。
 #[tauri::command]
 pub fn voice_assets_status() -> Result<Value, String> {
     #[cfg(windows)]
-    let bin_name = "whisper-cli.exe";
+    let bin_name = "sherpa-onnx-offline.exe";
     #[cfg(not(windows))]
-    let bin_name = "whisper-cli";
+    let bin_name = "sherpa-onnx-offline";
 
     Ok(json!({
         "ready": voice_assets_ready(),
         "voiceDir": voice_dir().to_string_lossy(),
-        "hasBinary": whisper_cli_path().is_file(),
+        "hasBinary": sherpa_offline_path().is_file(),
         "hasModel": model_path().is_file(),
+        "hasTokens": tokens_path().is_file(),
         // 下载是否走代理 + 代理地址（None → 直连）。前端显示知情。
         "proxy": download_proxy(),
         // 手动兜底信息：文件名 + 原始直链。
+        // binaryName 是解压后要落地的可执行名；binaryUrl 是 .tar.bz2 包（需解压，取 bin/ 下 exe+dll）。
         "binaryName": bin_name,
-        "modelName": DEFAULT_MODEL_FILE,
-        "binaryUrl": WHISPER_BIN_URL_RAW,
+        "modelName": MODEL_FILE,
+        "tokensName": TOKENS_FILE,
+        "binaryUrl": SHERPA_BIN_URL_RAW,
         "modelUrl": MODEL_URL_RAW,
         "modelMirrorUrl": MODEL_URL,
+        "tokensUrl": TOKENS_URL_RAW,
+        "tokensMirrorUrl": TOKENS_URL,
     }))
 }
 
@@ -1236,10 +1240,10 @@ pub fn voice_open_dir() -> Result<(), String> {
     }
 }
 
-/// 下载语音资产到 `~/.jarvis/voice/`：① whisper-cli 二进制 zip → 解压；② large-v3-turbo 模型。
+/// 下载语音资产到 `~/.jarvis/voice/`：① sherpa-onnx 引擎 .tar.bz2 → 解压；② SenseVoice 模型；③ 词表。
 ///
-/// 已存在的部分跳过（幂等）：二进制齐了就不重下，模型在了就不重下——支持中断后重试只补缺的。
-/// 全程 emit `voice-download-progress`（phase=`"binary"`/`"model"`）。下完校验 `voice_assets_ready()`。
+/// 已存在的部分跳过（幂等）：引擎齐了就不重下，模型/词表在了就不重下——支持中断后重试只补缺的。
+/// 全程 emit `voice-download-progress`（phase=`"binary"`/`"model"`/`"tokens"`）。下完校验 `voice_assets_ready()`。
 #[tauri::command]
 pub async fn voice_download_assets(app: tauri::AppHandle) -> Result<Value, String> {
     // 读用户代理（若 config 里 channels.telegram.proxy 有值）——下载全程复用它，
@@ -1247,23 +1251,33 @@ pub async fn voice_download_assets(app: tauri::AppHandle) -> Result<Value, Strin
     let proxy = download_proxy();
     let proxy_ref = proxy.as_deref();
 
-    // ① whisper-cli 二进制：缺就下 zip → 解压（解压内部会校验 whisper-cli 在不在）。
-    if !whisper_cli_path().is_file() {
-        let zip_path = voice_dir().join("whisper-bin-x64.zip");
-        download_to_file_multi(&app, WHISPER_BIN_URLS, &zip_path, "binary", proxy_ref).await?;
-        extract_whisper_zip(&zip_path)?;
-        // 解压完删掉 zip（best-effort，省空间）。
-        let _ = std::fs::remove_file(&zip_path);
+    // ① sherpa-onnx 引擎：缺就下 .tar.bz2 → 解压（解压内部会校验 sherpa-onnx-offline 在不在）。
+    if !sherpa_offline_path().is_file() {
+        let tar_path = voice_dir().join("sherpa-onnx-win-x64.tar.bz2");
+        download_to_file_multi(&app, SHERPA_BIN_URLS, &tar_path, "binary", proxy_ref).await?;
+        // 解压在阻塞线程跑：bz2 解码是 CPU 活，别占住 async 执行器。
+        let tar_clone = tar_path.clone();
+        tokio::task::spawn_blocking(move || extract_sherpa_tarball(&tar_clone))
+            .await
+            .map_err(|e| format!("解压任务调度失败: {}", e))??;
+        // 解压完删掉压缩包（best-effort，省空间）。
+        let _ = std::fs::remove_file(&tar_path);
     }
 
-    // ② 模型：缺就下（574MB，下载耗时最久，进度务必顺滑）。
+    // ② 模型：缺就下（约 228MB，下载耗时最久，进度务必顺滑）。
     if !model_path().is_file() {
         let model = model_path();
         download_to_file(&app, MODEL_URL, &model, "model", proxy_ref).await?;
     }
 
+    // ③ 词表：缺就下（约 308KB，很小，但 sherpa 转写必需）。
+    if !tokens_path().is_file() {
+        let tokens = tokens_path();
+        download_to_file(&app, TOKENS_URL, &tokens, "tokens", proxy_ref).await?;
+    }
+
     if !voice_assets_ready() {
-        return Err("下载完成但资产仍不就绪（缺 whisper-cli 或模型）".to_string());
+        return Err("下载完成但资产仍不就绪（缺引擎 / 模型 / 词表）".to_string());
     }
     Ok(json!({ "ready": true }))
 }
@@ -1273,7 +1287,7 @@ pub async fn voice_download_assets(app: tauri::AppHandle) -> Result<Value, Strin
 pub fn voice_start(app: tauri::AppHandle) -> Result<(), String> {
     let run = || -> Result<(), String> {
         if !voice_assets_ready() {
-            return Err("语音资产未就绪（缺 whisper-cli 或模型）".to_string());
+            return Err("语音资产未就绪（缺引擎 / 模型 / 词表）".to_string());
         }
         start_recording()
     };
@@ -1287,7 +1301,7 @@ pub fn voice_start(app: tauri::AppHandle) -> Result<(), String> {
     }
 }
 
-/// 停录 → 写 WAV → whisper-cli 转写 → 注入聚焦框 → 返回转写文本。
+/// 停录 → 写 WAV → sherpa-onnx-offline 转写 → 注入聚焦框 → 返回转写文本。
 /// 命令层与热键处理共用这段，错误分清「没在录」「转写失败」「注入失败」三类。
 /// 每个阶段都 eprintln 留痕，配合各子函数内的诊断，全链路可见卡在哪一步。
 fn stop_transcribe_inject() -> Result<String, String> {
@@ -1301,7 +1315,7 @@ fn stop_transcribe_inject() -> Result<String, String> {
     eprintln!("[voice] === 阶段2/4 写 WAV ===");
     let wav = write_temp_wav(&samples)?;
 
-    eprintln!("[voice] === 阶段3/4 whisper-cli 转写 ===");
+    eprintln!("[voice] === 阶段3/4 sherpa-onnx-offline 转写 ===");
     let text_result = transcribe_wav(&wav);
     // 转写产物 WAV 用完即删（best-effort）。
     let _ = std::fs::remove_file(&wav);
@@ -1317,7 +1331,7 @@ fn stop_transcribe_inject() -> Result<String, String> {
     Ok(text)
 }
 
-/// 停录 → 写 WAV → whisper-cli 转写 → 注入聚焦框 → 返回 `{text}`。
+/// 停录 → 写 WAV → sherpa-onnx-offline 转写 → 注入聚焦框 → 返回 `{text}`。
 /// 失败时 emit voice-error（带中文原因），别让命令路径静默失败。
 #[tauri::command]
 pub fn voice_stop_and_transcribe(app: tauri::AppHandle) -> Result<Value, String> {
@@ -1396,12 +1410,13 @@ mod tests {
     fn assets_paths_under_jarvis_voice() {
         // 路径拼接正确性：都在 ~/.jarvis/voice/ 下。
         assert!(voice_dir().ends_with("voice"));
-        assert!(model_path().ends_with(DEFAULT_MODEL_FILE));
-        let cli = whisper_cli_path();
+        assert!(model_path().ends_with(MODEL_FILE));
+        assert!(tokens_path().ends_with(TOKENS_FILE));
+        let cli = sherpa_offline_path();
         #[cfg(windows)]
-        assert!(cli.ends_with("whisper-cli.exe"));
+        assert!(cli.ends_with("sherpa-onnx-offline.exe"));
         #[cfg(not(windows))]
-        assert!(cli.ends_with("whisper-cli"));
+        assert!(cli.ends_with("sherpa-onnx-offline"));
     }
 
     #[test]
@@ -1435,31 +1450,29 @@ mod tests {
     }
 
     #[test]
-    fn build_prompt_includes_prefix_and_terms() {
-        let p = build_prompt("API, Docker");
-        assert!(p.starts_with(PROMPT_PREFIX));
-        assert!(p.contains("API, Docker"));
+    fn parse_sherpa_text_extracts_text_field() {
+        // sherpa-onnx-offline 的 stdout：一行结果 JSON，取 text 字段（去空白）。
+        let stdout = r#"{"lang": "<|zh|>", "emotion": "<|NEUTRAL|>", "event": "<|Speech|>", "text": "今天天气不错。", "timestamps": [], "tokens": []}"#;
+        assert_eq!(parse_sherpa_text(stdout), "今天天气不错。");
     }
 
     #[test]
-    fn build_prompt_empty_terms_is_prefix_only() {
-        assert_eq!(build_prompt(""), PROMPT_PREFIX);
+    fn parse_sherpa_text_skips_non_json_lines_and_picks_json() {
+        // 前面混入非 JSON 行（如意外打到 stdout 的诊断），仍能挑出带 text 的 JSON 行。
+        let stdout = "some noise line\n{\"text\": \"hello world\"}\n";
+        assert_eq!(parse_sherpa_text(stdout), "hello world");
     }
 
     #[test]
-    fn build_prompt_truncates_by_chars_not_bytes() {
-        // 超长术语（全中文，多字节）应按字符截断到上限，且不 panic、不切坏多字节。
-        let long_terms = "术语".repeat(300);
-        let p = build_prompt(&long_terms);
-        assert_eq!(p.chars().count(), MAX_PROMPT_CHARS);
-        // 截断点落在字符边界：能无损还原成字符串即证明没切坏 UTF-8。
-        assert_eq!(p.chars().count(), p.chars().collect::<String>().chars().count());
+    fn parse_sherpa_text_falls_back_to_trimmed_stdout() {
+        // 完全没有合法 JSON → 兜底返回整体 trim（不让格式微调直接报错）。
+        assert_eq!(parse_sherpa_text("  plain text  "), "plain text");
     }
 
     #[test]
-    fn whisper_threads_within_bounds() {
+    fn sherpa_threads_within_bounds() {
         // 线程数恒在 [1, 8]，不依赖具体机器核数。
-        let t = whisper_threads();
+        let t = sherpa_threads();
         assert!((1..=8).contains(&t), "线程数 {} 不在 [1,8]", t);
     }
 }

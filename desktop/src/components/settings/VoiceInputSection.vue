@@ -8,32 +8,32 @@ import { useConfigStore } from '../../stores/config'
 // 后端契约（src-tauri/src/voice.rs，命令已实现）
 // ============================================================================
 //   voice_assets_status() -> {
-//     ready, voiceDir, hasBinary, hasModel,
-//     proxy,                 // 下载是否走代理（null=直连）
-//     binaryName, modelName, // 两个文件名
-//     binaryUrl, modelUrl,   // 原始直链（手动兜底用）
-//     modelMirrorUrl,        // 模型的 hf-mirror 镜像链
+//     ready, voiceDir, hasBinary, hasModel, hasTokens,
+//     proxy,                              // 下载是否走代理（null=直连）
+//     binaryName, modelName, tokensName,  // 三个资产的落地文件名
+//     binaryUrl, modelUrl, tokensUrl,     // 原始直链（手动兜底用）
+//     modelMirrorUrl, tokensMirrorUrl,    // 模型/词表的 hf-mirror 镜像链
 //   }
 //   voice_download_assets() -> { ready }   // 边下边 emit voice-download-progress
 //   voice_open_dir() -> ()                 // 系统文件管理器打开 voiceDir（手动放文件用）
 //
-// 事件 voice-download-progress: { phase: 'binary'|'model', downloaded, total, percent, bytesPerSec }
+// 事件 voice-download-progress: { phase: 'binary'|'model'|'tokens', downloaded, total, percent, bytesPerSec }
 //
 // UX（照搬 deployEnabled 的「默认关闭 + 开启才生效」范式，叠加首启下载确认）：
 //   开 → 查 voice_assets_status：
 //     ready=true            → 直接开。
-//     ready=false           → 弹「确认下载约 600MB」模态：
+//     ready=false           → 弹「确认下载约 250MB」模态：
 //        确认 → voice_download_assets，进度条；成功保持开+提示就绪，失败回退到关+错误。
 //        取消 → 回退到关，不下载。
 //   关 → 直接关（保留已下资产，不删）。
 //
-// 国内下载痛点：引擎在 GitHub、模型在 HF（hf-mirror 只 302 跳美国 Xet 存储，574MB 必断）。
+// 国内下载痛点：引擎在 GitHub、模型/词表在 HF（hf-mirror 大文件 302 跳美国 Xet 存储，易断）。
 // 三道保险：① 下载走用户代理（config.channels.telegram.proxy）；② 断点续传+自动重试；
 // ③ 手动兜底区（列直链 + 打开目录 + 重新检测）。
 
 const store = useConfigStore()
 
-type Phase = 'binary' | 'model'
+type Phase = 'binary' | 'model' | 'tokens'
 interface DownloadProgress {
   phase: Phase
   downloaded: number
@@ -47,12 +47,16 @@ interface AssetsStatus {
   voiceDir: string
   hasBinary: boolean
   hasModel: boolean
+  hasTokens: boolean
   proxy: string | null
   binaryName: string
   modelName: string
+  tokensName: string
   binaryUrl: string
   modelUrl: string
   modelMirrorUrl: string
+  tokensUrl: string
+  tokensMirrorUrl: string
 }
 
 // 是否正处于「确认下载」模态。
@@ -341,6 +345,7 @@ async function recheckAssets() {
       const miss: string[] = []
       if (!status.hasBinary) miss.push('语音引擎')
       if (!status.hasModel) miss.push('识别模型')
+      if (!status.hasTokens) miss.push('识别词表')
       messageKind.value = 'fail'
       message.value = `仍缺少：${miss.join('、')}。请把对应文件放进目录后再检测。`
     }
@@ -429,7 +434,9 @@ function dismissFailure() {
 }
 
 function phaseLabel(p: Phase): string {
-  return p === 'binary' ? '语音引擎' : '识别模型'
+  if (p === 'binary') return '语音引擎'
+  if (p === 'tokens') return '识别词表'
+  return '识别模型'
 }
 
 function fmtMB(bytes: number): string {
@@ -468,7 +475,7 @@ function errText(e: unknown): string {
     </label>
     <p class="settings-section-hint">
       本地语音转写，默认关闭。启用后可按热键 / 点小人说话，转写文字直接注入当前聚焦的输入框（本地处理，不上云）。
-      首次启用需下载语音引擎与模型（约 600MB）。
+      首次启用需下载语音引擎与模型（约 250MB）。支持中英混说，自动断句标点。
     </p>
 
     <!-- 自定义快捷键 -->
@@ -515,32 +522,6 @@ function errText(e: unknown): string {
       </p>
     </div>
 
-    <!-- 转写语言 + 常用术语（提升英文术语识别） -->
-    <div class="voice-recog">
-      <div class="voice-recog-row">
-        <span class="voice-recog-label">识别语言</span>
-        <select v-model="store.config.voiceLanguage" class="voice-recog-select">
-          <option value="zh">中文（推荐）</option>
-          <option value="en">英文</option>
-          <option value="auto">自动检测</option>
-        </select>
-      </div>
-      <p class="voice-recog-tip">
-        默认锁定中文：日常中文夹英文术语时，固定中文比「自动检测」更稳（短句不易误判成其它语言）。
-      </p>
-
-      <label class="voice-recog-terms-label">常用术语（提升英文术语识别）</label>
-      <textarea
-        v-model="store.config.voiceTerms"
-        class="voice-recog-terms"
-        rows="3"
-        placeholder="API, bug, deploy, Kubernetes, Redis…"
-      ></textarea>
-      <p class="voice-recog-tip">
-        把你们的项目名 / 技术栈 / 常用英文词填进来（逗号或换行分隔），转写时会据此偏置，让英文术语更准。留空则不额外提示。
-      </p>
-    </div>
-
     <!-- 下载进度 -->
     <div v-if="downloading && progress" class="voice-progress">
       <div class="voice-progress-head">
@@ -583,23 +564,31 @@ function errText(e: unknown): string {
       </button>
       <div v-if="showManual" class="voice-manual-body">
         <p class="voice-manual-intro">
-          自动下不动时，按下面两个地址手动下载（建议用浏览器或下载工具，支持断点续传），下好后丢进目标目录即可：
+          自动下不动时，按下面三个地址手动下载（建议用浏览器或下载工具，支持断点续传），下好后丢进目标目录即可：
         </p>
 
         <ol class="voice-manual-list">
           <li>
-            <div class="voice-manual-label">① 语音引擎（zip，需解压）</div>
+            <div class="voice-manual-label">① 语音引擎（.tar.bz2，需解压）</div>
             <a v-if="assets?.binaryUrl" class="voice-manual-link" :href="assets.binaryUrl" target="_blank" rel="noreferrer">{{ assets.binaryUrl }}</a>
             <div class="voice-manual-note">
-              下载后<b>解压</b>，把里面的 <code>{{ assets?.binaryName || 'whisper-cli.exe' }}</code> 和所有 <code>.dll</code> 平铺放进目标目录。
+              下载后<b>解压</b>，把包内 <code>bin/</code> 下的 <code>{{ assets?.binaryName || 'sherpa-onnx-offline.exe' }}</code> 和所有 <code>.dll</code>（onnxruntime 等）平铺放进目标目录。
             </div>
           </li>
           <li>
-            <div class="voice-manual-label">② 识别模型（约 574MB，直接放）</div>
-            <a v-if="assets?.modelUrl" class="voice-manual-link" :href="assets.modelUrl" target="_blank" rel="noreferrer">{{ assets.modelUrl }}</a>
-            <a v-if="assets?.modelMirrorUrl" class="voice-manual-link voice-manual-link-alt" :href="assets.modelMirrorUrl" target="_blank" rel="noreferrer">国内镜像：{{ assets.modelMirrorUrl }}</a>
+            <div class="voice-manual-label">② 识别模型（约 228MB，直接放）</div>
+            <a v-if="assets?.modelMirrorUrl" class="voice-manual-link" :href="assets.modelMirrorUrl" target="_blank" rel="noreferrer">国内镜像：{{ assets.modelMirrorUrl }}</a>
+            <a v-if="assets?.modelUrl" class="voice-manual-link voice-manual-link-alt" :href="assets.modelUrl" target="_blank" rel="noreferrer">{{ assets.modelUrl }}</a>
             <div class="voice-manual-note">
-              下载到的 <code>{{ assets?.modelName || 'ggml-large-v3-turbo-q5_0.bin' }}</code> <b>直接</b>放进目标目录（不要解压、不要改名）。
+              下载到的 <code>{{ assets?.modelName || 'model.int8.onnx' }}</code> <b>直接</b>放进目标目录（不要解压、不要改名）。
+            </div>
+          </li>
+          <li>
+            <div class="voice-manual-label">③ 识别词表（约 0.3MB，直接放）</div>
+            <a v-if="assets?.tokensMirrorUrl" class="voice-manual-link" :href="assets.tokensMirrorUrl" target="_blank" rel="noreferrer">国内镜像：{{ assets.tokensMirrorUrl }}</a>
+            <a v-if="assets?.tokensUrl" class="voice-manual-link voice-manual-link-alt" :href="assets.tokensUrl" target="_blank" rel="noreferrer">{{ assets.tokensUrl }}</a>
+            <div class="voice-manual-note">
+              下载到的 <code>{{ assets?.tokensName || 'tokens.txt' }}</code> <b>直接</b>放进目标目录（不要改名）。
             </div>
           </li>
         </ol>
@@ -623,7 +612,7 @@ function errText(e: unknown): string {
       <div class="voice-modal">
         <h4 class="voice-modal-title">启用语音输入</h4>
         <p class="voice-modal-body">
-          启用语音输入需下载语音引擎与模型（约 600MB，含 large-v3-turbo 中英文模型，仅首次）。是否下载？
+          启用语音输入需下载语音引擎与模型（约 250MB，SenseVoice 中英日韩粤多语模型，仅首次）。是否下载？
         </p>
         <p class="voice-modal-proxy">{{ proxyHint }}</p>
         <div class="voice-modal-actions">
@@ -697,64 +686,6 @@ function errText(e: unknown): string {
   flex: none;
 }
 .voice-hotkey-tip {
-  margin: 6px 0 0;
-  font-size: 10.5px;
-  line-height: 1.5;
-  color: var(--text-faint);
-}
-
-/* 识别语言 + 常用术语 */
-.voice-recog {
-  margin-top: 12px;
-}
-.voice-recog-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.voice-recog-label {
-  font-size: 12px;
-  color: var(--text-dim);
-}
-.voice-recog-select {
-  flex: 1;
-  min-height: 30px;
-  padding: 4px 8px;
-  font-size: 11.5px;
-  color: var(--text);
-  background: var(--surface-2);
-  border: var(--divider);
-  border-radius: 6px;
-  cursor: pointer;
-}
-.voice-recog-select:hover {
-  border-color: var(--accent);
-}
-.voice-recog-terms-label {
-  display: block;
-  margin-top: 10px;
-  font-size: 12px;
-  color: var(--text-dim);
-}
-.voice-recog-terms {
-  width: 100%;
-  margin-top: 5px;
-  padding: 6px 8px;
-  font-family: inherit;
-  font-size: 11.5px;
-  line-height: 1.5;
-  color: var(--text);
-  background: var(--surface-2);
-  border: var(--divider);
-  border-radius: 6px;
-  resize: vertical;
-  box-sizing: border-box;
-}
-.voice-recog-terms:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-.voice-recog-tip {
   margin: 6px 0 0;
   font-size: 10.5px;
   line-height: 1.5;

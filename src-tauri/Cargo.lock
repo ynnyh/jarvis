@@ -581,6 +581,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bzip2-rs"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "beeb59e7e4c811ab37cc73680c798c7a5da77fc9989c62b09138e31ee740f735"
+dependencies = [
+ "crc32fast",
+ "tinyvec",
+]
+
+[[package]]
 name = "cairo-rs"
 version = "0.18.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2388,6 +2398,7 @@ version = "0.8.3"
 dependencies = [
  "arboard",
  "base64 0.22.1",
+ "bzip2-rs",
  "chinese_holiday",
  "chrono",
  "cpal",
@@ -2408,6 +2419,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlite-vec",
+ "tar",
  "tauri",
  "tauri-build",
  "tauri-plugin-autostart",
@@ -2420,7 +2432,6 @@ dependencies = [
  "tokio-tungstenite",
  "urlencoding",
  "zerocopy",
- "zip",
 ]
 
 [[package]]
@@ -7373,7 +7384,6 @@ checksum = "caa8cd6af31c3b31c6631b8f483848b91589021b28fffe50adada48d4f4d2ed1"
 dependencies = [
  "arbitrary",
  "crc32fast",
- "flate2",
  "indexmap 2.14.0",
  "memchr",
 ]
