@@ -551,13 +551,15 @@ let unlistenVoiceError: UnlistenFn | null = null
 onMounted(async () => {
   unlistenNewTasks = await listen<Array<{ id: string; title: string; priority: string; deadline: string }>>(
     'new-tasks-detected',
-    (event) => {
+    async (event) => {
       const tasks = event.payload || []
       for (const t of tasks) {
         store.enqueueBindTask(t)
       }
       // 队列非空 + 当前没显示绑定窗 → 拉起来（#84 实装窗口后生效）
       if (store.pendingBindTasks.length > 0 && !store.showBindTaskWindow) {
+        // 宠物处于 dock 收纳状态时先恢复位置，否则弹窗按钮在屏外不可见
+        if (dockEdge.value) exitDock()
         store.showBindTaskWindow = true
       }
     }
