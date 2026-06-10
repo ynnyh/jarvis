@@ -73,14 +73,11 @@ pub async fn finereport_get_efforts(
         auth.expires_at
     );
 
-    // 打开报表 + 抠 sessionID，JWT 过期时自动清缓存重试一次
+    // 打开报表建立 cookie 会话，JWT 过期时自动清缓存重试一次
     let t = Instant::now();
-    let session_id = match client
-        .open_report_and_get_session(&auth.jwt, DEFAULT_VIEWLET)
-        .await
-    {
+    let mut session_id = match client.open_report(&auth.jwt, DEFAULT_VIEWLET).await {
         Ok(sid) => {
-            eprintln!("[FineReport] step2 sessionID ok ({}ms)", t.elapsed().as_millis());
+            eprintln!("[FineReport] step2 open_report ok ({}ms) sessionID={}", t.elapsed().as_millis(), sid);
             sid
         }
         Err(e) if e.starts_with("AUTH_EXPIRED:") => {
@@ -89,26 +86,23 @@ pub async fn finereport_get_efforts(
             auth = client.ensure_valid_auth().await?;
             eprintln!("[FineReport] step1 re-login ok, exp={}", auth.expires_at);
             let t2 = Instant::now();
-            let sid = client
-                .open_report_and_get_session(&auth.jwt, DEFAULT_VIEWLET)
-                .await
-                .map_err(|e| {
-                    eprintln!(
-                        "[FineReport] step2 retry FAILED ({}ms): {}",
-                        t2.elapsed().as_millis(),
-                        e
-                    );
+            let sid = client.open_report(&auth.jwt, DEFAULT_VIEWLET).await.map_err(|e| {
+                eprintln!(
+                    "[FineReport] step2 retry FAILED ({}ms): {}",
+                    t2.elapsed().as_millis(),
                     e
-                })?;
+                );
+                e
+            })?;
             eprintln!(
-                "[FineReport] step2 retry sessionID ok ({}ms)",
+                "[FineReport] step2 retry open_report ok ({}ms)",
                 t2.elapsed().as_millis()
             );
             sid
         }
         Err(e) => {
             eprintln!(
-                "[FineReport] step2 open_report_and_get_session FAILED ({}ms): {}",
+                "[FineReport] step2 open_report FAILED ({}ms): {}",
                 t.elapsed().as_millis(),
                 e
             );
@@ -116,10 +110,10 @@ pub async fn finereport_get_efforts(
         }
     };
 
-    let cid = FineReportClient::generate_cid(&session_id);
+    let mut cid = FineReportClient::generate_cid(&session_id);
     eprintln!("[FineReport] step2.5 cid generated: {}", cid);
 
-    let t = Instant::now();
+    let mut t = Instant::now();
     client
         .submit_filter(&auth.jwt, &session_id, &begin, &end, &effective_real_name, "", "0")
         .await
@@ -136,49 +130,84 @@ pub async fn finereport_get_efforts(
         t.elapsed().as_millis()
     );
 
-    let t = Instant::now();
-    let summary_html = client
-        .fetch_report_html(&auth.jwt, &session_id, &cid, 0)
-        .await
-        .map_err(|e| {
-            eprintln!(
-                "[FineReport] step4a fetch summary FAILED ({}ms): {}",
-                t.elapsed().as_millis(),
-                e
-            );
-            e
-        })?;
-    eprintln!(
-        "[FineReport] step4a summary ok ({}ms) len={}",
-        t.elapsed().as_millis(),
-        summary_html.len()
-    );
-    if cfg!(debug_assertions) {
-        let summary_path = jarvis_dir().join("finereport-summary.html");
-        let _ = std::fs::write(&summary_path, &summary_html);
-    }
+    // fetch_report_html 也可能因 JWT 中途过期拿到登录页 HTML，需要整条链路重试一次
+    let (summary_html, detail_html) = {
+        let mut retry_done = false;
+        loop {
+            t = Instant::now();
+            match client.fetch_report_html(&auth.jwt, &session_id, &cid, 0).await {
+                Ok(html) => {
+                    eprintln!(
+                        "[FineReport] step4a summary ok ({}ms) len={}",
+                        t.elapsed().as_millis(),
+                        html.len()
+                    );
+                    if cfg!(debug_assertions) {
+                        let summary_path = jarvis_dir().join("finereport-summary.html");
+                        let _ = std::fs::write(&summary_path, &html);
+                    }
 
-    let t = Instant::now();
-    let detail_html = client
-        .fetch_report_html(&auth.jwt, &session_id, &cid, 1)
-        .await
-        .map_err(|e| {
-            eprintln!(
-                "[FineReport] step4b fetch detail FAILED ({}ms): {}",
-                t.elapsed().as_millis(),
-                e
-            );
-            e
-        })?;
-    eprintln!(
-        "[FineReport] step4b detail ok ({}ms) len={}",
-        t.elapsed().as_millis(),
-        detail_html.len()
-    );
-    if cfg!(debug_assertions) {
-        let detail_path = jarvis_dir().join("finereport-detail.html");
-        let _ = std::fs::write(&detail_path, &detail_html);
-    }
+                    let t2 = Instant::now();
+                    match client.fetch_report_html(&auth.jwt, &session_id, &cid, 1).await {
+                        Ok(detail) => {
+                            eprintln!(
+                                "[FineReport] step4b detail ok ({}ms) len={}",
+                                t2.elapsed().as_millis(),
+                                detail.len()
+                            );
+                            if cfg!(debug_assertions) {
+                                let detail_path = jarvis_dir().join("finereport-detail.html");
+                                let _ = std::fs::write(&detail_path, &detail);
+                            }
+                            break (html, detail);
+                        }
+                        Err(e) if e.starts_with("AUTH_EXPIRED:") && !retry_done => {
+                            eprintln!("[FineReport] step4b JWT 过期，清缓存重新登录...");
+                            retry_done = true;
+                            crate::fine_report::client::delete_cached_auth();
+                            auth = client.ensure_valid_auth().await?;
+                            eprintln!("[FineReport] re-login ok, exp={}", auth.expires_at);
+                            session_id = client.open_report(&auth.jwt, DEFAULT_VIEWLET).await?;
+                            cid = FineReportClient::generate_cid(&session_id);
+                            client
+                                .submit_filter(&auth.jwt, &session_id, &begin, &end, &effective_real_name, "", "0")
+                                .await?;
+                            continue;
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "[FineReport] step4b fetch detail FAILED ({}ms): {}",
+                                t2.elapsed().as_millis(),
+                                e
+                            );
+                            return Err(e);
+                        }
+                    }
+                }
+                Err(e) if e.starts_with("AUTH_EXPIRED:") && !retry_done => {
+                    eprintln!("[FineReport] step4a JWT 过期，清缓存重新登录...");
+                    retry_done = true;
+                    crate::fine_report::client::delete_cached_auth();
+                    auth = client.ensure_valid_auth().await?;
+                    eprintln!("[FineReport] re-login ok, exp={}", auth.expires_at);
+                    session_id = client.open_report(&auth.jwt, DEFAULT_VIEWLET).await?;
+                    cid = FineReportClient::generate_cid(&session_id);
+                    client
+                        .submit_filter(&auth.jwt, &session_id, &begin, &end, &effective_real_name, "", "0")
+                        .await?;
+                    continue;
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[FineReport] step4a fetch summary FAILED ({}ms): {}",
+                        t.elapsed().as_millis(),
+                        e
+                    );
+                    return Err(e);
+                }
+            }
+        }
+    };
 
     let records = parse_detail_html(&detail_html).unwrap_or_else(|e| {
         eprintln!("[FineReport] parse_detail_html FAILED: {}", e);
@@ -224,19 +253,16 @@ pub async fn finereport_get_efforts_raw(
     let effective_project = project_name.unwrap_or_default();
     let client = FineReportClient::new_with_timeout(cred.base_url, cred.account, cred.password, 60)?;
     let mut auth = client.ensure_valid_auth().await?;
-    let session_id = match client
-        .open_report_and_get_session(&auth.jwt, DEFAULT_VIEWLET)
-        .await
-    {
+    let mut session_id = match client.open_report(&auth.jwt, DEFAULT_VIEWLET).await {
         Ok(sid) => sid,
         Err(e) if e.starts_with("AUTH_EXPIRED:") => {
             crate::fine_report::client::delete_cached_auth();
             auth = client.ensure_valid_auth().await?;
-            client.open_report_and_get_session(&auth.jwt, DEFAULT_VIEWLET).await?
+            client.open_report(&auth.jwt, DEFAULT_VIEWLET).await?
         }
         Err(e) => return Err(e),
     };
-    let cid = FineReportClient::generate_cid(&session_id);
+    let mut cid = FineReportClient::generate_cid(&session_id);
     client
         .submit_filter(
             &auth.jwt,
@@ -248,10 +274,30 @@ pub async fn finereport_get_efforts_raw(
             user_status,
         )
         .await?;
-    client
-        .fetch_report_html(&auth.jwt, &session_id, &cid, 1)
-        .await
-        .and_then(|html| parse_detail_html(&html))
+    // fetch_report_html 也可能因 JWT 中途过期拿到登录页 HTML，重试一次
+    let html = match client.fetch_report_html(&auth.jwt, &session_id, &cid, 1).await {
+        Ok(h) => h,
+        Err(e) if e.starts_with("AUTH_EXPIRED:") => {
+            crate::fine_report::client::delete_cached_auth();
+            auth = client.ensure_valid_auth().await?;
+            session_id = client.open_report(&auth.jwt, DEFAULT_VIEWLET).await?;
+            cid = FineReportClient::generate_cid(&session_id);
+            client
+                .submit_filter(
+                    &auth.jwt,
+                    &session_id,
+                    &begin,
+                    &end,
+                    &effective_real_name,
+                    &effective_project,
+                    user_status,
+                )
+                .await?;
+            client.fetch_report_html(&auth.jwt, &session_id, &cid, 1).await?
+        }
+        Err(e) => return Err(e),
+    };
+    parse_detail_html(&html)
 }
 
 // ============================================================================

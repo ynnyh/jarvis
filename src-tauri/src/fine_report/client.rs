@@ -12,6 +12,15 @@ use serde_json::Value;
 use crate::settings::jarvis_dir;
 use crate::fine_report::credentials::{UA, get_fine_report_credentials};
 
+/// 检测帆软返回的 HTML 是否为登录页（JWT 失效时服务器返回 200 + 登录页而非 401）。
+///
+/// 只认正向信号：登录端点 URL `decision/login`。不要用「没有 FR 报表 JS 就当登录页」。
+/// 这种反向启发式——read_w_content 返回的是 `{"html":"<table>..."}` 片段，本就不含
+/// FR.SessionMgr / finereport.main.js，会被误判成登录页导致死循环重登。
+fn is_login_page(html: &str) -> bool {
+    html.to_lowercase().contains("decision/login")
+}
+
 // ============================================================================
 // JWT 缓存
 // ============================================================================
@@ -236,19 +245,12 @@ impl FineReportClient {
     // 报表调用链：open → submit_filter → fetch_html
     // ========================================================================
 
-    /// 打开报表页，从 HTML 里抠 sessionID（UUID 形式）。
+    /// 打开报表页，建立 cookie 会话，从 HTML 里抓 sessionID。
     ///
-    /// 实测发现：cid 不在 HTML 里（32-hex 串去重 0 个），FR 后端真正用的主键是 sessionID
-    /// (UUID)；cid 完全由浏览器 JS 客户端生成，server 在第一次 read_w_content 时建立
-    /// (sessionID, cid) → state 映射。所以这里只抠 sessionID，cid 走 generate_cid() 客户端造。
-    ///
-    /// sessionID 来自 HTML 里的 `FR.SessionMgr.register('<uuid>', contentPane)` 或
-    /// `this.currentSessionID = '<uuid>'`。
-    pub async fn open_report_and_get_session(
-        &self,
-        jwt: &str,
-        viewlet: &str,
-    ) -> Result<String, String> {
+    /// sessionID 是帆软定位 writePane 上下文的关键参数：submit_filter / read_w_content
+    /// 等 API 都需要在 URL 里带 sessionID，光靠 cookie 不够。
+    /// 返回抓到的 sessionID（UUID 形式）。
+    pub async fn open_report(&self, jwt: &str, viewlet: &str) -> Result<String, String> {
         let url = self.url(&format!(
             "/webroot/decision/view/report?op=write&viewlet={}",
             urlencoding::encode(viewlet)
@@ -271,23 +273,23 @@ impl FineReportClient {
                 html.chars().take(200).collect::<String>()
             ));
         }
-        // HTML 为空说明 JWT 已过期（服务器返回空响应而非 401），调用方应清缓存重试
+        // HTML 为空或返回登录页说明 JWT 已过期，调用方应清缓存重试
         if html.is_empty() {
             return Err("AUTH_EXPIRED: 打开报表返回空内容，JWT 可能已过期".into());
         }
+        if is_login_page(&html) {
+            return Err("AUTH_EXPIRED: 打开报表返回登录页 HTML，JWT 已过期".into());
+        }
 
         // dump HTML 备查（仅 debug 构建；release 不落盘，避免工时 PII 残留磁盘）
-        let debug_hint = if cfg!(debug_assertions) {
+        if cfg!(debug_assertions) {
             let debug_path = jarvis_dir().join("finereport-debug.html");
             if let Err(e) = std::fs::write(&debug_path, &html) {
                 eprintln!("[FineReport] 写 debug HTML 失败（不致命）: {}", e);
             }
-            format!("，已保存到 {}", debug_path.display())
-        } else {
-            String::new()
-        };
+        }
 
-        // 抠 sessionID：优先 FR.SessionMgr.register('<uuid>', ...)，兜底 currentSessionID = '<uuid>'
+        // 抓 sessionID：帆软 HTML 里会包含 FR.SessionMgr.register(...) 或 currentSessionID 赋值
         let re_register = regex::Regex::new(
             r#"FR\.SessionMgr\.register\(\s*['"]([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})['"]"#
         ).map_err(|e| e.to_string())?;
@@ -300,55 +302,97 @@ impl FineReportClient {
         if let Some(c) = re_current.captures(&html) {
             return Ok(c[1].to_string());
         }
-        // 再兜底：HTML 里任何 UUID 形式都试一下
-        let re_uuid =
-            regex::Regex::new(r#"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"#)
-                .map_err(|e| e.to_string())?;
+        // 再兜底：HTML 里任意 UUID
+        let re_uuid = regex::Regex::new(
+            r#"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"#
+        ).map_err(|e| e.to_string())?;
         if let Some(c) = re_uuid.captures(&html) {
             return Ok(c[1].to_string());
         }
 
-        Err(format!(
-            "未抠到 sessionID。HTML 总长 {} 字符{}",
-            html.len(),
-            debug_hint
-        ))
+        Err(format!("未抓到 sessionID。HTML 总长 {} 字符", html.len()))
     }
 
-    /// 客户端造一个 cid。
+    /// 初始化某个 reportIndex 的编辑器会话。对应真实浏览器抓包里 read_w_content 之前
+    /// 那个 `op=fr_write&cmd=getEditorConfig` 请求——服务端靠它把当前 cookie 会话和
+    /// 这个 reportIndex 的 writePane 绑定好，之后 read_w_content 才能命中。
     ///
-    /// 格式 `<32-hex>#<13 digit ms>#<8-hex>`，复刻 FR.fs.WriteUtils.getReadWContentID() 行为。
-    /// 服务端把 cid 当不透明 token 用：第一次见到时和 sessionID 建映射，后续按 cid 命中缓存。
-    pub fn generate_cid(session_id: &str) -> String {
+    /// 它只是初始化握手，body 是不是 JSON 不重要，所以这里不解析 body：status 非 success
+    /// 直接报错；命中登录页当 AUTH_EXPIRED 抛给上层重登；否则 `Ok(())`。
+    pub async fn get_editor_config(&self, jwt: &str, report_index: u32) -> Result<(), String> {
+        let url = self.url(&format!(
+            "/webroot/decision/view/report?op=fr_write&cmd=getEditorConfig&reportIndex={}&_={}",
+            report_index,
+            now_unix() * 1000
+        ));
+        let resp = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", jwt))
+            .header("User-Agent", UA)
+            .header("X-Requested-With", "XMLHttpRequest")
+            .header("Accept", "application/json, text/javascript, */*; q=0.01")
+            .send()
+            .await
+            .map_err(|e| format!("getEditorConfig 请求失败: {}", e))?;
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(format!(
+                "getEditorConfig 返回 {}：{}",
+                status,
+                body.chars().take(200).collect::<String>()
+            ));
+        }
+        if is_login_page(&body) {
+            return Err("AUTH_EXPIRED: getEditorConfig 返回登录页 HTML，JWT 已过期".into());
+        }
+        Ok(())
+    }
+
+    /// 生成 CID（客户端标识符），复刻帆软 fingerprintHandle 的输出格式。
+    ///
+    /// 帆软前端 JS 的 fingerprintHandle 实现：
+    ///   1. 用 FingerprintJS 生成 32-hex 指纹
+    ///   2. 拼接 "#" + 时间戳
+    ///   3. 拼接 "#" + MD5(前两段).hex().slice(-8)  // 校验和
+    ///
+    /// 服务端 BrowserConcurrencyManager.verifyCid 校验此校验和。
+    /// 第一段用 MD5 替代 FingerprintJS 即可——服务端不验指纹内容，只验第三段与一二段的 MD5 关系。
+    pub fn generate_cid(seed: &str) -> String {
         use std::time::{SystemTime, UNIX_EPOCH};
         let ts_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
 
-        // 32-hex：MD5(sessionID + "_" + ts_ms + "_" + ts_ms<<1) —— 任意 deterministic seed 都行，
-        // server 不验证它是真的 MD5，只要 32 hex 即可
+        // 第一段：32-hex（MD5 替代 FingerprintJS 指纹）
         let mut h = Md5::new();
-        h.update(session_id.as_bytes());
+        h.update(seed.as_bytes());
         h.update(b"_");
         h.update(ts_ms.to_string().as_bytes());
-        h.update(b"_");
-        h.update((ts_ms.wrapping_mul(2654435761)).to_string().as_bytes());
-        let md5_hex = hex::encode(h.finalize());
+        let part1 = hex::encode(h.finalize());
 
-        // 8-hex 随机后缀：用 ts_ms 低 32 位扰一下
-        let rand_part = format!("{:08x}", (ts_ms as u32).wrapping_mul(0x9E3779B1));
+        // 第二段：毫秒时间戳
+        let part2 = ts_ms.to_string();
 
-        format!("{}#{}#{}", md5_hex, ts_ms, rand_part)
+        // 第三段：MD5("part1#part2") hex 的后 8 位（校验和）
+        let checksum_input = format!("{}#{}", part1, part2);
+        let mut h2 = Md5::new();
+        h2.update(checksum_input.as_bytes());
+        let checksum_hex = hex::encode(h2.finalize());
+        let part3 = &checksum_hex[checksum_hex.len() - 8..];
+
+        format!("{}#{}#{}", part1, part2, part3)
     }
 
-    /// 提交日期 + REAL_NAME 过滤。对应 Image #20 那个 parameters_d 请求。
+    /// 提交日期 + REAL_NAME 过滤。对应真实浏览器抓包里的 parameters_d 请求。
     ///
     /// REAL_NAME 是多选下拉控件，FR 期望真正的 JSON 数组 `["<姓名>"]`，不是字符串化的
     /// `"[\"<姓名>\"]"`——后者被当 LIKE 字面量匹配，永远 0 条命中（重要教训）。
     /// 空就传空数组 `[]`，相当于不过滤（让 SQL 走 IS NULL 分支不再 AND 收敛）。
     ///
-    /// sessionID 加在 URL 参数里——FR 后端用它定位之前 op=write 那一步建立的 writePane 上下文。
+    /// 真实浏览器抓包显示这个请求不带 sessionID，参数全在 POST body 里，靠 cookie 会话定位上下文。
     ///
     /// `project_name` 填进 PJ_NAME（帆软项目名筛选位）；空串=不按项目过滤（日报/chat 路径）。
     ///
@@ -448,8 +492,8 @@ impl FineReportClient {
 
     /// 拉 sheet 的 HTML。reportIndex=0 是「禅道工时汇总」，reportIndex=1 是「任务完成明细」。
     ///
-    /// sessionID 加在 URL 参数里定位 writePane 上下文；cid 是客户端生成的不透明 token，
-    /// server 第一次见到时和 sessionID 建映射。
+    /// read_w_content 需要 sessionID 参数来定位 writePane 上下文，光靠 cookie 不够。
+    /// cid 是客户端生成的不透明 token，server 第一次见到时和当前 cookie 会话建映射，后续按 cid 命中缓存。
     pub async fn fetch_report_html(
         &self,
         jwt: &str,
@@ -483,6 +527,20 @@ impl FineReportClient {
                 status,
                 text.chars().take(200).collect::<String>()
             ));
+        }
+        // read_w_content 正常一定返回 JSON；拿到 HTML（以 `<` 开头）说明会话/认证失效
+        // （帆软返回 200 + 登录/错误页而非 401，且页面里不一定有 decision/login 字样）。
+        // 当 AUTH_EXPIRED 抛给上层触发重登重试。
+        let trimmed = text.trim_start();
+        if trimmed.is_empty() {
+            return Err("AUTH_EXPIRED: read_w_content 返回空响应，会话可能已失效".into());
+        }
+        if trimmed.starts_with('<') || is_login_page(&text) {
+            if cfg!(debug_assertions) {
+                let p = jarvis_dir().join("finereport-readwcontent-fail.html");
+                let _ = std::fs::write(&p, &text);
+            }
+            return Err("AUTH_EXPIRED: read_w_content 返回 HTML（非 JSON），会话已失效".into());
         }
         let v: Value = serde_json::from_str(&text).map_err(|e| {
             format!(
