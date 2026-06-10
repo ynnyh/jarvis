@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useConfigStore } from '../../stores/config'
+import ToggleSwitch from '../ui/ToggleSwitch.vue'
 
 const store = useConfigStore()
 </script>
@@ -7,10 +8,7 @@ const store = useConfigStore()
 <template>
   <section class="settings-section">
     <h3 class="settings-section-title">工作时段小提示</h3>
-    <label class="settings-toggle">
-      <input type="checkbox" v-model="store.config.notifications.workdayNudges" />
-      <span>在工作时段里定时弹出喝水、起身、提肛、午饭、下班提醒</span>
-    </label>
+    <ToggleSwitch v-model="store.config.notifications.workdayNudges" label="在工作时段里定时弹出喝水、起身、提肛、午饭、下班提醒" />
     <label class="settings-toggle">
       <span>
         喝水、起身、提肛每

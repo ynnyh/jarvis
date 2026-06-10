@@ -2,6 +2,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useConfigStore } from '../../stores/config'
+import ToggleSwitch from '../ui/ToggleSwitch.vue'
 
 interface ProjectInfo {
   id: number | string
@@ -133,10 +134,7 @@ onMounted(() => { if (featureEnabled.value) loadProjects() })
   <section class="settings-section">
     <h3 class="settings-section-title">项目成本分析</h3>
 
-    <label class="settings-field">
-      <span class="settings-field-label">启用功能</span>
-      <input type="checkbox" v-model="featureEnabled" />
-    </label>
+    <ToggleSwitch v-model="featureEnabled" label="启用功能" />
     <p class="settings-section-hint">
       启用后，右键菜单将出现「项目成本」入口。
     </p>

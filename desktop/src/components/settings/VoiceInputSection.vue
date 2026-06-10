@@ -3,6 +3,7 @@ import { ref, computed, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useConfigStore } from '../../stores/config'
+import ToggleSwitch from '../ui/ToggleSwitch.vue'
 
 // ============================================================================
 // 后端契约（src-tauri/src/voice.rs，命令已实现）
@@ -540,10 +541,7 @@ function errText(e: unknown): string {
 <template>
   <section class="settings-section">
     <h3 class="settings-section-title">语音输入</h3>
-    <label class="settings-toggle">
-      <input type="checkbox" v-model="enabledModel" :disabled="downloading || cloudChecking" />
-      <span>启用语音输入</span>
-    </label>
+    <ToggleSwitch v-model="enabledModel" label="启用语音输入" :disabled="downloading || cloudChecking" />
     <p class="settings-section-hint">
       按热键 / 点小人说话，转写文字直接注入当前聚焦的输入框。默认关闭。支持中英混说，自动断句标点。
     </p>

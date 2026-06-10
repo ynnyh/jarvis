@@ -52,8 +52,8 @@ export const SETTINGS_MENU: SettingsMenuItem[] = [
 ]
 
 export const SETTINGS_PAGE_COMPONENTS: Record<SettingsPageKey, Component[]> = {
-  general: [AutoStartSection, DeployEnableSection, VoiceInputSection],
-  zentao: [ZentaoSection, CostRatesSection],
+  general: [AutoStartSection, DeployEnableSection, VoiceInputSection, CostRatesSection],
+  zentao: [ZentaoSection],
   finereport: [FineReportSection],
   ai: [LlmSection],
   channels: [ChannelsSection],

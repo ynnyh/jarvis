@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useConfigStore } from '../../stores/config'
+import ToggleSwitch from '../ui/ToggleSwitch.vue'
 
 const store = useConfigStore()
 const status = ref<{ running: boolean; message: string }>({ running: false, message: '未启动' })
@@ -214,10 +215,7 @@ onMounted(refreshStatus)
     </p>
 
     <div class="channel-block">
-      <label class="settings-toggle">
-        <input type="checkbox" v-model="store.config.channels.telegram.enabled" />
-        <span>Telegram</span>
-      </label>
+      <ToggleSwitch v-model="store.config.channels.telegram.enabled" label="Telegram" />
       <div class="channel-help">
         <div class="help-title">怎么接入</div>
         <ol>
@@ -275,10 +273,7 @@ onMounted(refreshStatus)
     </div>
 
     <div class="channel-block">
-      <label class="settings-toggle">
-        <input type="checkbox" v-model="store.config.channels.qqbot.enabled" />
-        <span>QQ 官方机器人</span>
-      </label>
+      <ToggleSwitch v-model="store.config.channels.qqbot.enabled" label="QQ 官方机器人" />
       <div class="channel-help">
         <div class="help-title">怎么接入</div>
         <ol>
@@ -298,10 +293,7 @@ onMounted(refreshStatus)
         <span class="settings-field-label">AppSecret</span>
         <input class="settings-input" type="password" placeholder="已保存时显示 ********" v-model="store.config.channels.qqbot.appSecret" />
       </label>
-      <label class="settings-toggle">
-        <input type="checkbox" v-model="store.config.channels.qqbot.sandbox" />
-        <span>使用沙箱环境</span>
-      </label>
+      <ToggleSwitch v-model="store.config.channels.qqbot.sandbox" label="使用沙箱环境" />
       <div class="settings-actions">
         <button
           class="settings-btn settings-btn-primary"

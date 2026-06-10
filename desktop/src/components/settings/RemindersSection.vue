@@ -2,6 +2,7 @@
 import { onMounted } from 'vue'
 import { useConfigStore } from '../../stores/config'
 import type { ScheduledReminder } from '../../stores/config'
+import ToggleSwitch from '../ui/ToggleSwitch.vue'
 
 const store = useConfigStore()
 
@@ -40,10 +41,7 @@ function cronHuman(cron: string): string {
     </div>
     <div v-else class="reminder-list">
       <div v-for="(r, i) in store.config.reminders" :key="r.id" class="reminder-item">
-        <label class="reminder-toggle">
-          <input type="checkbox" :checked="r.enabled" @change="toggleReminder(r)" />
-          <span class="reminder-cron">{{ cronHuman(r.cron) }}</span>
-        </label>
+        <ToggleSwitch :model-value="r.enabled" @update:model-value="toggleReminder(r)" :label="cronHuman(r.cron)" />
         <span class="reminder-message">{{ r.message }}</span>
         <button class="reminder-delete" @click="removeReminder(i)" title="删除">×</button>
       </div>
@@ -75,53 +73,6 @@ function cronHuman(cron: string): string {
   border: var(--divider);
   border-radius: 6px;
   font-size: 12.5px;
-}
-.reminder-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-.reminder-toggle input[type="checkbox"] {
-  -webkit-appearance: none;
-  appearance: none;
-  position: relative;
-  width: 36px;
-  height: 20px;
-  margin: 0;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  outline: none;
-  cursor: pointer;
-  transition: background 0.2s ease, border-color 0.2s ease;
-  flex-shrink: 0;
-}
-.reminder-toggle input[type="checkbox"]::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 14px;
-  height: 14px;
-  background: #fff;
-  border-radius: 50%;
-  transition: transform 0.2s ease;
-  pointer-events: none;
-}
-.reminder-toggle input[type="checkbox"]:checked {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-.reminder-toggle input[type="checkbox"]:checked::after {
-  transform: translateX(16px);
-}
-.reminder-cron {
-  font-family: ui-monospace, monospace;
-  font-size: 11px;
-  color: var(--accent-text);
-  white-space: nowrap;
 }
 .reminder-message {
   flex: 1;

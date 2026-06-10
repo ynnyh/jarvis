@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useConfigStore } from '../../stores/config'
+import ToggleSwitch from '../ui/ToggleSwitch.vue'
 
 const store = useConfigStore()
 </script>
@@ -7,17 +8,8 @@ const store = useConfigStore()
 <template>
   <section class="settings-section">
     <h3 class="settings-section-title">静默规则</h3>
-    <label class="settings-toggle">
-      <input type="checkbox" v-model="store.config.notifications.quietDuringLunch" />
-      <span>午休时段静默（不弹通知）</span>
-    </label>
-    <label class="settings-toggle">
-      <input type="checkbox" v-model="store.config.notifications.quietAfterWork" />
-      <span>下班后 / 上班前静默</span>
-    </label>
-    <label class="settings-toggle">
-      <input type="checkbox" v-model="store.config.notifications.quietOnWeekends" />
-      <span>周末整天静默</span>
-    </label>
+    <ToggleSwitch v-model="store.config.notifications.quietDuringLunch" label="午休时段静默（不弹通知）" />
+    <ToggleSwitch v-model="store.config.notifications.quietAfterWork" label="下班后 / 上班前静默" />
+    <ToggleSwitch v-model="store.config.notifications.quietOnWeekends" label="周末整天静默" />
   </section>
 </template>

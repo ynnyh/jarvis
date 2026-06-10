@@ -2,6 +2,7 @@
 import { watch } from 'vue'
 import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart'
 import { useConfigStore } from '../../stores/config'
+import ToggleSwitch from '../ui/ToggleSwitch.vue'
 
 const store = useConfigStore()
 
@@ -29,10 +30,7 @@ isEnabled().then((ok) => {
 <template>
   <section class="settings-section">
     <h3 class="settings-section-title">开机自启</h3>
-    <label class="settings-field">
-      <span class="settings-field-label">登录时自动启动</span>
-      <input type="checkbox" v-model="store.config.autoStartOnBoot" />
-    </label>
+    <ToggleSwitch v-model="store.config.autoStartOnBoot" label="登录时自动启动" />
     <p class="settings-section-hint">开启后系统登录时自动启动 {{ store.config.assistantName }}，可在系统设置中手动管理</p>
   </section>
 </template>

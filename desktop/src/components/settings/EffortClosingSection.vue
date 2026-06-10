@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useConfigStore } from '../../stores/config'
+import ToggleSwitch from '../ui/ToggleSwitch.vue'
 
 const store = useConfigStore()
 
@@ -58,18 +59,8 @@ function splitLines(value: string): string[] {
       到下班后自动查询帆软工时。只在工作日生效；今日休假、周末或未配置工时统计姓名时不会提醒。
     </p>
 
-    <label class="settings-toggle">
-      <input type="checkbox" v-model="store.config.notifications.effortClosingCheck" />
-      <span>下班后检查今日工时</span>
-    </label>
-    <label class="settings-toggle">
-      <input
-        type="checkbox"
-        v-model="store.config.notifications.effortClosingChannelNotify"
-        :disabled="!store.config.notifications.effortClosingCheck"
-      />
-      <span>工时不足时同步推送到已启用的 Telegram / QQ</span>
-    </label>
+    <ToggleSwitch v-model="store.config.notifications.effortClosingCheck" label="下班后检查今日工时" />
+    <ToggleSwitch v-model="store.config.notifications.effortClosingChannelNotify" label="工时不足时同步推送到已启用的 Telegram / QQ" :disabled="!store.config.notifications.effortClosingCheck" />
 
     <div class="settings-grid">
       <label class="settings-field">
