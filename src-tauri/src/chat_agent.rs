@@ -82,7 +82,11 @@ pub fn default_system_prompt(assistant_name: &str, user_title: &str) -> String {
 5. **主动提议记工时**：当用户提到「干了什么、花了多长时间」时（例如\"修了登录bug花了2小时\"），主动调用 get_tasks 查找匹配任务。返回任务列表后，先向用户说明你找到了哪些可能匹配的任务以及你的选择理由，再调用 prepare-log-task-effort 生成待确认写入建议（记得传出 taskName）。如果拿不准选哪个，把候选列表发给用户让对方选。\n\
    注意：必须等用户确认（说\"确认\"\"好\"\"可以\"）后才会真正写入，你只负责准备建议。如果信息不全（缺任务、缺工时、缺工作描述），先追问清楚再准备。\n\
 6. **项目成本查询两步确认**：用户问项目成本时，必须先调 cost_report_preview 拉团队成员列表，展示给用户确认「你要查的是 XXX 项目吗？团队成员有张三、李四…」，用户确认后再调 cost_report 出完整报告。若用户指定了周期（今年/本季/近半年/某段日期），调 cost_report 时带上 range 或 startDate+endDate；默认本月。禁止跳过预览直接查成本。\n\
-7. **发版/部署必须确认后执行**：当用户要求发版/部署/上线（如\"给 XX 项目测试环境发个版\"）时，调用 prepare-deploy 并**显式传入项目和环境**（test 或 prod，绝不能省略或自己猜默认环境）生成确认卡片，让用户核对项目/环境/分支/参数后确认。绝不直接调用 mcp__<server>__trigger_build（会被拒绝），也绝不替用户确认——必须等用户确认后才真正发版。确认卡片已展示项目/环境/分支/参数的全部细节，所以你随 prepare-deploy 输出的文字只说一句简短引导即可（例如『发版建议已生成，请在卡片上核对后确认』），不要在文字里再逐项复述卡片内容。",
+7. **发版/部署必须确认后执行**：当用户要求发版/部署/上线（如\"给 XX 项目测试环境发个版\"）时：
+   a. 先调 prepare-deploy 并**显式传入项目和环境**（test 或 prod，绝不能省略或自己猜默认环境），拿到 job 名和凭据信息。
+   b. 直接调 mcp__jenkins__get_job_info（传入 jobName）拉取该 job 的构建参数（branch、node_version、server_ip 等）——它是**只读工具、无需用户授权**，别再向用户要授权；把拉到的参数展示给用户核对。
+   c. 用户确认参数后，**再次调用 prepare-deploy，这次带上 parameters（构建参数对象，键值取自第 b 步）**，系统会生成「发版确认卡片」（带确认按钮）。用户必须在卡片上点确认才会真正触发；你绝不自己调 trigger_build，也绝不把用户打字说的「确认」当作已确认。
+   发版前的参数从 Jenkins 动态拉取，不要从记忆或预设里猜。",
         assistant_name, user_title, user_title
     )
 }
@@ -733,13 +737,14 @@ fn tool_schema(name: &str) -> Option<(String, Value)> {
             }),
         )),
         "prepare-deploy" => Some((
-            "发版（部署）的唯一入口：生成一张待用户确认的发版建议卡片，不会真正触发构建。必须显式指定项目和环境（test 或 prod，绝不能省略或默认）。可选传 branch 覆盖预设分支。注意：你只负责生成建议，必须等用户确认后才会真正发版；严禁直接调用 mcp__<server>__trigger_build（会被拒绝）。".into(),
+            "发版（部署）的入口兼确认卡片生成器，两阶段用：①不带 parameters 调用 → 按项目别名匹配 Jenkins job/凭据，返回中间结果（needsParameters），引导你随后调 mcp__jenkins__get_job_info 拉构建参数；②带 parameters 调用（参数对象来自 get_job_info + 用户确认）→ 生成「发版确认卡片」交用户点确认。必须显式指定项目和环境（test 或 prod，绝不能省略或默认）。不会真正触发构建——用户在卡片上点确认后才发版。严禁直接调用 mcp__<server>__trigger_build（会被拒绝），也别把用户打字的「确认」当作已确认。".into(),
             json!({
                 "type": "object",
                 "properties": {
-                    "project": { "type": "string", "description": "项目别名（与发版预设里配置的项目名一致）" },
+                    "project": { "type": "string", "description": "项目别名（与发版配置里的项目别名一致）" },
                     "environment": { "type": "string", "description": "发版环境，必须显式指定：test（测试）或 prod（生产），绝不能省略" },
-                    "branch": { "type": "string", "description": "要发版的分支（可选）；不传则用该项目该环境的预设分支" }
+                    "branch": { "type": "string", "description": "要发版的分支（可选）" },
+                    "parameters": { "type": "object", "description": "构建参数对象（键值来自 get_job_info + 用户确认）。带上它即进入「生成确认卡片」阶段；首次匹配阶段不要传。" }
                 },
                 "required": ["project", "environment"],
                 "additionalProperties": false

@@ -3,70 +3,47 @@ import { onMounted, reactive, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 
 // ============================================================================
-// 后端契约（src-tauri/src/commands/deploy_config.rs，三个 Tauri 命令已实现并提交）
+// 后端契约（src-tauri/src/commands/deploy_config.rs）
 // ============================================================================
-//   deploy_config_get -> { jenkinsMcpPath, serverConfigured, connections[], projects }
-//   deploy_config_save({ input: { jenkinsMcpPath?, connections[], projects } }) -> void
-//   deploy_test_connection({ name }) -> { ok: true, detail }
+//   deploy_config_get -> { jenkinsMcpPath, jenkinsUrl, credentials[] }
+//   deploy_config_save({ input: { jenkinsMcpPath?, jenkinsUrl, credentials[] } }) -> void
+//   deploy_test_connection({ name, url, username, token? }) -> { ok, detail, jenkinsUrl }
+//     用**当前表单值**直接打 Jenkins /api/json 验证凭据，不必先保存；token 留空则后端
+//     回退取 keychain 里该账号(name)已存的 token。
 //
-// 数据模型铁律（避免 envName/jenkinsEnvironment 对不上）：
-//   连接 name（小写字母数字/-，如 test/dev/prod）= 项目里 environment 的 map key
-//   = 该环境的 jenkinsEnvironment 值。一个项目环境 = 选一个连接 + 该环境的
-//   job + 分支 + 其它参数。保存时连接名同时用作 environments 的 key 和 jenkinsEnvironment。
-//   branch 单独做成输入框，其余参数走通用键值对编辑器；保存时 branch 合回 params。
-//
-//   token：进来只有 hasToken 布尔（后端绝不回明文）；保存时仅当用户实际输入新值才放进
-//   payload，省略/留空 = 保留已有密钥不覆盖。
+// credentials[].name 是「账号」的**内部 id**：自动生成、对用户隐藏，仅用于派生 keychain
+// account（jenkins-<id>-token）与 jenkins-mcp 的环境名。用户只填 用户名 / token / 项目，
+// 不感知也不编辑 id。token 进来只有 hasToken 布尔（后端绝不回明文）；保存时仅当用户输入了
+// 新值才带，留空 = 保留已有密钥不覆盖。
 
 // ---- 后端返回的只读视图 ----
-interface ConnectionView {
-  name: string
-  url: string
+interface ProjectEntry {
+  job: string
+  alias: string
+}
+interface CredentialView {
+  name: string // 内部 id（隐藏）
   username: string
   hasToken: boolean
-}
-interface EnvPreset {
-  job: string
-  jenkinsEnvironment: string
-  params: Record<string, string>
-}
-interface ProjectPreset {
-  environments: Record<string, EnvPreset>
+  projects: ProjectEntry[]
 }
 interface DeployConfigView {
   jenkinsMcpPath: string
-  serverConfigured: boolean
-  connections: ConnectionView[]
-  projects: Record<string, ProjectPreset>
+  jenkinsUrl: string
+  credentials: CredentialView[]
 }
 
-// ---- 前端编辑态（把扁平的键值参数拆成 branch + 其它键值对，便于编辑） ----
-interface ConnRow {
-  name: string
-  url: string
+// ---- 前端编辑态（一个账号 = 一个 Jenkins 登录） ----
+interface AccountRow {
+  /** 内部 id（隐藏）：加载时来自后端，新建时本地生成，保存后原样回传以保持稳定。 */
+  id: string
   username: string
-  /** 是否已存有密钥（来自后端 hasToken）；用于 placeholder 提示 */
   hasToken: boolean
+  projects: ProjectEntry[]
   /** 用户本次新输入的 token；为空 = 不修改已有密钥 */
   token: string
   testState: 'idle' | 'testing' | 'ok' | 'fail'
   testMessage: string
-}
-interface ParamKv {
-  key: string
-  value: string
-}
-interface EnvRow {
-  /** 选用的连接名（= environments 的 key = jenkinsEnvironment） */
-  connection: string
-  job: string
-  branch: string
-  /** branch 之外的参数 */
-  params: ParamKv[]
-}
-interface ProjectRow {
-  name: string
-  environments: EnvRow[]
 }
 
 const loading = ref(true)
@@ -76,9 +53,8 @@ const saveMessage = ref('')
 const showAdvanced = ref(false)
 
 const jenkinsMcpPath = ref('')
-const serverConfigured = ref(false)
-const connections = reactive<ConnRow[]>([])
-const projects = reactive<ProjectRow[]>([])
+const jenkinsUrl = ref('')
+const accounts = reactive<AccountRow[]>([])
 
 // ============================================================================
 // 加载：deploy_config_get -> 填表
@@ -93,9 +69,8 @@ async function load() {
   try {
     const view = await invoke<DeployConfigView>('deploy_config_get')
     jenkinsMcpPath.value = view.jenkinsMcpPath ?? ''
-    serverConfigured.value = !!view.serverConfigured
-    connections.splice(0, connections.length, ...(view.connections ?? []).map(toConnRow))
-    projects.splice(0, projects.length, ...projectsToRows(view.projects ?? {}))
+    jenkinsUrl.value = view.jenkinsUrl ?? ''
+    accounts.splice(0, accounts.length, ...(view.credentials ?? []).map(toAccountRow))
   } catch (e) {
     saveState.value = 'fail'
     saveMessage.value = `加载发版配置失败：${errText(e)}`
@@ -104,89 +79,69 @@ async function load() {
   }
 }
 
-function toConnRow(c: ConnectionView): ConnRow {
+function toAccountRow(c: CredentialView): AccountRow {
   return {
-    name: c.name ?? '',
-    url: c.url ?? '',
+    id: c.name ?? '',
     username: c.username ?? '',
     hasToken: !!c.hasToken,
+    projects: (c.projects ?? []).map(p => ({ job: p.job ?? '', alias: p.alias ?? '' })),
     token: '',
     testState: 'idle',
     testMessage: '',
   }
 }
 
-function projectsToRows(projectMap: Record<string, ProjectPreset>): ProjectRow[] {
-  return Object.entries(projectMap).map(([name, proj]) => ({
-    name,
-    environments: Object.entries(proj.environments ?? {}).map(([envKey, env]) => {
-      const params = env.params ?? {}
-      // branch 拆出来单独编辑，其余进键值对编辑器。
-      const { branch, ...rest } = params
-      return {
-        // environments 的 map key 就是连接名（= jenkinsEnvironment），优先用 key。
-        connection: envKey || env.jenkinsEnvironment || '',
-        job: env.job ?? '',
-        branch: branch ?? '',
-        params: Object.entries(rest).map(([key, value]) => ({ key, value: String(value) })),
-      }
-    }),
-  }))
-}
-
 // ============================================================================
-// 连接列表交互
+// 账号列表交互
 // ============================================================================
 
-const NAME_RE = /^[A-Za-z0-9-]+$/
-
-function connNameError(name: string): string {
-  const n = name.trim()
-  if (!n) return '连接名不能为空'
-  if (!NAME_RE.test(n)) return '连接名只能包含字母、数字和连字符(-)'
-  return ''
+/** 生成账号内部 id：`acct-<base36>`，对用户隐藏；满足后端 [A-Za-z0-9-] 校验。 */
+function genAccountId(): string {
+  return 'acct-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
 }
 
-function addConnection() {
-  connections.push({
-    name: '',
-    url: '',
+function addAccount() {
+  accounts.push({
+    id: genAccountId(),
     username: '',
     hasToken: false,
+    projects: [],
     token: '',
     testState: 'idle',
     testMessage: '',
   })
 }
 
-function removeConnection(i: number) {
-  connections.splice(i, 1)
+function removeAccount(i: number) {
+  accounts.splice(i, 1)
 }
 
-async function testConnection(row: ConnRow) {
-  const err = connNameError(row.name)
-  if (err) {
-    row.testState = 'fail'
-    row.testMessage = err
+async function testConnection(acct: AccountRow) {
+  if (!jenkinsUrl.value.trim()) {
+    acct.testState = 'fail'
+    acct.testMessage = '请先填写 Jenkins 地址'
     return
   }
-  // 后端按已保存的配置测试连接：先保存再测更可靠。
-  if (!serverConfigured.value || row.hasToken === false) {
-    row.testState = 'fail'
-    row.testMessage = '请先保存配置（含 token），再测试连接'
+  if (!acct.username.trim()) {
+    acct.testState = 'fail'
+    acct.testMessage = '请先填写用户名'
     return
   }
-  row.testState = 'testing'
-  row.testMessage = ''
+  // 测当前**填写**的值，不必先保存：token 填了就用填的，留空则后端回退已保存的。
+  acct.testState = 'testing'
+  acct.testMessage = ''
   try {
-    const r = await invoke<{ ok: boolean; detail: string }>('deploy_test_connection', {
-      name: row.name.trim(),
+    const r = await invoke<{ ok: boolean; detail: string; jenkinsUrl: string }>('deploy_test_connection', {
+      name: acct.id,
+      url: jenkinsUrl.value.trim(),
+      username: acct.username.trim(),
+      token: acct.token.trim() || undefined,
     })
-    row.testState = 'ok'
-    row.testMessage = r.detail || '连接成功'
+    acct.testState = r.ok ? 'ok' : 'fail'
+    acct.testMessage = r.detail || (r.ok ? '连接成功 ✓' : '连接失败')
   } catch (e) {
-    row.testState = 'fail'
-    row.testMessage = errText(e)
+    acct.testState = 'fail'
+    acct.testMessage = errText(e)
   }
 }
 
@@ -194,34 +149,12 @@ async function testConnection(row: ConnRow) {
 // 项目列表交互
 // ============================================================================
 
-function addProject() {
-  projects.push({ name: '', environments: [] })
+function addProject(acct: AccountRow) {
+  acct.projects.push({ job: '', alias: '' })
 }
 
-function removeProject(i: number) {
-  projects.splice(i, 1)
-}
-
-function addEnvironment(project: ProjectRow) {
-  project.environments.push({
-    // 默认选第一个连接（若有），否则留空待用户选。
-    connection: connections[0]?.name?.trim() ?? '',
-    job: '',
-    branch: '',
-    params: [],
-  })
-}
-
-function removeEnvironment(project: ProjectRow, i: number) {
-  project.environments.splice(i, 1)
-}
-
-function addParam(env: EnvRow) {
-  env.params.push({ key: '', value: '' })
-}
-
-function removeParam(env: EnvRow, i: number) {
-  env.params.splice(i, 1)
+function removeProject(acct: AccountRow, i: number) {
+  acct.projects.splice(i, 1)
 }
 
 // ============================================================================
@@ -232,13 +165,19 @@ async function save() {
   saveState.value = 'idle'
   saveMessage.value = ''
 
-  // 前端先做连接名校验，给即时反馈（后端也会再校验）。
-  for (const c of connections) {
-    const err = connNameError(c.name)
-    if (err) {
+  for (let i = 0; i < accounts.length; i++) {
+    if (!accounts[i].username.trim()) {
       saveState.value = 'fail'
-      saveMessage.value = `连接「${c.name || '(未命名)'}」：${err}`
+      saveMessage.value = `账号 ${i + 1}：用户名不能为空（Jenkins 鉴权必需）`
       return
+    }
+    // 别名必填：凡填了 job 的项目都必须有别名（与 buildPayload 的 job 过滤口径一致）。
+    for (const p of accounts[i].projects) {
+      if (p.job.trim() && !p.alias.trim()) {
+        saveState.value = 'fail'
+        saveMessage.value = `账号 ${i + 1} 的项目「${p.job.trim()}」：别名不能为空`
+        return
+      }
     }
   }
 
@@ -246,76 +185,47 @@ async function save() {
   try {
     await invoke('deploy_config_save', { input: buildPayload() })
     saveState.value = 'ok'
-    saveMessage.value = '已保存并重启发版服务'
-    // 重新拉取：刷新 hasToken（新存的 token 落库后清空本地输入）、serverConfigured。
+    saveMessage.value = '已保存'
     await reloadAfterSave()
   } catch (e) {
-    // reject 两种：纯校验失败（没写盘）或 配置已写盘但 jenkins-mcp 重启失败。
-    // 前端无法精确区分，统一显示错误并提示「配置可能已保存，修正后重存即可」。
     saveState.value = 'fail'
-    saveMessage.value = `${errText(e)}\n（若是连接 token / 路径问题，配置已保存，修正后重新保存即可。）`
+    saveMessage.value = errText(e)
   } finally {
     saving.value = false
   }
 }
 
 function buildPayload() {
-  const conns = connections.map(c => {
-    const base: { name: string; url: string; username: string; token?: string } = {
-      name: c.name.trim(),
-      url: c.url.trim(),
-      username: c.username.trim(),
+  const creds = accounts.map(a => {
+    const base: { name: string; username: string; token?: string; projects: ProjectEntry[] } = {
+      name: a.id, // 内部 id 作为后端 credential name
+      username: a.username.trim(),
+      projects: a.projects
+        .filter(p => p.job.trim())
+        .map(p => ({ job: p.job.trim(), alias: p.alias.trim() })),
     }
-    // token 仅在用户本次实际输入了新值时才带；留空 = 保留已有密钥不覆盖。
-    const token = c.token.trim()
+    const token = a.token.trim()
     if (token) base.token = token
     return base
   })
 
-  const projectMap: Record<string, ProjectPreset> = {}
-  for (const p of projects) {
-    const name = p.name.trim()
-    if (!name) continue
-    const environments: Record<string, EnvPreset> = {}
-    for (const env of p.environments) {
-      const conn = env.connection.trim()
-      if (!conn) continue
-      const params: Record<string, string> = {}
-      for (const kv of env.params) {
-        const key = kv.key.trim()
-        if (!key) continue
-        params[key] = kv.value
-      }
-      // branch 合回 params（仅当非空）。
-      const branch = env.branch.trim()
-      if (branch) params.branch = branch
-      // 连接名同时用作 environments 的 key 和 jenkinsEnvironment（铁律）。
-      environments[conn] = {
-        job: env.job.trim(),
-        jenkinsEnvironment: conn,
-        params,
-      }
-    }
-    projectMap[name] = { environments }
-  }
-
   return {
     jenkinsMcpPath: jenkinsMcpPath.value.trim() || undefined,
-    connections: conns,
-    projects: projectMap,
+    jenkinsUrl: jenkinsUrl.value.trim(),
+    credentials: creds,
   }
 }
 
-/** 保存成功后重新拉取视图，但不覆盖用户刚填的报错状态（save 已设 ok）。 */
+/** 保存成功后重新拉取视图，按内部 id 刷新 hasToken / username 并清空本地 token 输入。 */
 async function reloadAfterSave() {
   try {
     const view = await invoke<DeployConfigView>('deploy_config_get')
-    serverConfigured.value = !!view.serverConfigured
-    // 刷新连接的 hasToken 并清掉本地 token 输入（已落密钥链）。
-    const byName = new Map((view.connections ?? []).map(c => [c.name, c]))
-    for (const row of connections) {
-      const fresh = byName.get(row.name.trim())
+    jenkinsUrl.value = view.jenkinsUrl ?? ''
+    const byId = new Map((view.credentials ?? []).map(c => [c.name, c]))
+    for (const row of accounts) {
+      const fresh = byId.get(row.id)
       if (fresh) {
+        row.username = fresh.username ?? row.username
         row.hasToken = !!fresh.hasToken
         row.token = ''
       }
@@ -338,131 +248,95 @@ function errText(e: unknown): string {
 <template>
   <section class="settings-section">
     <h3 class="settings-section-title">对话式发版</h3>
-    <p class="settings-section-hint">
-      配置 Jenkins 连接与项目预设后，就能对机器人说「给某项目测试环境发个版」。发版属高危写操作，会先回显项目、环境、分支、参数等你确认，确认后才真正触发。token 加密存进系统密钥链，不写入明文配置。
-    </p>
 
     <p v-if="loading" class="settings-section-hint" style="text-align:center;padding:16px 0;">
       正在加载发版配置…
     </p>
 
     <template v-else>
-      <!-- ============ 块 1：Jenkins 连接列表 ============ -->
-      <div class="deploy-block">
-        <div class="deploy-block-title">Jenkins 连接</div>
-        <p class="settings-section-hint">
-          每个连接 = 一个账号 + 一个环境。连接名（如 <code>test</code> / <code>prod</code>，仅字母数字和连字符）会作为该环境的标识，在下方项目里被引用。
-        </p>
+      <!-- ============ Jenkins 地址 ============ -->
+      <label class="settings-field">
+        <span class="settings-field-label">Jenkins 地址</span>
+        <input v-model="jenkinsUrl" class="settings-input" type="url" placeholder="http://jenkins.example.com" />
+      </label>
 
-        <div v-if="connections.length === 0" class="deploy-empty">还没有连接，点下方按钮添加</div>
+      <!-- ============ 账号卡片 ============ -->
+      <div v-if="accounts.length === 0" class="deploy-empty">还没有账号，点下方按钮添加</div>
 
-        <div v-for="(c, ci) in connections" :key="ci" class="deploy-card">
-          <div class="deploy-card-head">
-            <input
-              v-model="c.name"
-              class="settings-input deploy-name-input"
-              type="text"
-              placeholder="连接名，如 test / prod"
-              :class="{ 'deploy-input-bad': !!connNameError(c.name) && c.name.length > 0 }"
-            />
-            <button class="deploy-del-btn" title="删除连接" @click="removeConnection(ci)">×</button>
-          </div>
-          <label class="settings-field">
-            <span class="settings-field-label">地址</span>
-            <input v-model="c.url" class="settings-input" type="url" placeholder="https://jenkins.example.com" />
-          </label>
-          <label class="settings-field">
-            <span class="settings-field-label">账号</span>
-            <input v-model="c.username" class="settings-input" type="text" placeholder="Jenkins 用户名" />
-          </label>
-          <label class="settings-field">
-            <span class="settings-field-label">token</span>
-            <input
-              v-model="c.token"
-              class="settings-input"
-              type="password"
-              :placeholder="c.hasToken ? '已保存，留空则不修改' : 'Jenkins API Token'"
-            />
-          </label>
-          <div class="settings-actions">
-            <button class="settings-btn" :disabled="c.testState === 'testing'" @click="testConnection(c)">
-              {{ c.testState === 'testing' ? '测试中…' : '测试连接' }}
-            </button>
-          </div>
-          <p v-if="c.testMessage" class="settings-msg" :class="`settings-msg-${c.testState === 'testing' ? 'testing' : c.testState}`">
-            {{ c.testMessage }}
-          </p>
+      <div v-for="(acct, ai) in accounts" :key="acct.id" class="deploy-card">
+        <!-- 头部：账号序号 + 删除 -->
+        <div class="deploy-card-head">
+          <span class="deploy-card-title">账号 {{ ai + 1 }}</span>
+          <button class="deploy-del-btn" title="删除账号" @click="removeAccount(ai)">×</button>
         </div>
 
-        <button class="settings-btn deploy-add-btn" @click="addConnection">+ 新增连接</button>
-      </div>
-
-      <!-- ============ 块 2：项目列表 ============ -->
-      <div class="deploy-block">
-        <div class="deploy-block-title">项目预设</div>
-        <p class="settings-section-hint">
-          每个项目可配多个环境。每个环境 = 选一个上面的连接 + 该环境的 job + 分支 + 其它构建参数。所选连接名同时作为发版时的环境标识，杜绝默认环境误发。
+        <!-- 用户名 -->
+        <label class="settings-field">
+          <span class="settings-field-label">用户名</span>
+          <input
+            v-model="acct.username"
+            class="settings-input"
+            type="text"
+            placeholder="Jenkins 用户名（User ID）"
+          />
+        </label>
+        <p class="deploy-field-hint">
+          = Jenkins User ID（不是显示名）。在 Jenkins 点右上角进个人页，地址栏 <code>…/user/xxx/</code> 里的 <code>xxx</code> 就是。
         </p>
 
-        <div v-if="projects.length === 0" class="deploy-empty">还没有项目，点下方按钮添加</div>
+        <!-- token -->
+        <label class="settings-field">
+          <span class="settings-field-label">token</span>
+          <input
+            v-model="acct.token"
+            class="settings-input"
+            type="password"
+            :placeholder="acct.hasToken ? '已保存，留空则不修改' : 'Jenkins API Token'"
+          />
+        </label>
 
-        <div v-for="(p, pi) in projects" :key="pi" class="deploy-card">
-          <div class="deploy-card-head">
-            <input
-              v-model="p.name"
-              class="settings-input deploy-name-input"
-              type="text"
-              placeholder="项目名（别名），如 人资管理端"
-            />
-            <button class="deploy-del-btn" title="删除项目" @click="removeProject(pi)">×</button>
-          </div>
-
-          <div v-if="p.environments.length === 0" class="deploy-empty deploy-empty-inner">
-            还没有环境，点下方按钮添加
-          </div>
-
-          <div v-for="(env, ei) in p.environments" :key="ei" class="deploy-env">
-            <div class="deploy-env-head">
-              <span class="deploy-env-tag">环境</span>
-              <button class="deploy-del-btn" title="删除环境" @click="removeEnvironment(p, ei)">×</button>
-            </div>
-            <label class="settings-field">
-              <span class="settings-field-label">连接</span>
-              <select v-model="env.connection" class="settings-input">
-                <option value="" disabled>选择一个连接</option>
-                <option v-for="c in connections" :key="c.name" :value="c.name.trim()">
-                  {{ c.name || '(未命名)' }}
-                </option>
-              </select>
-            </label>
-            <label class="settings-field">
-              <span class="settings-field-label">job</span>
-              <input v-model="env.job" class="settings-input" type="text" placeholder="Jenkins job 名，如 example-access-web" />
-            </label>
-            <label class="settings-field">
-              <span class="settings-field-label">分支</span>
-              <input v-model="env.branch" class="settings-input" type="text" placeholder="如 dev / prod" />
-            </label>
-
-            <div class="deploy-params">
-              <div class="deploy-params-label">其它参数</div>
-              <div v-for="(kv, ki) in env.params" :key="ki" class="deploy-param-row">
-                <input v-model="kv.key" class="settings-input deploy-param-key" type="text" placeholder="键，如 node_version" />
-                <input v-model="kv.value" class="settings-input deploy-param-val" type="text" placeholder="值，如 nodejs-18.14.2" />
-                <button class="deploy-del-btn" title="删除参数" @click="removeParam(env, ki)">×</button>
-              </div>
-              <button class="settings-btn deploy-add-btn deploy-add-sm" @click="addParam(env)">+ 参数</button>
-            </div>
-          </div>
-
-          <button class="settings-btn deploy-add-btn deploy-add-sm" @click="addEnvironment(p)">+ 新增环境</button>
+        <!-- 测试连接 -->
+        <div class="settings-actions">
+          <button class="settings-btn" :disabled="acct.testState === 'testing'" @click="testConnection(acct)">
+            {{ acct.testState === 'testing' ? '测试中…' : '测试连接' }}
+          </button>
         </div>
+        <p v-if="!acct.testMessage" class="deploy-field-hint">测试用当前填写的信息，不必先保存；测通后再点底部「保存」。</p>
+        <p v-if="acct.testMessage" class="settings-msg" :class="`settings-msg-${acct.testState === 'testing' ? 'testing' : acct.testState}`">
+          {{ acct.testMessage }}
+        </p>
 
-        <button class="settings-btn deploy-add-btn" @click="addProject">+ 新增项目</button>
+        <!-- 项目列表 -->
+        <div class="deploy-projects">
+          <div class="deploy-projects-label">项目</div>
+
+          <div v-if="acct.projects.length === 0" class="deploy-empty deploy-empty-inner">
+            还没有项目，点下方按钮添加
+          </div>
+
+          <div v-for="(proj, pi) in acct.projects" :key="pi" class="deploy-project-row">
+            <input v-model="proj.job" class="settings-input deploy-project-job" type="text" placeholder="job 名" />
+            <input v-model="proj.alias" class="settings-input deploy-project-alias" type="text" placeholder="别名" />
+            <button class="deploy-del-btn" title="删除项目" @click="removeProject(acct, pi)">×</button>
+          </div>
+
+          <button class="settings-btn deploy-add-btn deploy-add-sm" @click="addProject(acct)">+ 添加项目</button>
+        </div>
       </div>
 
-      <!-- ============ 块 3：jenkins-mcp 路径（高级，折叠） ============ -->
-      <div class="deploy-block">
+      <!-- ============ 底部操作 ============ -->
+      <div class="deploy-bottom-actions">
+        <button class="settings-btn deploy-add-btn" @click="addAccount">+ 添加账号</button>
+        <button class="settings-btn settings-btn-primary" :disabled="saving" @click="save">
+          {{ saving ? '保存中…' : '保存' }}
+        </button>
+      </div>
+      <p v-if="saveMessage" class="settings-msg" :class="`settings-msg-${saveState === 'idle' ? 'testing' : saveState}`">
+        {{ saveMessage }}
+      </p>
+
+      <!-- ============ 高级：jenkins-mcp 路径 ============ -->
+      <div class="deploy-advanced">
         <button class="deploy-advanced-toggle" @click="showAdvanced = !showAdvanced">
           <span>{{ showAdvanced ? '▾' : '▸' }}</span>
           <span>高级：jenkins-mcp 路径</span>
@@ -475,35 +349,11 @@ function errText(e: unknown): string {
           <p class="settings-section-hint">通常无需修改，留空将沿用现有或默认路径。</p>
         </div>
       </div>
-
-      <!-- ============ 保存 ============ -->
-      <div class="settings-actions">
-        <button class="settings-btn settings-btn-primary" :disabled="saving" @click="save">
-          {{ saving ? '保存中…' : '保存' }}
-        </button>
-      </div>
-      <p v-if="saveMessage" class="settings-msg" :class="`settings-msg-${saveState === 'idle' ? 'testing' : saveState}`">
-        {{ saveMessage }}
-      </p>
     </template>
   </section>
 </template>
 
 <style scoped>
-.deploy-block {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: 10px;
-  background: var(--surface);
-  border: var(--divider);
-  border-radius: 6px;
-}
-.deploy-block-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text);
-}
 .deploy-card {
   display: flex;
   flex-direction: column;
@@ -516,14 +366,26 @@ function errText(e: unknown): string {
 .deploy-card-head {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 6px;
 }
-.deploy-name-input {
-  flex: 1;
+.deploy-card-title {
   font-weight: 600;
+  font-size: 12px;
+  color: var(--text-dim);
 }
-.deploy-input-bad {
-  border-color: var(--danger);
+.deploy-field-hint {
+  margin: 0 0 2px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.deploy-field-hint code {
+  font-size: 10px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--text);
 }
 .deploy-del-btn {
   flex-shrink: 0;
@@ -544,46 +406,29 @@ function errText(e: unknown): string {
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
-.deploy-env {
+.deploy-projects {
   display: flex;
   flex-direction: column;
   gap: 3px;
   margin-top: 4px;
-  padding: 7px;
+  padding: 6px;
   background: var(--surface);
   border: var(--divider-soft);
   border-radius: 5px;
 }
-.deploy-env-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.deploy-env-tag {
-  font-size: 10px;
-  color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-.deploy-params {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  margin-top: 4px;
-}
-.deploy-params-label {
+.deploy-projects-label {
   font-size: 10.5px;
   color: var(--text-dim);
 }
-.deploy-param-row {
+.deploy-project-row {
   display: flex;
   align-items: center;
   gap: 6px;
 }
-.deploy-param-key {
-  flex: 0 0 38%;
+.deploy-project-job {
+  flex: 1;
 }
-.deploy-param-val {
+.deploy-project-alias {
   flex: 1;
 }
 .deploy-add-btn {
@@ -603,6 +448,14 @@ function errText(e: unknown): string {
 }
 .deploy-empty-inner {
   padding: 4px;
+}
+.deploy-bottom-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.deploy-advanced {
+  margin-top: 4px;
 }
 .deploy-advanced-toggle {
   display: flex;

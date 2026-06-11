@@ -42,7 +42,7 @@ use std::sync::Arc;
 
 use once_cell::sync::Lazy;
 use rmcp::model::{CallToolRequestParams, CallToolResult, Tool};
-use rmcp::service::{RoleClient, RunningService};
+use rmcp::service::{RoleClient, RunningService, ServiceError};
 use rmcp::transport::TokioChildProcess;
 use rmcp::ServiceExt;
 use serde::{Deserialize, Serialize};
@@ -250,6 +250,26 @@ pub struct McpClientManager {
     servers: Arc<Mutex<HashMap<String, Running>>>,
 }
 
+/// `call_tool_once` 的内部错误分类：区分「子进程已死（可自愈重连）」与其它错误。
+enum CallErr {
+    /// 传输层断开（子进程已退出）——调用方可剔除死条目并重连后重试。
+    TransportDead,
+    /// 其它错误（未连接 / 协议错 / 超时），已是可读字符串，如实返回。
+    Other(String),
+}
+
+/// rmcp 调用错误是否意味着「子进程/传输已死」（可自愈重连）。
+///
+/// 只认明确的传输断开信号：`TransportClosed`（子进程关了 stdout，即已退出）、
+/// `TransportSend`（写 stdin 失败，子进程已不在）。协议错误 / 超时 / 取消不算——
+/// 那些要么重连也救不了、要么语义不同，不该触发自动重连。
+fn is_transport_dead(e: &ServiceError) -> bool {
+    matches!(
+        e,
+        ServiceError::TransportClosed | ServiceError::TransportSend(_)
+    )
+}
+
 impl McpClientManager {
     pub fn new() -> Self {
         Self::default()
@@ -333,25 +353,71 @@ impl McpClientManager {
         }
     }
 
-    /// 调用某个已连接 server 的某个工具。
+    /// 调用某个已连接 server 的某个工具，带「僵尸条目自愈」。
     ///
-    /// 注意两层错误：
+    /// 注意两层错误（见 mcp-client.md §3.3）：
     ///   - 协议/传输层错误（子进程死了、方法不存在等）→ 本函数返回 `Err(String)`。
     ///   - 工具自身失败 → 返回 `Ok(CallToolResult { is_error: Some(true), .. })`，
     ///     调用方需自己检查 `is_error`（jenkins-mcp 失败就是这么回的）。
+    ///
+    /// 自愈：子进程可能在 spawn 后悄悄退出（崩溃/被杀），但死条目仍赖在 map 里，
+    /// `connected_ids` 会误报「在线」，于是 call 一直撞死进程报 `Transport closed`。
+    /// 故首次调用若因传输已断而失败，就剔除死条目、按 mcp-servers.json 重新 spawn，
+    /// 再重试一次。重试仍失败如实返回——绝不无限重连。工具自身失败（is_error）不触发自愈。
     pub async fn call_tool(
         &self,
         id: &str,
         tool_name: &str,
         arguments: Option<Map<String, Value>>,
     ) -> Result<CallToolResult, String> {
-        // 同 list_tools：持锁只为 clone Peer，stdio 往返不持锁，并加超时兜底。
+        match self.call_tool_once(id, tool_name, arguments.clone()).await {
+            Ok(r) => Ok(r),
+            Err(CallErr::Other(msg)) => Err(msg),
+            Err(CallErr::TransportDead) => {
+                eprintln!(
+                    "[mcp_client] '{}' 传输已断（子进程已退出），剔除死条目并尝试重连…",
+                    id
+                );
+                // 剔除死条目（已死，cancel 基本是 no-op，错误忽略；关键是从 map 移除）。
+                let _ = self.shutdown_server(id).await;
+                // 按配置重新 spawn。配置里已无此 server → 无法重连，如实报错。
+                let cfg = load_mcp_servers_config()?;
+                match cfg.servers.get(id) {
+                    Some(server_cfg) => self.spawn_server(id, server_cfg).await?,
+                    None => {
+                        return Err(format!(
+                            "call_tool('{}/{}') 失败: 子进程已退出，且 mcp-servers.json 中已无 '{}'，无法重连",
+                            id, tool_name, id
+                        ));
+                    }
+                }
+                // 重连后重试一次；无论成败都如实返回（不再自愈，避免循环）。
+                match self.call_tool_once(id, tool_name, arguments).await {
+                    Ok(r) => Ok(r),
+                    Err(CallErr::Other(msg)) => Err(msg),
+                    Err(CallErr::TransportDead) => Err(format!(
+                        "call_tool('{}/{}') 失败: 重连后传输仍不可用（子进程可能起不来，检查配置/凭据）",
+                        id, tool_name
+                    )),
+                }
+            }
+        }
+    }
+
+    /// 单次工具调用（不自愈）。持锁只为 clone Peer，stdio 往返不持锁，超时兜底。
+    /// 错误分两类：`TransportDead`（子进程死，调用方可自愈重连）与 `Other`（其余如实回）。
+    async fn call_tool_once(
+        &self,
+        id: &str,
+        tool_name: &str,
+        arguments: Option<Map<String, Value>>,
+    ) -> Result<CallToolResult, CallErr> {
         let peer = {
             let map = self.servers.lock().await;
-            map.get(id)
-                .ok_or_else(|| format!("MCP server '{}' 未连接", id))?
-                .peer()
-                .clone()
+            match map.get(id) {
+                Some(running) => running.peer().clone(),
+                None => return Err(CallErr::Other(format!("MCP server '{}' 未连接", id))),
+            }
         };
         // CallToolRequestParams 是 #[non_exhaustive]，跨 crate 不能用结构体字面量，
         // 走 new()/with_arguments() builder。
@@ -360,13 +426,18 @@ impl McpClientManager {
             params = params.with_arguments(args);
         }
         match tokio::time::timeout(MCP_REQUEST_TIMEOUT, peer.call_tool(params)).await {
-            Ok(r) => r.map_err(|e| format!("call_tool('{}/{}') 失败: {}", id, tool_name, e)),
-            Err(_) => Err(format!(
+            Ok(Ok(r)) => Ok(r),
+            Ok(Err(e)) if is_transport_dead(&e) => Err(CallErr::TransportDead),
+            Ok(Err(e)) => Err(CallErr::Other(format!(
+                "call_tool('{}/{}') 失败: {}",
+                id, tool_name, e
+            ))),
+            Err(_) => Err(CallErr::Other(format!(
                 "call_tool('{}/{}') 超时（{}s 未响应）",
                 id,
                 tool_name,
                 MCP_REQUEST_TIMEOUT.as_secs()
-            )),
+            ))),
         }
     }
 
@@ -447,6 +518,16 @@ impl McpClientManager {
 async fn spawn_running(cfg: &McpServerConfig) -> Result<Running, String> {
     let mut cmd = Command::new(&cfg.command);
     cmd.args(&cfg.args);
+    // Windows：抑制子进程的控制台黑框。Jarvis 是 GUI 应用，spawn 控制台子系统程序
+    // （node.exe 等）默认会弹一个一闪而过的控制台窗口，每次 spawn/重启都弹一次，很扰民。
+    // CREATE_NO_WINDOW (0x0800_0000) 让子进程不分配控制台窗口；stdin/stdout 管道照常工作。
+    // 其它平台无此问题，故仅 Windows 生效。creation_flags 是 tokio::process::Command 的
+    // inherent 方法（内部转调 std），无需额外 use。
+    #[cfg(windows)]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
     for (k, v) in &cfg.env {
         // 每个 env 值先过 resolve_env_value：`keychain:` 前缀的从 OS 密钥链取，
         // 让 Jenkins token 等敏感值不落明文配置（满足 DoD「token 不出现在明文配置」）。

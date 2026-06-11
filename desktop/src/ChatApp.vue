@@ -87,6 +87,8 @@ const inputText = ref('')
 const isSending = ref(false)
 const renamingId = ref<string | null>(null)
 const renamingValue = ref('')
+/** 待确认删除的对话 id（应用内二次确认，替代原生 confirm() 弹框） */
+const pendingDeleteId = ref<string | null>(null)
 const messagesEl = ref<HTMLElement | null>(null)
 /** 流式输出时累积的文本（纯视觉，不落盘） */
 const streamingContent = ref('')
@@ -107,6 +109,7 @@ async function refreshList() {
 }
 
 async function selectConversation(id: string) {
+  pendingDeleteId.value = null
   if (currentId.value === id && currentConversation.value) return
   try {
     const conv = await invoke<Conversation>('conversations_load', { id })
@@ -197,6 +200,8 @@ async function confirmPendingWrite(msg: ChatMessage) {
         } else {
           msg.writeNote = '已触发构建'
         }
+        // 开始监听后端轮询推送的构建状态事件
+        startBuildStatusListener(msg)
       }
     }
   } catch (e: any) {
@@ -216,8 +221,75 @@ async function cancelPendingWrite(msg: ChatMessage) {
   await invoke('conversations_save', { conversation: currentConversation.value })
 }
 
-async function deleteConversation(id: string) {
-  if (!confirm('确定删除这个对话？不可恢复')) return
+/** 构建状态轮询 listener 清理函数列表 */
+const buildPollUnlisteners: Array<() => void> = []
+
+/**
+ * 监听后端轮询推送的 build-status 事件，实时更新卡片 writeNote。
+ * 终态（success/failure/aborted/timeout/error）后自动 unlisten。
+ */
+async function startBuildStatusListener(msg: ChatMessage) {
+  const unlisten = await listen<Record<string, any>>('build-status', (event) => {
+    const p = event.payload
+    switch (p.status) {
+      case 'building':
+        msg.writeNote = '构建中…'
+        break
+      case 'success':
+        msg.writeNote = '构建成功 ✓'
+        saveConversation()
+        unlisten()
+        break
+      case 'failure':
+        msg.writeNote = p.log
+          ? `构建失败\n${p.log}`
+          : '构建失败'
+        saveConversation()
+        unlisten()
+        break
+      case 'aborted':
+        msg.writeNote = '构建已取消'
+        saveConversation()
+        unlisten()
+        break
+      case 'timeout':
+        msg.writeNote = '构建超时（15 分钟）'
+        saveConversation()
+        unlisten()
+        break
+      case 'error':
+        msg.writeNote = '构建状态查询出错'
+        saveConversation()
+        unlisten()
+        break
+    }
+  })
+  buildPollUnlisteners.push(unlisten)
+}
+
+async function saveConversation() {
+  if (!currentConversation.value) return
+  currentConversation.value.updatedAt = Date.now()
+  try {
+    await invoke('conversations_save', { conversation: currentConversation.value })
+  } catch (e) {
+    console.error('保存对话失败:', e)
+  }
+}
+
+/** 点删除：进入应用内二次确认态（不立即删、不弹原生 confirm）。 */
+function requestDelete(id: string) {
+  renamingId.value = null
+  pendingDeleteId.value = id
+}
+
+function cancelDelete() {
+  pendingDeleteId.value = null
+}
+
+/** 确认删除：真正删掉对话。 */
+async function confirmDelete(id: string) {
+  pendingDeleteId.value = null
   try {
     await invoke('conversations_delete', { id })
     conversations.value = conversations.value.filter(c => c.id !== id)
@@ -476,6 +548,8 @@ onMounted(async () => {
 onUnmounted(() => {
   cleanup?.()
   streamUnlisten?.()
+  buildPollUnlisteners.forEach(fn => fn())
+  buildPollUnlisteners.length = 0
 })
 
 watch(() => configStore.config.assistantName, (n) => {
@@ -515,7 +589,11 @@ watch(() => configStore.config.assistantName, (n) => {
               <div class="conv-title" @dblclick.stop="startRename(meta)">{{ meta.title }}</div>
               <div class="conv-meta">{{ meta.messageCount }} 条 · {{ formatTime(meta.updatedAt) }}</div>
             </template>
-            <button class="conv-del" @click.stop="deleteConversation(meta.id)" title="删除">×</button>
+            <div v-if="pendingDeleteId === meta.id" class="conv-del-confirm" @click.stop>
+              <button class="conv-del-yes" @click.stop="confirmDelete(meta.id)">删除</button>
+              <button class="conv-del-no" @click.stop="cancelDelete">取消</button>
+            </div>
+            <button v-else class="conv-del" @click.stop="requestDelete(meta.id)" title="删除">×</button>
           </li>
           <li v-if="sortedConversations.length === 0" class="empty-hint">还没有对话</li>
         </ul>
@@ -740,6 +818,34 @@ watch(() => configStore.config.assistantName, (n) => {
 }
 .conv-item:hover .conv-del { opacity: 1; }
 .conv-del:hover { color: var(--red-text); background: var(--red-bg); }
+.conv-del-confirm {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.conv-del-yes,
+.conv-del-no {
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 8px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.conv-del-yes {
+  color: var(--red-text);
+  background: var(--red-bg);
+}
+.conv-del-yes:hover { filter: brightness(1.12); }
+.conv-del-no {
+  color: var(--text-muted);
+  background: var(--surface-item-hover);
+}
+.conv-del-no:hover { color: var(--text); }
 .rename-input {
   width: 100%;
   padding: 3px 6px;

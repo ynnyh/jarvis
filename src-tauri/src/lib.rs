@@ -231,6 +231,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 });
             }
 
+            // 存储 AppHandle 供 deploy 轮询任务 emit 事件到前端。
+            tools::deploy::init_app_handle(app.handle().clone());
+
             // 启动全局 MCP client 管理器：读 ~/.jarvis/mcp-servers.json，spawn 所有 enabled
             // 的 stdio MCP server。没配文件 → Ok([])，正常启动（无 MCP server）。单个 server
             // 起不来不阻断 app（spawn_all_from_config 内部已逐个打日志）。

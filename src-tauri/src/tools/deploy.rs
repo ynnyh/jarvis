@@ -1,73 +1,76 @@
-// 对话式发版：prepare-deploy（生成建议，无副作用）+ confirm-deploy（真正触发）。
+// 对话式发版：prepare-deploy（查找项目匹配，返回中间结果）+ confirm-deploy（真正触发）。
 //
 // 镜像 effort_logging 的 prepare → 用户确认 → 真写入 模式。发版是高危写操作，
 // 红线：agent 只能调 prepare-deploy（提案）；confirm-deploy 只能经 tool_execute
 // （前端确认卡片）或 channels 确认流触达，绝不在 agent loop 内被调。
 //
-// 环境（test/prod）必须显式匹配预设，绝不默认第一个——直接堵死 jenkins-mcp 的
+// 环境（test/prod）必须显式，绝不默认——直接堵死 jenkins-mcp 的
 // `envs[0]` 误发坑（environment 不传时它默认走第一个配置的环境）。
-
-use std::collections::BTreeMap;
 
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
+use std::sync::OnceLock;
+use tauri::Emitter;
 
 // ============================================================================
 // 发版预设配置：~/.jarvis/deploy-presets.json
 // ============================================================================
 //
-// 数据模型：项目（别名）→ 环境表（test/prod）→ { job, jenkinsEnvironment, params }。
-// 账号(token)/baseUrl 不在这里——那些走 mcp-servers.json 的 env（keychain 注入），
-// 本文件只管「发哪个项目的哪个环境、带什么构建参数」。
+// 数据模型：jenkinsUrl（全局）+ credentials 列表，每个 credential 包含
+// name / token / projects（job→alias 映射）。
+// 账号 token 走 keychain 占位（`keychain:jenkins-<name>-token`），
+// 本文件只管「Jenkins 地址 + 凭据 + 项目映射」。
 
-/// 单个环境的发版预设。
+/// 单个项目：job 名 + 用户可见别名。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct EnvironmentPreset {
-    /// Jenkins job 名或 jenkins-mcp 别名（别名走 JENKINS_ALIAS_* 解析）。
-    job: String,
-    /// 传给 trigger_build 的 environment 名（对应 JENKINS_ENV_<NAME>_*）。
-    /// 必须显式——jenkins-mcp 不传则默认 envs[0]，有误发风险。
-    jenkins_environment: String,
-    /// 构建参数预设（Jenkins build params 都是字符串）。用 BTreeMap 保证
-    /// summary 里参数顺序稳定，便于人核对、便于测试。
-    #[serde(default)]
-    params: BTreeMap<String, String>,
+pub(crate) struct ProjectEntry {
+    pub job: String,
+    pub alias: String,
 }
 
-/// 单个项目：环境名（test/prod）→ 环境预设。
+/// 单个凭据条目：一个 Jenkins 账号 + 其下的项目列表。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ProjectPreset {
+pub(crate) struct CredentialEntry {
+    pub name: String,
+    /// keychain 占位或明文 token（读取时原样；保存时由 deploy_config.rs 处理）。
     #[serde(default)]
-    environments: BTreeMap<String, EnvironmentPreset>,
+    pub token: String,
+    #[serde(default)]
+    pub projects: Vec<ProjectEntry>,
 }
 
 /// deploy-presets.json 根结构。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct DeployConfig {
-    /// 调哪个 mcp-servers.json 里的 server id，缺省 "jenkins"。
-    #[serde(default = "default_server")]
-    server: String,
+pub(crate) struct DeployConfig {
+    pub jenkins_url: String,
     #[serde(default)]
-    projects: BTreeMap<String, ProjectPreset>,
-}
-
-fn default_server() -> String {
-    "jenkins".to_string()
+    pub credentials: Vec<CredentialEntry>,
 }
 
 /// 配置文件路径：~/.jarvis/deploy-presets.json
-fn deploy_presets_path() -> std::path::PathBuf {
+pub(crate) fn deploy_presets_path() -> std::path::PathBuf {
     crate::settings::jarvis_dir().join("deploy-presets.json")
+}
+
+// ============================================================================
+// 全局 AppHandle：供轮询任务 emit 事件到前端
+// ============================================================================
+
+static APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
+
+/// 在 app setup 阶段调用一次，存储 AppHandle 供后续轮询任务使用。
+pub(crate) fn init_app_handle(app: tauri::AppHandle) {
+    let _ = APP_HANDLE.set(app);
 }
 
 /// 读 deploy-presets.json。
 ///
 /// 与 mcp-servers.json 宽容缺省语义**不同**：没配文件就发不了版（发版无预设
 /// 毫无意义），故文件不存在直接报错，引导用户去配。坏 JSON 也显式报错。
-fn load_deploy_config() -> Result<DeployConfig, String> {
+pub(crate) fn load_deploy_config() -> Result<DeployConfig, String> {
     let path = deploy_presets_path();
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
@@ -80,7 +83,7 @@ fn load_deploy_config() -> Result<DeployConfig, String> {
 }
 
 // ============================================================================
-// prepare-deploy：生成待确认建议（agent 可调，无副作用）
+// prepare-deploy：查找项目匹配，返回需要参数选择的中间结果
 // ============================================================================
 
 #[derive(Debug, Deserialize)]
@@ -91,28 +94,53 @@ struct PrepareDeployInput {
     environment: String,
     #[serde(default)]
     branch: Option<String>,
+    /// 构建参数（agent 从 get_job_info 拿到、用户确认后回传）。**带上它**就进入
+    /// 「生成确认卡片」分支；不带则返回 needsParameters 引导 agent 先去拉参数。
+    #[serde(default)]
+    parameters: Option<Map<String, Value>>,
 }
 
 pub(crate) async fn prepare_deploy(input: Value) -> Result<Value, String> {
     let parsed: PrepareDeployInput =
         serde_json::from_value(input).map_err(|e| format!("prepare-deploy 入参错误: {}", e))?;
 
-    // 唯一的副作用是读磁盘配置；核心逻辑全在纯函数 build_deploy_proposal 里，
-    // 单测直接打它（不依赖真 ~/.jarvis/deploy-presets.json），测的就是上线代码本身。
+    // 唯一副作用是读磁盘配置；两个分支都是纯函数，单测直接打（不碰磁盘）。
     let config = load_deploy_config()?;
-    build_deploy_proposal(
-        &config,
-        &parsed.project,
-        &parsed.environment,
-        parsed.branch.as_deref(),
-    )
+    match parsed.parameters {
+        // 带了参数 → 生成发版确认卡片（前端据此渲染带确认按钮的卡片）。
+        Some(params) => build_deploy_card(
+            &config,
+            &parsed.project,
+            &parsed.environment,
+            parsed.branch.as_deref(),
+            params,
+        ),
+        // 没带参数 → 返回中间结果，引导 agent 先调 get_job_info 拉参数。
+        None => build_deploy_lookup(
+            &config,
+            &parsed.project,
+            &parsed.environment,
+            parsed.branch.as_deref(),
+        ),
+    }
 }
 
-/// 纯函数：从已加载的配置 + 入参生成「待确认发版建议」。无任何 IO/副作用。
+/// 在所有 credentials 的 projects 里按 alias 匹配，返回 (job 名, 凭据名)。
+fn find_job_by_alias(config: &DeployConfig, alias: &str) -> Option<(String, String)> {
+    for cred in &config.credentials {
+        for proj in &cred.projects {
+            if proj.alias == alias {
+                return Some((proj.job.clone(), cred.name.clone()));
+            }
+        }
+    }
+    None
+}
+
+/// 纯函数：按 alias 匹配项目，返回「需要参数选择」的中间结果（引导 agent 去 get_job_info）。
 ///
-/// 拆出来既让 prepare_deploy 只剩「读配置 + 调本函数」，也让单测能不碰磁盘直接验证
-/// 真实代码路径（环境校验、project/env 查表、payload 形态、summary 回显）。
-fn build_deploy_proposal(
+/// 拆出来既让 prepare_deploy 只剩「读配置 + 分发」，也让单测能不碰磁盘直接验证真实代码路径。
+fn build_deploy_lookup(
     config: &DeployConfig,
     project: &str,
     environment: &str,
@@ -120,74 +148,96 @@ fn build_deploy_proposal(
 ) -> Result<Value, String> {
     let project = project.trim();
     let environment = environment.trim();
-
     if project.is_empty() {
         return Err("必须指定发版项目".to_string());
     }
-    // 环境绝不省略、绝不默认——这是堵死 envs[0] 误发的核心约束。
+    // 环境绝不省略、绝不默认——堵死 envs[0] 误发。
     if environment.is_empty() {
         return Err("必须显式指定环境（test/prod），不能省略".to_string());
     }
 
-    let project_preset = config
-        .projects
-        .get(project)
-        .ok_or_else(|| format!("未配置项目 {}", project))?;
-
-    let env_preset = project_preset
-        .environments
-        .get(environment)
-        .ok_or_else(|| format!("项目 {} 未配置 {} 环境", project, environment))?;
-
-    // 构建 trigger_build 入参。jenkins-mcp 的 trigger_build inputSchema（已读其
-    // src/index.ts 核实）：{ jobName, branch?, parameters?(嵌套对象), environment? }。
-    // 注意参数 **嵌套在 parameters 子对象**，不是平铺；job 字段名是 jobName。
-    // 关键：分支放进 parameters.branch（小写），绝不走顶层 branch ——jenkins-mcp 会把
-    // 顶层 branch 映射成大写 BRANCH 构建参，这些 job 要的是小写 branch，传错就发错分支。
-    let mut parameters = Map::new();
-    for (k, v) in &env_preset.params {
-        parameters.insert(k.clone(), Value::String(v.clone()));
-    }
-    // branch 覆盖：用户显式传 branch 时覆盖预设的 params.branch。
+    let (job, credential_name) =
+        find_job_by_alias(config, project).ok_or_else(|| format!("未配置项目 {}", project))?;
     let branch = branch.map(str::trim).filter(|s| !s.is_empty());
-    if let Some(b) = branch {
-        parameters.insert("branch".to_string(), Value::String(b.to_string()));
+
+    Ok(json!({
+        "needsParameters": true,
+        "job": job,
+        "credentialName": credential_name,
+        "jenkinsUrl": config.jenkins_url,
+        "project": project,
+        "environment": environment,
+        "branch": branch,
+        "message": "已匹配到项目和凭据，请确认构建参数后再执行。"
+    }))
+}
+
+/// 纯函数：参数齐全后生成「发版确认卡片」中间结果。
+///
+/// 前端 `pendingWriteFromToolMessage` 认 `prepare-deploy` 且 `kind=="mcp-deploy"` 才渲染
+/// **带确认按钮的卡片**；`payload` 就是 confirm-deploy 需要的 `{server, tool, args}`。
+/// 用户点确认 → confirm-deploy → trigger_build。这是「文字说确认不算数、必须点按钮」的来源。
+fn build_deploy_card(
+    config: &DeployConfig,
+    project: &str,
+    environment: &str,
+    branch: Option<&str>,
+    parameters: Map<String, Value>,
+) -> Result<Value, String> {
+    let project = project.trim();
+    let environment = environment.trim();
+    if project.is_empty() {
+        return Err("必须指定发版项目".to_string());
+    }
+    if environment.is_empty() {
+        return Err("必须显式指定环境（test/prod），不能省略".to_string());
     }
 
-    let mut args = Map::new();
-    args.insert("jobName".to_string(), Value::String(env_preset.job.clone()));
-    args.insert(
-        "environment".to_string(),
-        Value::String(env_preset.jenkins_environment.clone()),
-    );
-    args.insert("parameters".to_string(), Value::Object(parameters.clone()));
+    let (job, _credential_name) =
+        find_job_by_alias(config, project).ok_or_else(|| format!("未配置项目 {}", project))?;
+    let branch = branch.map(str::trim).filter(|s| !s.is_empty());
 
-    // summary 给用户在确认卡片上核对：环境（test/prod）和分支必须醒目。
-    let branch_display = parameters
-        .get("branch")
-        .and_then(|v| v.as_str())
-        .unwrap_or("(预设默认)");
-    let params_line = parameters
-        .iter()
-        .map(|(k, v)| format!("{}={}", k, v.as_str().unwrap_or_default()))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let summary = format!(
-        "项目: {}\n环境: {}\n分支: {}\nJob: {}\n参数: {}",
-        project, environment, branch_display, env_preset.job, params_line
-    );
+    // 组 trigger_build 的 args（confirm-deploy 会原样转给 mcp trigger_build）。
+    let mut args = Map::new();
+    args.insert("jobName".to_string(), json!(job));
+    if let Some(b) = branch {
+        args.insert("branch".to_string(), json!(b));
+    }
+    if !parameters.is_empty() {
+        args.insert("parameters".to_string(), Value::Object(parameters.clone()));
+    }
+
+    // 人读 summary：项目/环境/Job/分支 + 关键参数，供卡片展示给用户核对。
+    let mut summary = format!("项目 {} ｜ 环境 {} ｜ Job {}", project, environment, job);
+    if let Some(b) = branch {
+        summary.push_str(&format!(" ｜ 分支 {}", b));
+    }
+    if !parameters.is_empty() {
+        let kvs: Vec<String> = parameters
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, value_to_plain(v)))
+            .collect();
+        summary.push_str(&format!(" ｜ 参数 {}", kvs.join(", ")));
+    }
 
     Ok(json!({
         "pendingWrite": true,
         "kind": "mcp-deploy",
-        "payload": {
-            "server": config.server,
-            "tool": "trigger_build",
-            "args": Value::Object(args),
-        },
         "summary": summary,
-        "message": "已准备发版建议，请用户确认后再执行。",
+        "payload": {
+            "server": "jenkins",
+            "tool": "trigger_build",
+            "args": args,
+        }
     }))
+}
+
+/// 把 JSON 值渲染成 summary 里的纯文本（字符串去引号，其余按 JSON 文本）。
+fn value_to_plain(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
 }
 
 // ============================================================================
@@ -220,7 +270,7 @@ pub(crate) async fn confirm_deploy(input: Value) -> Result<Value, String> {
     }
 
     // args 必须是 JSON 对象，转成 call_tool 期望的 Option<Map>。
-    let arguments: Option<Map<String, Value>> = match &parsed.args {
+    let arguments: Option<serde_json::Map<String, Value>> = match &parsed.args {
         Value::Object(map) => Some(map.clone()),
         Value::Null => None,
         _ => return Err("confirm-deploy 的 args 必须是 JSON 对象".to_string()),
@@ -252,6 +302,33 @@ pub(crate) async fn confirm_deploy(input: Value) -> Result<Value, String> {
             append_deploy_audit(true, &server, &parsed.tool, &parsed.args, Some(&text), None);
             // 尽力从结果文本里捞 queueId / buildNumber；捞不到也无妨，raw 一定带上。
             let (queue_id, build_number) = parse_build_identifiers(&text);
+
+            // 启动后台轮询构建状态（PR4）。触发后按间隔查 get_build_status，
+            // 通过 Tauri 事件推送到前端更新卡片。不阻塞 agent loop。
+            if let Some(app_handle) = APP_HANDLE.get().cloned() {
+                // jobName 从 args 里取；buildNumber 优先从触发结果取，没有就从 args 取。
+                let job_name = parsed.args.get("jobName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                // buildNumber 只认**真正的构建号**：trigger_build 通常只返回 queueId（≠ buildNumber），
+                // 绝不能拿 queueId 当 buildNumber 去查（jenkins 会 404 → 前端「构建状态查询出错」）。
+                // 没有真 buildNumber 时不传，让 get_build_status 取 lastBuild（触发后最新构建即本次）。
+                let poll_build_number = build_number
+                    .clone()
+                    .or_else(|| parsed.args.get("buildNumber").cloned());
+                if !job_name.is_empty() {
+                    tokio::spawn(start_build_polling(
+                        app_handle,
+                        server.clone(),
+                        job_name,
+                        poll_build_number,
+                        DEFAULT_POLL_INTERVAL_SECS,
+                        DEFAULT_TIMEOUT_SECS,
+                    ));
+                }
+            }
+
             Ok(json!({
                 "ok": true,
                 "queueId": queue_id,
@@ -278,6 +355,251 @@ fn parse_build_identifiers(text: &str) -> (Option<Value>, Option<Value>) {
         .cloned()
         .filter(|x| !x.is_null());
     (queue_id, build_number)
+}
+
+// ============================================================================
+// 构建结果轮询（PR4）
+// ============================================================================
+
+/// 默认轮询间隔（秒）。
+const DEFAULT_POLL_INTERVAL_SECS: u64 = 60;
+/// 默认轮询超时（秒）。
+const DEFAULT_TIMEOUT_SECS: u64 = 15 * 60;
+
+/// 后台轮询构建状态，通过 Tauri 事件推送到前端。
+///
+/// 由 confirm_deploy 在触发成功后 tokio::spawn，不阻塞 agent loop。
+/// 三种终态停止轮询：SUCCESS / FAILURE / ABORTED。超时 15 分钟后也停止。
+async fn start_build_polling(
+    app_handle: tauri::AppHandle,
+    server: String,
+    job_name: String,
+    build_number: Option<Value>,
+    poll_interval_secs: u64,
+    timeout_secs: u64,
+) {
+    let timeout = std::time::Duration::from_secs(timeout_secs);
+    let interval = std::time::Duration::from_secs(poll_interval_secs);
+    let started = std::time::Instant::now();
+
+    // 等几秒让 Jenkins 分配 buildNumber（触发后可能有延迟）。
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+    // 首次尝试：用 args 里的 buildNumber（如果有的话）。
+    // 没有 buildNumber 时 get_build_status 可能失败，循环会重试。
+    let mut current_build_number = build_number;
+
+    loop {
+        if started.elapsed() > timeout {
+            let _ = app_handle.emit(
+                "build-status",
+                json!({
+                    "jobName": job_name,
+                    "buildNumber": current_build_number,
+                    "status": "timeout",
+                    "result": null,
+                    "log": null,
+                    "url": null,
+                }),
+            );
+            return;
+        }
+
+        // 构造 get_build_status 参数。
+        let mut args_map = Map::new();
+        args_map.insert("jobName".to_string(), json!(job_name));
+        if let Some(ref bn) = current_build_number {
+            args_map.insert("buildNumber".to_string(), bn.clone());
+        }
+
+        let call_result = match crate::mcp_client::manager()
+            .call_tool(&server, "get_build_status", Some(args_map))
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                // 网络/协议错误：如果还没有 buildNumber，等一会重试；
+                // 有 buildNumber 了还报错，emit error 后停止。
+                eprintln!("[deploy] 轮询构建状态失败: {}", e);
+                if current_build_number.is_some() {
+                    let _ = app_handle.emit(
+                        "build-status",
+                        json!({
+                            "jobName": job_name,
+                            "buildNumber": current_build_number,
+                            "status": "error",
+                            "result": null,
+                            "log": null,
+                            "url": null,
+                        }),
+                    );
+                    return;
+                }
+                // 没 buildNumber，等一下再试。
+                tokio::time::sleep(interval).await;
+                continue;
+            }
+        };
+
+        let text = crate::mcp_client::first_text(&call_result).unwrap_or_default();
+
+        // 工具自身报错（如 buildNumber 不存在）：同上，分情况处理。
+        if call_result.is_error == Some(true) {
+            eprintln!("[deploy] get_build_status 工具错误: {}", text);
+            if current_build_number.is_some() {
+                let _ = app_handle.emit(
+                    "build-status",
+                    json!({
+                        "jobName": job_name,
+                        "buildNumber": current_build_number,
+                        "status": "error",
+                        "result": null,
+                        "log": null,
+                        "url": null,
+                    }),
+                );
+                return;
+            }
+            tokio::time::sleep(interval).await;
+            continue;
+        }
+
+        // 解析 JSON 响应。
+        let status_json: Value = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(_) => {
+                eprintln!("[deploy] get_build_status 返回非 JSON: {}", text);
+                tokio::time::sleep(interval).await;
+                continue;
+            }
+        };
+
+        // 如果之前没有 buildNumber，从返回结果里捞一个。
+        if current_build_number.is_none() {
+            let bn = status_json
+                .get("buildNumber")
+                .or_else(|| status_json.get("number"))
+                .cloned()
+                .filter(|x| !x.is_null());
+            if bn.is_some() {
+                current_build_number = bn;
+            }
+        }
+
+        let building = status_json
+            .get("building")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let result = status_json
+            .get("result")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let url = status_json
+            .get("url")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        if building {
+            // 还在构建中，emit building 状态，继续等。
+            let _ = app_handle.emit(
+                "build-status",
+                json!({
+                    "jobName": job_name,
+                    "buildNumber": current_build_number,
+                    "status": "building",
+                    "result": null,
+                    "log": null,
+                    "url": url,
+                }),
+            );
+            tokio::time::sleep(interval).await;
+            continue;
+        }
+
+        // building == false：终态。
+        match result {
+            "SUCCESS" => {
+                let _ = app_handle.emit(
+                    "build-status",
+                    json!({
+                        "jobName": job_name,
+                        "buildNumber": current_build_number,
+                        "status": "success",
+                        "result": "SUCCESS",
+                        "log": null,
+                        "url": url,
+                    }),
+                );
+                return;
+            }
+            "FAILURE" => {
+                // 失败：拉日志尾巴。
+                let log_tail = fetch_build_log_tail(&server, &job_name, current_build_number.as_ref(), 30).await;
+                let _ = app_handle.emit(
+                    "build-status",
+                    json!({
+                        "jobName": job_name,
+                        "buildNumber": current_build_number,
+                        "status": "failure",
+                        "result": "FAILURE",
+                        "log": log_tail,
+                        "url": url,
+                    }),
+                );
+                return;
+            }
+            "ABORTED" => {
+                let _ = app_handle.emit(
+                    "build-status",
+                    json!({
+                        "jobName": job_name,
+                        "buildNumber": current_build_number,
+                        "status": "aborted",
+                        "result": "ABORTED",
+                        "log": null,
+                        "url": url,
+                    }),
+                );
+                return;
+            }
+            _ => {
+                // 其它终态（如 NOT_BUILT 等），当 aborted 处理。
+                let _ = app_handle.emit(
+                    "build-status",
+                    json!({
+                        "jobName": job_name,
+                        "buildNumber": current_build_number,
+                        "status": "aborted",
+                        "result": result,
+                        "log": null,
+                        "url": url,
+                    }),
+                );
+                return;
+            }
+        }
+    }
+}
+
+/// 拉构建日志尾巴。失败不致命，返回 None。
+async fn fetch_build_log_tail(
+    server: &str,
+    job_name: &str,
+    build_number: Option<&Value>,
+    tail: u32,
+) -> Option<String> {
+    let mut args = Map::new();
+    args.insert("jobName".to_string(), json!(job_name));
+    if let Some(bn) = build_number {
+        args.insert("buildNumber".to_string(), bn.clone());
+    }
+    args.insert("tail".to_string(), json!(tail));
+
+    let result = crate::mcp_client::manager()
+        .call_tool(server, "get_build_log", Some(args))
+        .await
+        .ok()?;
+    crate::mcp_client::first_text(&result)
 }
 
 /// 发版审计日志：追加一行 JSONL 到 ~/.jarvis/write-back.log。
@@ -332,59 +654,58 @@ mod tests {
 
     #[test]
     fn deploy_config_parses_minimal() {
-        // 最小 projects/environments 形态；server 缺省为 "jenkins"。
+        // 最小形态：jenkinsUrl + 一个 credential 含一个 project。
         let cfg = config_from_json(
             r#"{
-                "projects": {
-                    "人资管理端": {
-                        "environments": {
-                            "test": {
-                                "job": "example-access-web",
-                                "jenkinsEnvironment": "test",
-                                "params": { "branch": "dev" }
-                            }
-                        }
+                "jenkinsUrl": "http://jenkins.example.internal:8080/",
+                "credentials": [
+                    {
+                        "name": "主账号",
+                        "token": "keychain:jenkins-main-token",
+                        "projects": [
+                            { "job": "example-access-web", "alias": "人资管理端" }
+                        ]
                     }
-                }
+                ]
             }"#,
         );
-        assert_eq!(cfg.server, "jenkins");
-        let proj = cfg.projects.get("人资管理端").expect("项目");
-        let env = proj.environments.get("test").expect("test 环境");
-        assert_eq!(env.job, "example-access-web");
-        assert_eq!(env.jenkins_environment, "test");
-        assert_eq!(env.params.get("branch").map(String::as_str), Some("dev"));
+        assert_eq!(cfg.jenkins_url, "http://jenkins.example.internal:8080/");
+        assert_eq!(cfg.credentials.len(), 1);
+        let cred = &cfg.credentials[0];
+        assert_eq!(cred.name, "主账号");
+        assert_eq!(cred.token, "keychain:jenkins-main-token");
+        assert_eq!(cred.projects.len(), 1);
+        assert_eq!(cred.projects[0].job, "example-access-web");
+        assert_eq!(cred.projects[0].alias, "人资管理端");
     }
 
     #[test]
-    fn deploy_config_server_override() {
-        let cfg = config_from_json(r#"{ "server": "my-jenkins", "projects": {} }"#);
-        assert_eq!(cfg.server, "my-jenkins");
+    fn deploy_config_empty_credentials() {
+        let cfg = config_from_json(r#"{ "jenkinsUrl": "http://x" }"#);
+        assert_eq!(cfg.jenkins_url, "http://x");
+        assert!(cfg.credentials.is_empty());
     }
 
     fn happy_config_json() -> &'static str {
         r#"{
-            "projects": {
-                "人资管理端": {
-                    "environments": {
-                        "test": {
-                            "job": "example-access-web-test",
-                            "jenkinsEnvironment": "test",
-                            "params": {
-                                "branch": "dev",
-                                "node_version": "nodejs-18.14.2",
-                                "server_ip": "192.0.2.23",
-                                "CLEAN_DEPLOY": "false"
-                            }
-                        },
-                        "prod": {
-                            "job": "example-access-web-prod",
-                            "jenkinsEnvironment": "prod",
-                            "params": { "branch": "prod", "server_ip": "192.0.2.162" }
-                        }
-                    }
+            "jenkinsUrl": "http://jenkins.example.internal:8080/",
+            "credentials": [
+                {
+                    "name": "主账号",
+                    "token": "keychain:jenkins-main-token",
+                    "projects": [
+                        { "job": "example-access-web-test", "alias": "人资管理端" },
+                        { "job": "example-quality-web", "alias": "质量系统" }
+                    ]
+                },
+                {
+                    "name": "prod账号",
+                    "token": "keychain:jenkins-prod-token",
+                    "projects": [
+                        { "job": "example-access-web-prod", "alias": "人资管理端-prod" }
+                    ]
                 }
-            }
+            ]
         }"#
     }
 
@@ -392,61 +713,80 @@ mod tests {
     fn prepare_deploy_requires_explicit_environment() {
         let cfg = config_from_json(happy_config_json());
         // 环境为空 → Err。
-        let e = build_deploy_proposal(&cfg, "人资管理端", "", None).unwrap_err();
+        let e = build_deploy_lookup(&cfg, "人资管理端", "", None).unwrap_err();
         assert!(e.contains("显式指定环境"), "实得: {}", e);
         // 未知项目 → Err。
-        let e = build_deploy_proposal(&cfg, "不存在的项目", "test", None).unwrap_err();
+        let e = build_deploy_lookup(&cfg, "不存在的项目", "test", None).unwrap_err();
         assert!(e.contains("未配置项目"), "实得: {}", e);
-        // 项目存在但无该环境 → Err。
-        let e = build_deploy_proposal(&cfg, "人资管理端", "staging", None).unwrap_err();
-        assert!(e.contains("未配置 staging 环境"), "实得: {}", e);
     }
 
     #[test]
     fn prepare_deploy_happy_path() {
         let cfg = config_from_json(happy_config_json());
-        let out = build_deploy_proposal(&cfg, "人资管理端", "test", None).expect("应成功");
+        let out = build_deploy_lookup(&cfg, "人资管理端", "test", None).expect("应成功");
 
-        assert_eq!(out["kind"], "mcp-deploy");
-        assert_eq!(out["pendingWrite"], true);
-        let payload = &out["payload"];
-        assert_eq!(payload["server"], "jenkins");
-        assert_eq!(payload["tool"], "trigger_build");
-
-        let args = &payload["args"];
-        assert_eq!(args["jobName"], "example-access-web-test");
-        // environment 必须 == jenkinsEnvironment（而非项目环境键），且显式。
-        assert_eq!(args["environment"], "test");
-        // 参数嵌套在 parameters 子对象。
-        assert_eq!(args["parameters"]["branch"], "dev");
-        assert_eq!(args["parameters"]["node_version"], "nodejs-18.14.2");
-        assert_eq!(args["parameters"]["server_ip"], "192.0.2.23");
-        assert_eq!(args["parameters"]["CLEAN_DEPLOY"], "false");
-        // 红线：分支只能在 parameters.branch（小写），绝不能冒出顶层 branch
-        // ——否则 jenkins-mcp 会把顶层 branch 映射成大写 BRANCH，发错分支。
-        assert!(args.get("branch").is_none(), "args 不应有顶层 branch: {}", args);
-
-        // summary 必须含环境与分支（人核对的安全点）。
-        let summary = out["summary"].as_str().unwrap();
-        assert!(summary.contains("环境: test"), "summary 缺环境: {}", summary);
-        assert!(summary.contains("分支: dev"), "summary 缺分支: {}", summary);
+        assert_eq!(out["needsParameters"], true);
+        assert_eq!(out["job"], "example-access-web-test");
+        assert_eq!(out["credentialName"], "主账号");
+        assert_eq!(out["jenkinsUrl"], "http://jenkins.example.internal:8080/");
+        assert_eq!(out["project"], "人资管理端");
+        assert_eq!(out["environment"], "test");
+        assert!(out["branch"].is_null());
+        assert!(out["message"].as_str().unwrap().contains("匹配"));
     }
 
     #[test]
-    fn prepare_deploy_branch_override() {
+    fn prepare_deploy_branch_provided() {
         let cfg = config_from_json(happy_config_json());
-        // 显式传 branch 覆盖预设的 dev。
-        let out =
-            build_deploy_proposal(&cfg, "人资管理端", "test", Some("feature/x")).expect("应成功");
-        assert_eq!(out["payload"]["args"]["parameters"]["branch"], "feature/x");
-        let summary = out["summary"].as_str().unwrap();
-        assert!(summary.contains("分支: feature/x"), "实得: {}", summary);
+        let out = build_deploy_lookup(&cfg, "质量系统", "test", Some("feature/x")).expect("应成功");
+        assert_eq!(out["job"], "example-quality-web");
+        assert_eq!(out["branch"], "feature/x");
+    }
 
-        // prod 环境回显 prod。
-        let out = build_deploy_proposal(&cfg, "人资管理端", "prod", None).expect("应成功");
-        assert_eq!(out["payload"]["args"]["environment"], "prod");
+    #[test]
+    fn prepare_deploy_branch_whitespace_filtered() {
+        let cfg = config_from_json(happy_config_json());
+        let out = build_deploy_lookup(&cfg, "质量系统", "test", Some("  ")).expect("应成功");
+        assert!(out["branch"].is_null(), "空白 branch 应被过滤: {}", out["branch"]);
+    }
+
+    #[test]
+    fn prepare_deploy_cross_credential_lookup() {
+        // "人资管理端-prod" 在第二个 credential 里。
+        let cfg = config_from_json(happy_config_json());
+        let out = build_deploy_lookup(&cfg, "人资管理端-prod", "prod", None).expect("应成功");
+        assert_eq!(out["job"], "example-access-web-prod");
+        assert_eq!(out["credentialName"], "prod账号");
+    }
+
+    #[test]
+    fn prepare_deploy_card_with_params() {
+        // 带 parameters → 生成发版确认卡片（kind=mcp-deploy + payload.trigger_build）。
+        let cfg = config_from_json(happy_config_json());
+        let mut params = Map::new();
+        params.insert("node_version".to_string(), json!("nodejs-16.20.0"));
+        params.insert("server_ip".to_string(), json!("192.0.2.21"));
+        let out = build_deploy_card(&cfg, "质量系统", "test", Some("develop"), params).expect("应成功");
+
+        assert_eq!(out["pendingWrite"], true);
+        assert_eq!(out["kind"], "mcp-deploy");
+        assert_eq!(out["payload"]["server"], "jenkins");
+        assert_eq!(out["payload"]["tool"], "trigger_build");
+        assert_eq!(out["payload"]["args"]["jobName"], "example-quality-web");
+        assert_eq!(out["payload"]["args"]["branch"], "develop");
+        assert_eq!(
+            out["payload"]["args"]["parameters"]["server_ip"],
+            "192.0.2.21"
+        );
         let summary = out["summary"].as_str().unwrap();
-        assert!(summary.contains("环境: prod"), "实得: {}", summary);
+        assert!(summary.contains("质量系统") && summary.contains("server_ip="), "summary: {}", summary);
+    }
+
+    #[test]
+    fn prepare_deploy_card_unknown_project_errs() {
+        let cfg = config_from_json(happy_config_json());
+        let e = build_deploy_card(&cfg, "不存在", "test", None, Map::new()).unwrap_err();
+        assert!(e.contains("未配置项目"), "实得: {}", e);
     }
 
     #[tokio::test]
