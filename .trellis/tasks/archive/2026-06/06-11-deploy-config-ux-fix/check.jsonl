@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/mcp-client.md", "reason": "review：spawn/两层错误/keychain 用法是否正确；CREATE_NO_WINDOW 与僵尸自愈是否破坏 RunningService 保活/重连语义"}
+{"file": ".trellis/spec/backend/mcp-deploy-confirm.md", "reason": "review：内部 id 稳定性、keychain account 一致、JENKINS_ENV_* 派生、token「留空不改」语义是否仍成立"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "review：DeploySection 重写是否达前端质量基线（无残留死代码、交互状态完备）"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "review：前后端类型契约一致、无 any，内部 id 不泄漏到用户可见层"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "review：是否复用 settings::secret_* / 既有 spawn 与确认基建，而非另造轮子"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "review：id/username/token 跨层数据流一致，无 envs[0] 误发隐患回归"}
