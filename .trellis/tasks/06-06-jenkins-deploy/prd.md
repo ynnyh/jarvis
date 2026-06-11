@@ -10,11 +10,23 @@
 
 ### Jenkins MCP server（待接入方）
 - 路径 `D:\coding\my-mcp-servers\jenkins-mcp`，TypeScript + `@modelcontextprotocol/sdk`，**stdio transport**，已 npm 装好（需 `npm run build` 出 `dist/index.js`）。
-- 8 个工具：只读 6（`test_connection` / `list_environments` / `list_jobs` / `get_job_info` / `get_build_status` / `get_build_log`）+ 写 2（`trigger_build` 发版、`cancel_build` 取消）。
+- 12 个工具：
+  - 配置 5：`setup_connection`（一次性配 Jenkins 连接）/ `add_project`（项目名→job 映射）/ `list_projects` / `remove_project` / `show_config`
+  - 只读 5：`test_connection` / `list_jobs` / `get_job_info` / `get_build_status` / `get_build_log`
+  - 写 2：`trigger_build` / `cancel_build`
 - **无任何确认机制**：`trigger_build` 一调即 POST 触发 Jenkins，无 dry-run / 二次确认。→ 确认 100% 由 Jarvis 侧负责。
-- **别名机制**：env `JENKINS_ALIAS_<别名>=[环境名:]真实job`（支持中文）。README 示例即「发版人资管理端」→ 自动映射 job + 账号。→ Jarvis 侧几乎不用做项目俗名→job 映射。
-- **环境默认值坑**：`environment` 不传时默认走第一个配置的环境（`envs[0]`），有误发风险。→ 确认必须显式回显环境，LLM 必须明确 environment。
-- 配置全走环境变量：`JENKINS_ENV_<NAME>_URL/USERNAME/TOKEN`（多环境多账号）+ `JENKINS_ALIAS_*`。
+- **项目名映射**：配置文件存 `项目名称 → job名`（如 `质量系统 → example-quality-web`），对话时直接说项目名即可。
+- **配置极简**：只需配一次 Jenkins 连接（URL/用户名/Token）+ 添加项目名映射，后续对话只确认「发哪个项目、哪个分支」。
+- **配置文件** `~/.jarvis/jenkins-mcp.json`：
+  ```json
+  {
+    "connection": { "url": "...", "username": "...", "token": "..." },
+    "projects": [
+      { "name": "质量系统", "job": "example-quality-web" }
+    ]
+  }
+  ```
+- 环境变量仍兼容（`JENKINS_URL` 等），可混用。
 
 ### Jarvis（接入方）现有架构
 - agent loop：`src-tauri/src/chat_agent.rs`（`run_agent` / `run_agent_streaming`，maxIter=8）。
@@ -69,14 +81,27 @@ prod 二次加强确认形态：归 M2，本任务（M1）不实现。
 - 默认**超时**（如 15 分钟）后停止轮询，提示超时。
 - M1 走桌面通知；IM 推送归 M2。
 
-## 配置形态（2026-06-06 定）
+## 配置形态（2026-06-06 定，06-07 更新）
 
-M1 先用**手写 JSON 配置**（`~/.jarvis/`，与 `mcp-servers.json` 配合）；设置页 UI 归 M3。
-数据模型 = **账号(token) ↔ 项目 一对多**：
-- 账号列表：`{ 名称, baseUrl, username, token(keychain) }`
-- 项目列表：`{ 别名, 环境表 }`；环境键 = `test`/`prod`，或**只有 prod**
-- 每个环境：`{ 引用哪个账号, job 名, 参数预设 }`
-- `toolPolicy` 在 server 级别配置（如 Jenkins：`{"trigger_build":"confirm","cancel_build":"confirm","*":"auto"}`）。
+M1 先用**手写 JSON 配置**（`~/.jarvis/`）；设置页 UI 归 M3。
+
+**Jenkins 连接配置**（已实现，jenkins-mcp 侧）：
+- 配置文件 `~/.jarvis/jenkins-mcp.json`，结构极简：
+  ```json
+  {
+    "connection": { "url": "http://jenkins.example.internal:8080/", "username": "xxx", "token": "xxx" },
+    "projects": [
+      { "name": "质量系统", "job": "example-quality-web" },
+      { "name": "人资管理端", "job": "hr-web" }
+    ]
+  }
+  ```
+- `connection`：配一次，所有项目共用。
+- `projects`：项目名→job 映射，对话时直接说"发版质量系统"即可。
+- 支持对话式配置：用户告诉 Jarvis → `setup_connection` + `add_project` 自动写入。
+- 环境变量仍兼容（`JENKINS_URL` 等），可混用。
+
+`toolPolicy` 在 mcp-servers.json 的 server 级别配置（如 Jenkins：`{"trigger_build":"confirm","cancel_build":"confirm","*":"auto"}`）。
 
 ## M1 实现计划（小 PR 拆分，2026-06-06 定）
 
