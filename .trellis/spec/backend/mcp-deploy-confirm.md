@@ -7,6 +7,38 @@
 
 ---
 
+## ⚠️ 重做更新（2026-06-11，v2，commit 662f31c）
+
+下方 §2–§3.1 描述的是 PR3 的**预设参数模型**（`projects→environments→{job,jenkinsEnvironment,params}`），已被重做取代。当前实现契约**以本节为准**；§3.4 确认执行路径（卡片 → tool_execute → confirm-deploy）与 §7 安全红线**不变**。
+
+### 配置模型（`~/.jarvis/deploy-presets.json`）
+
+```json
+{ "jenkinsUrl": "http://...", "credentials": [
+    { "name": "acct-3f9a", "username": "example-cloud", "token": "keychain:jenkins-acct-3f9a-token",
+      "projects": [ { "job": "example-quality-web", "alias": "质量系统" } ] } ] }
+```
+
+- `name` = **账号内部 id（自动生成、对用户隐藏）**，作 keychain account(`jenkins-<id>-token`) 与 `JENKINS_ENV_<id大写>_*` 前缀来源；用户只填 用户名 / token / 项目（job+别名）。
+- `username` **必需**（Jenkins 鉴权是 `username:token`，重构曾误删致 jenkins-mcp `parseEnvironments` 0 环境而启动崩）。`jenkinsUrl` **全局**一次配置（不再 per-credential）。三级关系：URL → 一组账号(token) → 每账号若干项目(job+别名)。
+- 设置页后端 `commands/deploy_config.rs`：`deploy_config_get/save` 读写本文件 + mcp-servers.json + keychain。`save` 顺带给 jenkins server 写**安全默认 toolPolicy**（空时）：`{"trigger_build":"confirm","cancel_build":"confirm","*":"auto"}`——否则空策略被分类器默认 confirm，把只读 `get_job_info` 也拦死、发版读不到参数。项目别名保存校验非空。
+
+### prepare-deploy 两阶段（`tools/deploy.rs`）
+
+- **不带 `parameters`** → `build_deploy_lookup`：按 alias 匹配 job，返回 `{ needsParameters:true, job, credentialName, jenkinsUrl, project, environment, branch }`，引导 agent 调 `mcp__jenkins__get_job_info` 拉构建参数。
+- **带 `parameters`**（object）→ `build_deploy_card`：返回确认卡片 `{ pendingWrite:true, kind:"mcp-deploy", summary, payload:{ server:"jenkins", tool:"trigger_build", args:{ jobName, branch?, parameters } } }`，前端渲染带按钮卡片。
+- schema 新增可选 `parameters`(object)。系统提示要点：get_job_info 只读**免授权**；用户**点卡片按钮**才算确认，打字说「确认」不算数。
+
+### deploy_test_connection 改为直连 HTTP（不经 MCP spawn）
+
+`deploy_test_connection(name, url, username, token?)`：直接 `GET {url}/api/json` 做 Basic 认证验证**当前表单填写**的凭据——**不必先保存、不依赖 spawn jenkins-mcp**（契合 填→测→存 习惯；旧实现要先保存再测、测的是已存旧值，改 token 不存就测不通）。token 留空回退取 keychain 已存的。200→`{ok:true, detail(含 x-jenkins 版本)}`；401→「认证失败」；403→「无权限」。
+
+### 构建状态轮询（PR4）
+
+`trigger_build` 触发后通常只返回 **queueId（≠ buildNumber）**。轮询 `get_build_status` **绝不能拿 queueId 当 buildNumber**（jenkins `/job/X/{queueId}` 404 → 前端「构建状态查询出错」）；**不传 buildNumber** 让其取 `lastBuild`（触发后最新构建即本次），拿到后锁定真实构建号跟踪到终态（SUCCESS/FAILURE/ABORTED/超时）。
+
+---
+
 ## 1. Scope / Trigger
 
 - **触发**：高危写操作的确认闭环——跨「agent 提案工具 / 前端确认卡片 / `tool_execute` 真执行 / MCP `call_tool`」多个边界 + 新配置文件 + keychain 注入，属强制 code-spec 深度。

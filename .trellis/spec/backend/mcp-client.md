@@ -170,6 +170,40 @@ if r.is_error == Some(true) { return Err(first_text(&r).unwrap_or_default()); }
 
 ---
 
+## 增量更新（2026-06-11）
+
+### spawn：Windows 隐藏控制台窗口
+
+`spawn_running` 构建 `tokio::process::Command` 后，Windows 下加 `CREATE_NO_WINDOW`：
+
+```rust
+#[cfg(windows)]
+{
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    cmd.creation_flags(CREATE_NO_WINDOW); // tokio Command 的 inherent 方法，无需 use std trait
+}
+```
+
+- 原因：Jarvis 是 GUI 应用，spawn 控制台子系统程序（node.exe）默认每次弹一个控制台黑框（保存配置触发重启 server 时尤其扰民）。`stdin/stdout` 管道不受影响。
+
+### call_tool：僵尸条目自愈（transport-dead → 重连重试一次）
+
+子进程可能 spawn 后悄悄退出（崩溃/被杀），但 `RunningService` 仍留在 map——`connected_ids` 只看 key、**不探活**，导致后续调用一直撞死进程报 `Transport closed`，卡到重启整个 app。
+
+新契约：`call_tool` 首次失败若是**传输已断**（`ServiceError::TransportClosed | TransportSend`，见 `is_transport_dead`），则**剔除死条目（`shutdown_server`）→ 按 mcp-servers.json 重新 spawn → 重试一次**；重试仍失败如实返回，绝不无限重连。工具自身失败（`is_error`）**不触发**自愈。
+
+| 条件 | 行为 |
+|---|---|
+| call 命中 `TransportClosed` / `TransportSend` | 剔除 + 重 spawn + 重试一次 |
+| 重连后仍传输错 | `Err("...重连后传输仍不可用...")` |
+| 配置中已无该 server | `Err("...无法重连")` |
+| 协议错 / 超时 / 工具 `is_error` | **不**自愈（如实返回 / 走 §3.3 两层语义） |
+
+> **Wrong**：`connected_ids` 报在线就直接 call → 死进程上反复 `Transport closed`。
+> **Correct**：`call_tool` 内置「死了就重连重试一次」，对调用方透明（实现为 `call_tool_once` + `is_transport_dead` 分类）。
+
+---
+
 ## Design Decision：最小配置模型
 
 PR1 只建模 `command/args/env/enabled`。PR2 加了 `toolPolicy`（动态安全分类，见
