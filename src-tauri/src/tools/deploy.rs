@@ -193,13 +193,18 @@ fn build_deploy_card(
         return Err("必须显式指定环境（test/prod），不能省略".to_string());
     }
 
-    let (job, _credential_name) =
+    let (job, credential_name) =
         find_job_by_alias(config, project).ok_or_else(|| format!("未配置项目 {}", project))?;
     let branch = branch.map(str::trim).filter(|s| !s.is_empty());
 
     // 组 trigger_build 的 args（confirm-deploy 会原样转给 mcp trigger_build）。
     let mut args = Map::new();
     args.insert("jobName".to_string(), json!(job));
+    // environment = 凭据名小写，jenkins-mcp 用它选择正确的凭据（多账号时不能 fallback 到第一个）。
+    args.insert(
+        "environment".to_string(),
+        json!(credential_name.trim().to_lowercase()),
+    );
     if let Some(b) = branch {
         args.insert("branch".to_string(), json!(b));
     }
@@ -317,6 +322,10 @@ pub(crate) async fn confirm_deploy(input: Value) -> Result<Value, String> {
                 let poll_build_number = build_number
                     .clone()
                     .or_else(|| parsed.args.get("buildNumber").cloned());
+                // 从 args 里提取 environment（凭据名小写），轮询和日志查询都要用它选对凭据。
+                let poll_environment = parsed.args.get("environment")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
                 if !job_name.is_empty() {
                     tokio::spawn(start_build_polling(
                         app_handle,
@@ -325,6 +334,7 @@ pub(crate) async fn confirm_deploy(input: Value) -> Result<Value, String> {
                         poll_build_number,
                         DEFAULT_POLL_INTERVAL_SECS,
                         DEFAULT_TIMEOUT_SECS,
+                        poll_environment,
                     ));
                 }
             }
@@ -377,6 +387,7 @@ async fn start_build_polling(
     build_number: Option<Value>,
     poll_interval_secs: u64,
     timeout_secs: u64,
+    environment: Option<String>,
 ) {
     let timeout = std::time::Duration::from_secs(timeout_secs);
     let interval = std::time::Duration::from_secs(poll_interval_secs);
@@ -410,6 +421,9 @@ async fn start_build_polling(
         args_map.insert("jobName".to_string(), json!(job_name));
         if let Some(ref bn) = current_build_number {
             args_map.insert("buildNumber".to_string(), bn.clone());
+        }
+        if let Some(ref env) = environment {
+            args_map.insert("environment".to_string(), json!(env));
         }
 
         let call_result = match crate::mcp_client::manager()
@@ -534,7 +548,7 @@ async fn start_build_polling(
             }
             "FAILURE" => {
                 // 失败：拉日志尾巴。
-                let log_tail = fetch_build_log_tail(&server, &job_name, current_build_number.as_ref(), 30).await;
+                let log_tail = fetch_build_log_tail(&server, &job_name, current_build_number.as_ref(), 30, environment.as_deref()).await;
                 let _ = app_handle.emit(
                     "build-status",
                     json!({
@@ -587,6 +601,7 @@ async fn fetch_build_log_tail(
     job_name: &str,
     build_number: Option<&Value>,
     tail: u32,
+    environment: Option<&str>,
 ) -> Option<String> {
     let mut args = Map::new();
     args.insert("jobName".to_string(), json!(job_name));
@@ -594,6 +609,9 @@ async fn fetch_build_log_tail(
         args.insert("buildNumber".to_string(), bn.clone());
     }
     args.insert("tail".to_string(), json!(tail));
+    if let Some(env) = environment {
+        args.insert("environment".to_string(), json!(env));
+    }
 
     let result = crate::mcp_client::manager()
         .call_tool(server, "get_build_log", Some(args))
@@ -773,6 +791,8 @@ mod tests {
         assert_eq!(out["payload"]["server"], "jenkins");
         assert_eq!(out["payload"]["tool"], "trigger_build");
         assert_eq!(out["payload"]["args"]["jobName"], "example-quality-web");
+        // environment 必须是凭据名小写（"主账号" → "主账号" 已是小写非 ASCII，这里验证第二凭据）
+        assert_eq!(out["payload"]["args"]["environment"], "主账号");
         assert_eq!(out["payload"]["args"]["branch"], "develop");
         assert_eq!(
             out["payload"]["args"]["parameters"]["server_ip"],
@@ -787,6 +807,16 @@ mod tests {
         let cfg = config_from_json(happy_config_json());
         let e = build_deploy_card(&cfg, "不存在", "test", None, Map::new()).unwrap_err();
         assert!(e.contains("未配置项目"), "实得: {}", e);
+    }
+
+    #[test]
+    fn prepare_deploy_card_cross_credential_environment() {
+        // "人资管理端-prod" 在第二个 credential（"prod账号"）里，
+        // environment 必须是该凭据名小写，而不是第一个。
+        let cfg = config_from_json(happy_config_json());
+        let out = build_deploy_card(&cfg, "人资管理端-prod", "prod", None, Map::new()).expect("应成功");
+        assert_eq!(out["payload"]["args"]["jobName"], "example-access-web-prod");
+        assert_eq!(out["payload"]["args"]["environment"], "prod账号");
     }
 
     #[tokio::test]
