@@ -517,7 +517,9 @@ watch(() => store.alertLevel, (level) => {
 
 let unlistenFocus: UnlistenFn | null = null
 onMounted(async () => {
-  configStore.load()
+  // await：确保 config.petId 在下方校验前已从磁盘加载完成，否则校验读到默认
+  // 值（robo），会把合法的自定义 petId 误判为无效而回退。
+  await configStore.load()
   store.refreshTaskBindings()
   await loadCustomPets()
 

@@ -3,6 +3,7 @@ import { ref, computed, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { STYLE_THEMES, DEFAULT_STYLE_THEME } from '../style-themes'
+import { loadCustomPets } from '../petManifest'
 
 export interface WorkPeriod {
   start: string   // HH:MM
@@ -392,8 +393,19 @@ export const useConfigStore = defineStore('config', () => {
   // 机器人通过 channels 写入提醒后，Rust 端 emit 此事件
   listen('reminders-changed', () => { refreshReminders() }).catch(() => {})
 
-  // 其他窗口（设置窗口等）修改配置后，Rust 端 emit 此事件，主窗口需要刷新
-  listen('config-changed', () => { load() }).catch(() => {})
+  // 其他窗口（设置窗口等）修改配置后，Rust 端 emit 此事件，主窗口需要刷新。
+  // 关键：同时刷新自定义宠物缓存 —— settings 窗口上传/切换的自定义宠物，
+  // 主窗口缓存里可能还没有，不刷新会导致 getPetById 回退到默认机器人。
+  // 先 loadCustomPets（缓存就绪）再 load（petId 变化触发 computed 重算时缓存已有）。
+  listen('config-changed', async () => {
+    await loadCustomPets()
+    await load()
+  }).catch(() => {})
+
+  // 自定义宠物落盘后（上传/编辑/删除）Rust 端 emit 此事件。编辑"当前宠物"时
+  // petId 不变不会触发 config-changed，必须有独立事件让各窗口刷新缓存，
+  // 否则改了动画/data 主窗口也不更新。
+  listen('custom-pets-changed', () => { loadCustomPets() }).catch(() => {})
 
   // 临时覆盖：今晚加班 / 今天休假
   function setTodayMode(mode: JarvisConfig['override']['todayMode']) {

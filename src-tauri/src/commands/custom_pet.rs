@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use tauri::Emitter;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CustomPet {
@@ -61,7 +62,7 @@ pub fn custom_pet_list() -> Result<Vec<CustomPet>, String> {
 
 /// 保存自定义宠物（新建或更新）
 #[tauri::command]
-pub fn custom_pet_save(pet: CustomPet) -> Result<(), String> {
+pub fn custom_pet_save(pet: CustomPet, app: tauri::AppHandle) -> Result<(), String> {
     let dir = custom_pets_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("创建自定义宠物目录失败: {}", e))?;
 
@@ -70,15 +71,20 @@ pub fn custom_pet_save(pet: CustomPet) -> Result<(), String> {
         serde_json::to_string_pretty(&pet).map_err(|e| format!("序列化宠物数据失败: {}", e))?;
 
     crate::util::write_atomic(&path, &content).map_err(|e| format!("写入宠物文件失败: {}", e))?;
+    // 通知所有窗口自定义宠物已变更。各窗口（avatar 主窗口 / settings 窗口）持有独立
+    // 的 customPetsCache，落盘后必须主动广播刷新，否则主窗口 PetAvatar 会继续用旧
+    // data/animation —— 尤其编辑"当前宠物"时 petId 不变，不会触发 config-changed。
+    let _ = app.emit("custom-pets-changed", ());
     Ok(())
 }
 
 /// 删除自定义宠物
 #[tauri::command]
-pub fn custom_pet_delete(id: String) -> Result<(), String> {
+pub fn custom_pet_delete(id: String, app: tauri::AppHandle) -> Result<(), String> {
     let path = pet_file_path(&id);
     if path.exists() {
         std::fs::remove_file(&path).map_err(|e| format!("删除宠物文件失败: {}", e))?;
     }
+    let _ = app.emit("custom-pets-changed", ());
     Ok(())
 }

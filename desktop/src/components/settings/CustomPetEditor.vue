@@ -31,11 +31,14 @@ const fileType = ref<'lottie' | 'image' | 'gif'>('lottie')
 const fileName = ref('')
 const saving = ref(false)
 const error = ref('')
+/** 用户是否通过文件选择器主动选了新文件（区别于编辑模式 setup 回填的原数据） */
+const userSelectedNewFile = ref(false)
 
 const isEdit = computed(() => !!props.editPetId)
 const hasFile = computed(() => fileData.value !== null)
-// 编辑模式下始终显示动画选择器；新建模式下只有图片类型显示
-const showAnimationSelect = computed(() => isEdit.value || fileType.value === 'image')
+// 动画效果（缩放/旋转等）是图片专属的 CSS 动画，对 Lottie（动画内置于 JSON）和
+// GIF（自带动画）都无效。只在图片类型显示，避免对 Lottie/GIF 误改不生效。
+const showAnimationSelect = computed(() => fileType.value === 'image')
 
 const animationOptions = [
   { value: 'breath', label: '呼吸（缓慢缩放）' },
@@ -71,6 +74,9 @@ function onFileChange(e: Event) {
     return
   }
 
+  // 走到这里说明是受支持的格式（否则上方 else 已 return）—— 标记为用户主动选择的新文件
+  userSelectedNewFile.value = true
+
   // 编辑模式下自动填充名称
   if (!isEdit.value && !form.value.name.trim()) {
     form.value.name = file.name.replace(/\.[^.]+$/, '')
@@ -103,6 +109,7 @@ function clearFile() {
   fileData.value = null
   fileName.value = ''
   fileType.value = 'lottie'
+  userSelectedNewFile.value = false
   error.value = ''
   if (fileInput.value) {
     fileInput.value.value = ''
@@ -110,7 +117,14 @@ function clearFile() {
 }
 
 async function save() {
-  if (!form.value.name.trim() || !fileData.value) return
+  // 不依赖 setup 顶层的 fileData 回填：HMR 或组件复用下 setup 不会重跑，
+  // fileData 可能为 null，旧逻辑会被 `!fileData.value` 静默 return（保存无响应）。
+  // 这里以 userSelectedNewFile 为准：选了新文件用新数据/类型，没选就沿用原资源。
+  const data = userSelectedNewFile.value ? fileData.value : props.editPet?.data
+  const petType = userSelectedNewFile.value
+    ? fileType.value
+    : (props.editPet?.petType ?? 'lottie')
+  if (!form.value.name.trim() || !data) return
   saving.value = true
   error.value = ''
   try {
@@ -119,8 +133,8 @@ async function save() {
       id,
       name: form.value.name.trim(),
       description: form.value.description.trim(),
-      type: fileType.value,
-      data: fileData.value,
+      type: petType,
+      data,
       animation: form.value.animation,
     }
     await customPetSave(pet)
@@ -133,12 +147,15 @@ async function save() {
   }
 }
 
-// 编辑模式：填充现有数据
+// 编辑模式：填充现有数据。回填 fileData/fileType 是关键 —— 否则 save() 的
+// `!fileData.value` 校验会直接 return（保存静默失效），且 data:null 会覆盖原有
+// 资源导致宠物损坏。回填后：只改名字/动画时保留原资源，选了新文件则覆盖。
 if (props.editPet) {
   form.value.name = props.editPet.name
   form.value.description = props.editPet.description
   form.value.animation = props.editPet.imageAnimation ?? 'breath'
-  // 编辑模式不重新加载文件数据，只编辑元信息
+  fileData.value = props.editPet.data
+  fileType.value = (props.editPet.petType ?? 'lottie') as 'lottie' | 'image' | 'gif'
 }
 
 function handleCancel() {
@@ -149,6 +166,7 @@ function handleCancel() {
   fileData.value = null
   fileName.value = ''
   fileType.value = 'lottie'
+  userSelectedNewFile.value = false
   error.value = ''
   if (fileInput.value) {
     fileInput.value.value = ''

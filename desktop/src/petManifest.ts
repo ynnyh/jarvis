@@ -6,6 +6,7 @@
 // 暂用 eager import：全部内置宠物打包进 JS bundle。
 // 如果以后内置太多影响加载速度再改 lazy import。
 
+import { shallowRef } from 'vue'
 import roboData from './assets/pets/robo.json'
 import catMoonData from './assets/pets/cat-moon.json'
 import astroLaptopData from './assets/pets/astro-laptop.json'
@@ -125,24 +126,28 @@ export function isCustomPetId(id: string): boolean {
   return id.startsWith('custom-')
 }
 
-// 自定义宠物缓存
-let customPetsCache: PetInfo[] = []
+// 自定义宠物缓存（响应式）。
+// avatar 主窗口与 settings 窗口是两个独立 webview，各自持有一份模块缓存。
+// settings 窗口上传/切换自定义宠物后，主窗口靠 config-changed 同步刷新。
+// 用 shallowRef 让 PetAvatar 的 computed 能追踪缓存变化自动重渲，又不会把
+// Lottie/图片的大 data 对象深度代理（性能 & # 私有字段问题）。
+const customPetsCache = shallowRef<PetInfo[]>([])
 
 /** 加载自定义宠物列表（从后端读取，覆盖缓存） */
 export async function loadCustomPets(): Promise<PetInfo[]> {
   try {
     const remotePets = await customPetList()
-    customPetsCache = remotePets.map(toPetInfo)
-    return customPetsCache
+    customPetsCache.value = remotePets.map(toPetInfo)
+    return customPetsCache.value
   } catch (e) {
     console.error('加载自定义宠物失败:', e)
-    return customPetsCache
+    return customPetsCache.value
   }
 }
 
 /** 获取缓存的自定义宠物列表（同步，需先调用 loadCustomPets） */
 export function getCustomPets(): PetInfo[] {
-  return customPetsCache
+  return customPetsCache.value
 }
 
 function toPetInfo(pet: CustomPet): PetInfo {
