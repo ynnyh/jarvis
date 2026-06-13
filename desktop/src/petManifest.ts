@@ -1,9 +1,7 @@
 // 宠物形象注册表。每个宠物 = 一个 Lottie JSON + 一组元信息。
 //
-// 添加新宠物：
-//   1. 把 Lottie .json 文件放到 desktop/src/assets/pets/
-//   2. 在下方 PETS 数组里加一项，引入新 JSON
-//   3. 配置里的 petId 改成新 id 就能切换
+// 内置宠物：把 Lottie .json 文件放到 desktop/src/assets/pets/，在 PETS 数组里加一项。
+// 自定义宠物：通过设置界面上传 Lottie/图片/GIF，存储在 ~/.jarvis/custom-pets/。
 //
 // 暂用 eager import：全部内置宠物打包进 JS bundle。
 // 如果以后内置太多影响加载速度再改 lazy import。
@@ -18,8 +16,9 @@ import cuteTigerData from './assets/pets/Cute Tiger.json'
 import slothMeditateData from './assets/pets/Sloth meditate.json'
 import cowDrinkMilkData from './assets/pets/Cow Drink Milk.json'
 import dancingLlamaData from './assets/pets/Dancing llama.json'
+import { customPetList, type CustomPet, type ImageAnimation } from './api/customPet'
 
-export type PetCategory = 'mecha' | 'pet' | 'character'
+export type PetCategory = 'mecha' | 'pet' | 'character' | 'custom'
 export interface PetRenderConfig {
   scale?: number
   offsetX?: number
@@ -32,9 +31,13 @@ export interface PetInfo {
   category: PetCategory
   /** 一句话描述，给设置 UI 提示文案用 */
   description: string
-  /** Lottie 动画 JSON 数据，直接喂给 lottie.loadAnimation({ animationData }) */
+  /** Lottie 动画 JSON 数据，或图片/GIF 的 Base64 数据 */
   data: unknown
   render?: PetRenderConfig
+  /** 自定义宠物类型：lottie | image | gif */
+  petType?: 'lottie' | 'image' | 'gif'
+  /** 仅图片类型：动画效果 */
+  imageAnimation?: ImageAnimation
 }
 
 export const PETS: PetInfo[] = [
@@ -115,8 +118,59 @@ export const PET_CATEGORY_LABELS: Record<PetCategory, string> = {
   mecha: '机甲',
   pet: '宠物',
   character: '人物',
+  custom: '自定义',
+}
+
+export function isCustomPetId(id: string): boolean {
+  return id.startsWith('custom-')
+}
+
+// 自定义宠物缓存
+let customPetsCache: PetInfo[] | null = null
+
+/** 加载自定义宠物列表（从后端读取，带缓存） */
+export async function loadCustomPets(): Promise<PetInfo[]> {
+  try {
+    const remotePets = await customPetList()
+    customPetsCache = remotePets.map(toPetInfo)
+    return customPetsCache
+  } catch (e) {
+    console.error('加载自定义宠物失败:', e)
+    return []
+  }
+}
+
+/** 获取缓存的自定义宠物列表（同步，需先调用 loadCustomPets） */
+export function getCustomPets(): PetInfo[] {
+  return customPetsCache ?? []
+}
+
+/** 清除缓存（上传/删除后调用） */
+export function clearCustomPetsCache(): void {
+  customPetsCache = null
+}
+
+function toPetInfo(pet: CustomPet): PetInfo {
+  return {
+    id: pet.id,
+    name: pet.name,
+    category: 'custom',
+    description: pet.description,
+    data: pet.data,
+    petType: pet.type,
+    imageAnimation: pet.animation,
+  }
+}
+
+/** 获取所有宠物（内置 + 自定义） */
+export function getAllPets(): PetInfo[] {
+  return [...PETS, ...getCustomPets()]
 }
 
 export function getPetById(id: string): PetInfo {
+  if (isCustomPetId(id)) {
+    const custom = getCustomPets().find(p => p.id === id)
+    if (custom) return custom
+  }
   return PETS.find(p => p.id === id) ?? PETS[0]
 }

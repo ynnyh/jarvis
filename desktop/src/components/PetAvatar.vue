@@ -3,11 +3,14 @@ import { ref, computed, watch, onMounted, onBeforeUnmount, shallowRef, type CSSP
 import lottie, { type AnimationItem } from 'lottie-web'
 import { getPetById } from '../petManifest'
 
-// 单一职责：把选中的宠物 Lottie 渲染到一个 72×72 透明容器里，
+// 单一职责：把选中的宠物渲染到一个 72×72 透明容器里，
 // 外面套一圈跟当前 state 联动的发光环 + 右下角状态点。换 petId 时销毁旧
 // 动画再加载新动画，避免内存堆积。
 //
-// 不在这里做拖拽 / 点击 / 状态判断 —— 那些归 App.vue 管，PetAvatar 只关心"长什么样"。
+// 支持三种宠物类型：
+// - lottie: 使用 lottie-web 渲染 Lottie JSON
+// - image: 使用 <img> 标签，可选 CSS 动画
+// - gif: 使用 <img> 标签，GIF 自带动画
 
 const props = defineProps<{
   petId: string
@@ -18,20 +21,53 @@ const props = defineProps<{
 }>()
 
 const containerEl = ref<HTMLDivElement | null>(null)
+const imgEl = ref<HTMLImageElement | null>(null)
 // shallowRef 避免 Vue 把 lottie 的 AnimationItem 当作普通对象深度代理 —— 它内部
 // 持有 SVGElement / 帧数据，被 proxy 包装可能造成 # 私有字段访问失败或性能问题。
 const animation = shallowRef<AnimationItem | null>(null)
 
 const pet = computed(() => getPetById(props.petId))
 const renderConfig = computed(() => pet.value.render ?? {})
+const isLottie = computed(() => !pet.value.petType || pet.value.petType === 'lottie')
+const isImage = computed(() => pet.value.petType === 'image')
+const isGif = computed(() => pet.value.petType === 'gif')
+const isMedia = computed(() => isImage.value || isGif.value)
+
 const lottieStyle = computed<CSSProperties>(() => ({
   '--pet-scale': String(renderConfig.value.scale ?? 1),
   '--pet-offset-x': `${renderConfig.value.offsetX ?? 0}px`,
   '--pet-offset-y': `${renderConfig.value.offsetY ?? 0}px`,
 }))
 
+const mediaStyle = computed<CSSProperties>(() => ({
+  '--pet-scale': String(renderConfig.value.scale ?? 1),
+  '--pet-offset-x': `${renderConfig.value.offsetX ?? 0}px`,
+  '--pet-offset-y': `${renderConfig.value.offsetY ?? 0}px`,
+}))
+
+const imageAnimationClass = computed(() => {
+  if (!isImage.value) return ''
+  const anim = pet.value.imageAnimation
+  if (anim === 'breath') return 'anim-breath'
+  if (anim === 'swing') return 'anim-swing'
+  if (anim === 'rotate') return 'anim-rotate'
+  if (anim === 'bounce') return 'anim-bounce'
+  return ''
+})
+
+/** 图片/GIF 的 Base64 data URL */
+const mediaSrc = computed(() => {
+  if (!isMedia.value) return ''
+  const data = pet.value.data
+  if (typeof data === 'string') {
+    // 已经是 data URL 或 base64 字符串
+    return data.startsWith('data:') ? data : `data:image/png;base64,${data}`
+  }
+  return ''
+})
+
 function mountAnimation() {
-  if (!containerEl.value) return
+  if (!containerEl.value || !isLottie.value) return
   if (animation.value) {
     animation.value.destroy()
     animation.value = null
@@ -67,7 +103,16 @@ watch(() => props.petId, () => {
       class="pet-glow"
       :style="{ background: glowColor, boxShadow: `0 0 18px ${color}55, 0 0 36px ${color}33` }"
     />
-    <div ref="containerEl" class="pet-lottie" :style="lottieStyle" />
+    <div v-if="isLottie" ref="containerEl" class="pet-lottie" :style="lottieStyle" />
+    <img
+      v-else-if="isMedia"
+      ref="imgEl"
+      class="pet-media"
+      :class="imageAnimationClass"
+      :style="mediaStyle"
+      :src="mediaSrc"
+      alt=""
+    />
     <div class="pet-dot" :style="{ background: color }" />
   </div>
 </template>
@@ -120,6 +165,57 @@ watch(() => props.petId, () => {
   border-radius: 50%;
   border: 2px solid rgba(15, 23, 42, 1);
   z-index: 2;
+}
+
+/* 图片/GIF 宠物 */
+.pet-media {
+  position: absolute;
+  inset: 4px;
+  z-index: 1;
+  width: calc(100% - 8px);
+  height: calc(100% - 8px);
+  object-fit: cover;
+  border-radius: 50%;
+  box-shadow: 0 0 8px rgba(0, 0, 0, 0.3);
+  transform: translate(var(--pet-offset-x, 0), var(--pet-offset-y, 0)) scale(var(--pet-scale, 1));
+  transform-origin: center center;
+}
+
+/* 图片动画：呼吸效果 */
+.anim-breath {
+  animation: pet-breath 3s ease-in-out infinite;
+}
+@keyframes pet-breath {
+  0%, 100% { transform: translate(var(--pet-offset-x, 0), var(--pet-offset-y, 0)) scale(var(--pet-scale, 1)); }
+  50% { transform: translate(var(--pet-offset-x, 0), var(--pet-offset-y, 0)) scale(calc(var(--pet-scale, 1) * 1.08)); }
+}
+
+/* 图片动画：摇摆效果 */
+.anim-swing {
+  animation: pet-swing 2.5s ease-in-out infinite;
+}
+@keyframes pet-swing {
+  0%, 100% { transform: translate(var(--pet-offset-x, 0), var(--pet-offset-y, 0)) scale(var(--pet-scale, 1)) rotate(0deg); }
+  25% { transform: translate(var(--pet-offset-x, 0), var(--pet-offset-y, 0)) scale(var(--pet-scale, 1)) rotate(5deg); }
+  75% { transform: translate(var(--pet-offset-x, 0), var(--pet-offset-y, 0)) scale(var(--pet-scale, 1)) rotate(-5deg); }
+}
+
+/* 图片动画：旋转效果 */
+.anim-rotate {
+  animation: pet-rotate 8s linear infinite;
+}
+@keyframes pet-rotate {
+  0% { transform: translate(var(--pet-offset-x, 0), var(--pet-offset-y, 0)) scale(var(--pet-scale, 1)) rotate(0deg); }
+  100% { transform: translate(var(--pet-offset-x, 0), var(--pet-offset-y, 0)) scale(var(--pet-scale, 1)) rotate(360deg); }
+}
+
+/* 图片动画：弹跳效果 */
+.anim-bounce {
+  animation: pet-bounce 1.5s ease-in-out infinite;
+}
+@keyframes pet-bounce {
+  0%, 100% { transform: translate(var(--pet-offset-x, 0), calc(var(--pet-offset-y, 0) + 0px)) scale(var(--pet-scale, 1)); }
+  50% { transform: translate(var(--pet-offset-x, 0), calc(var(--pet-offset-y, 0) - 6px)) scale(var(--pet-scale, 1)); }
 }
 
 /* 状态切换瞬间脉冲一次，给视觉信号 */

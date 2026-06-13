@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useConfigStore } from '../../stores/config'
+import CustomDropdown from '../ui/CustomDropdown.vue'
 
 const props = defineProps<{ profileId: string }>()
 const emit = defineEmits<{ saved: [] }>()
@@ -31,6 +32,18 @@ const PRESETS: Record<string, { baseUrl: string; model: string }> = {
   openai: { baseUrl: 'https://api.openai.com', model: 'gpt-4o-mini' },
   custom: { baseUrl: '', model: '' },
 }
+
+const providerOptions = [
+  { value: 'deepseek', label: 'DeepSeek' },
+  { value: 'openai', label: 'OpenAI' },
+  { value: 'custom', label: '自定义（OpenAI 兼容）' },
+]
+
+const wireApiOptions = [
+  { value: 'chat', label: 'Chat Completions（/v1/chat/completions，默认）' },
+  { value: 'responses', label: 'Responses（/v1/responses，Codex 协议）' },
+  { value: 'anthropic', label: 'Anthropic Messages（/v1/messages，Claude 协议）' },
+]
 
 function onProviderChange(next: string) {
   if (next === 'custom') return
@@ -165,13 +178,11 @@ function genId(): string {
     </label>
     <label class="settings-field">
       <span class="settings-field-label">服务商</span>
-      <select class="settings-input"
-        :value="form.provider"
-        @change="(e) => { const v = (e.target as HTMLSelectElement).value as any; form.provider = v; onProviderChange(v) }">
-        <option value="deepseek">DeepSeek</option>
-        <option value="openai">OpenAI</option>
-        <option value="custom">自定义（OpenAI 兼容）</option>
-      </select>
+      <CustomDropdown
+        :model-value="form.provider"
+        :options="providerOptions"
+        @update:model-value="(v) => { form.provider = v as any; onProviderChange(v) }"
+      />
     </label>
     <label class="settings-field">
       <span class="settings-field-label">地址</span>
@@ -197,11 +208,10 @@ function genId(): string {
     </label>
     <label class="settings-field">
       <span class="settings-field-label">协议</span>
-      <select class="settings-input" v-model="form.wireApi">
-        <option value="chat">Chat Completions（/v1/chat/completions，默认）</option>
-        <option value="responses">Responses（/v1/responses，Codex 协议）</option>
-        <option value="anthropic">Anthropic Messages（/v1/messages，Claude 协议）</option>
-      </select>
+      <CustomDropdown
+        v-model="form.wireApi"
+        :options="wireApiOptions"
+      />
     </label>
 
     <div class="settings-actions" style="margin-top: 8px;">

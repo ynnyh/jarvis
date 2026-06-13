@@ -6,6 +6,7 @@ use std::process::Command;
 
 pub mod chat;
 pub mod config;
+pub mod custom_pet;
 pub mod deploy_config;
 pub mod llm;
 pub mod tasks;
@@ -16,6 +17,7 @@ pub mod window;
 
 pub use chat::*;
 pub use config::*;
+pub use custom_pet::*;
 pub use deploy_config::*;
 pub use llm::*;
 pub use tasks::*;

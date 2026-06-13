@@ -2,10 +2,19 @@
 import { computed } from 'vue'
 import { useConfigStore } from '../../stores/config'
 import { MENU_THEMES, getMenuTheme } from '../../menu-themes'
+import CustomDropdown from '../ui/CustomDropdown.vue'
+import type { DropdownOption } from '../ui/CustomDropdown.vue'
 
 const store = useConfigStore()
 
 const currentTheme = computed(() => getMenuTheme(store.config.menuTheme))
+
+const themeOptions = computed<DropdownOption[]>(() =>
+  MENU_THEMES.map(t => ({
+    value: t.id,
+    label: `${t.name} — ${t.desc}`,
+  }))
+)
 </script>
 
 <template>
@@ -13,11 +22,10 @@ const currentTheme = computed(() => getMenuTheme(store.config.menuTheme))
     <h3 class="settings-section-title">右键菜单主题</h3>
     <label class="settings-field">
       <span class="settings-field-label">风格</span>
-      <select class="settings-input" v-model="store.config.menuTheme">
-        <option v-for="t in MENU_THEMES" :key="t.id" :value="t.id">
-          {{ t.name }} — {{ t.desc }}
-        </option>
-      </select>
+      <CustomDropdown
+        v-model="store.config.menuTheme"
+        :options="themeOptions"
+      />
     </label>
 
     <div class="theme-preview">

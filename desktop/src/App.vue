@@ -20,6 +20,7 @@ import { useScheduledReminders } from './composables/useScheduledReminders'
 import { useTheme } from './composables/useTheme'
 import { useAvatarDock, type AvatarAnchor } from './composables/useAvatarDock'
 import { useAvatarDrag } from './composables/useAvatarDrag'
+import { loadCustomPets } from './petManifest'
 import TaskWindow from './components/TaskWindow.vue'
 import SettingsWindow from './components/SettingsWindow.vue'
 import RiskWindow from './components/RiskWindow.vue'
@@ -515,9 +516,17 @@ watch(() => store.alertLevel, (level) => {
 })
 
 let unlistenFocus: UnlistenFn | null = null
-onMounted(() => {
+onMounted(async () => {
   configStore.load()
   store.refreshTaskBindings()
+  await loadCustomPets()
+
+  // 加载完自定义宠物后，验证当前 petId 是否有效，无效则回退到默认
+  const { getPetById } = await import('./petManifest')
+  const currentPet = getPetById(configStore.config.petId)
+  if (currentPet.id !== configStore.config.petId) {
+    configStore.config.petId = 'robo'
+  }
 
   // 窗口失焦时关闭大部分面板和菜单：用户点击桌面或其他应用时自动收起。
   // 但不关绑定窗（showBindTaskWindow），因为「浏览选择其它目录」会弹出

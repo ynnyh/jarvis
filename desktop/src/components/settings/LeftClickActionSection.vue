@@ -8,8 +8,14 @@
 // App.vue::handleAvatarLeftClick 加 case 即可。
 
 import { useConfigStore } from '../../stores/config'
+import CustomDropdown from '../ui/CustomDropdown.vue'
 
 const store = useConfigStore()
+
+const actionOptions = [
+  { value: 'tasks', label: '任务列表（默认）' },
+  { value: 'review', label: '今日复盘' },
+]
 </script>
 
 <template>
@@ -17,10 +23,10 @@ const store = useConfigStore()
     <h3 class="settings-section-title">左键点小人弹出</h3>
     <label class="settings-field">
       <span class="settings-field-label">动作</span>
-      <select class="settings-input" v-model="store.config.leftClickAction">
-        <option value="tasks">任务列表（默认）</option>
-        <option value="review">今日复盘</option>
-      </select>
+      <CustomDropdown
+        v-model="store.config.leftClickAction"
+        :options="actionOptions"
+      />
     </label>
     <p class="settings-section-hint">右键菜单仍可访问其它面板，这里只改单击的默认动作</p>
   </section>

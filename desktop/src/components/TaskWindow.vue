@@ -5,6 +5,7 @@ import { useConfigStore, type CommitsRange } from '../stores/config'
 import { useTaskAlerts } from '../composables/useTaskAlerts'
 import { useTaskCommits } from '../composables/useTaskCommits'
 import TaskItem from './TaskItem.vue'
+import CustomDropdown from './ui/CustomDropdown.vue'
 
 const store = useAppStore()
 const configStore = useConfigStore()
@@ -75,15 +76,12 @@ const hasAnyAlert = computed(() =>
         <span v-if="connState === 'ok'" class="conn-meta">
           {{ store.taskAlerts.length }} 条
         </span>
-        <select
-          class="range-select"
+        <CustomDropdown
           v-model="configStore.config.commitsRange"
+          :options="rangeOptions"
+          class="range-dropdown"
           title="commit 关联范围"
-        >
-          <option v-for="opt in rangeOptions" :key="opt.value" :value="opt.value">
-            {{ opt.label }}
-          </option>
-        </select>
+        />
       </div>
 
       <!-- 堆叠风险横幅：未来 7 天同一天 ≥3 个任务 -->
@@ -260,24 +258,30 @@ const hasAnyAlert = computed(() =>
 .conn-ok { color: var(--green-text); }
 .conn-error { color: var(--red-text); }
 .conn-meta { margin-left: auto; color: var(--text-muted); font-family: var(--font-display); font-variant-numeric: var(--num-font-variant); }
-.range-select {
+.range-dropdown {
   margin-left: 6px;
-  padding: 1px 4px;
+  width: auto !important;
+  min-width: 80px;
+  flex-shrink: 0;
+}
+.range-dropdown :deep(.custom-dropdown) {
+  width: auto !important;
+}
+.range-dropdown :deep(.dropdown-trigger) {
+  padding: 2px 6px;
   font-size: 10px;
-  font-family: inherit;
   color: var(--text-ghost);
   background: var(--input-bg);
   border: var(--input-border);
   border-radius: var(--radius-sm);
-  cursor: pointer;
 }
-.range-select:hover { background: var(--surface-item-active); }
-.range-select:focus { outline: none; border-color: var(--accent-border); }
-.range-select option { color: #222; background: #fff; }
-/* conn-meta 没有时 select 自己往右 */
-.conn-bar > .range-select:not(:last-child) { margin-left: 6px; }
-.conn-bar > .conn-meta + .range-select { margin-left: 6px; }
-.conn-bar > .conn-text + .range-select { margin-left: auto; }
+.range-dropdown :deep(.dropdown-trigger:hover) {
+  background: var(--surface-item-active);
+}
+/* conn-meta 没有时 dropdown 自己往右 */
+.conn-bar > .range-dropdown:not(:last-child) { margin-left: 6px; }
+.conn-bar > .conn-meta + .range-dropdown { margin-left: 6px; }
+.conn-bar > .conn-text + .range-dropdown { margin-left: auto; }
 @keyframes pulse-dot {
   0%, 100% { opacity: 0.5; transform: scale(0.85); }
   50% { opacity: 1; transform: scale(1.15); }

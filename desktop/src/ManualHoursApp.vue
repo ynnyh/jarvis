@@ -8,6 +8,7 @@ import { emit } from '@tauri-apps/api/event'
 import ErrorBoundary from './components/ErrorBoundary.vue'
 import MatrixRain from './components/MatrixRain.vue'
 import CyberParticles from './components/CyberParticles.vue'
+import CustomDropdown from './components/ui/CustomDropdown.vue'
 import { useConfigStore } from './stores/config'
 import { useTheme } from './composables/useTheme'
 const configStore = useConfigStore()
@@ -79,6 +80,15 @@ const opsProjects = computed(() => {
   const set = new Set<string>()
   for (const t of classifiedTasks.value?.ops ?? []) set.add(extractProject(t.name))
   return Array.from(set).sort((a, b) => a.localeCompare(b, 'zh-CN'))
+})
+
+const projectFilterOptions = computed(() => {
+  const allCount = classifiedTasks.value?.ops?.length ?? 0
+  const options = [{ value: PROJECT_ALL, label: `全部项目（${allCount}）` }]
+  for (const p of opsProjects.value) {
+    options.push({ value: p, label: p })
+  }
+  return options
 })
 
 const visibleTasks = computed(() => {
@@ -257,10 +267,10 @@ onUnmounted(() => {
 
         <div v-if="activeCategory === 'ops' && opsProjects.length > 1" class="form-row">
           <label class="form-label">项目</label>
-          <select v-model="projectFilter" class="form-input form-select">
-            <option :value="PROJECT_ALL">全部项目（{{ classifiedTasks?.ops?.length ?? 0 }}）</option>
-            <option v-for="p in opsProjects" :key="p" :value="p">{{ p }}</option>
-          </select>
+          <CustomDropdown
+            v-model="projectFilter"
+            :options="projectFilterOptions"
+          />
         </div>
 
         <div class="form-row">
