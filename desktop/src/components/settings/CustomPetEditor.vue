@@ -34,7 +34,8 @@ const error = ref('')
 
 const isEdit = computed(() => !!props.editPetId)
 const hasFile = computed(() => fileData.value !== null)
-const showAnimationSelect = computed(() => fileType.value === 'image')
+// 编辑模式下始终显示动画选择器；新建模式下只有图片类型显示
+const showAnimationSelect = computed(() => isEdit.value || fileType.value === 'image')
 
 const animationOptions = [
   { value: 'breath', label: '呼吸（缓慢缩放）' },
@@ -233,7 +234,7 @@ function handleCancel() {
     <div class="settings-actions" style="margin-top: 8px;">
       <button
         class="settings-btn settings-btn-primary"
-        :disabled="saving || !form.name.trim() || !hasFile"
+        :disabled="saving || !form.name.trim() || (!isEdit && !hasFile)"
         @click="save"
       >
         {{ saving ? '保存中…' : '保存' }}

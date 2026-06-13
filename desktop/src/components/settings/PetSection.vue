@@ -4,7 +4,7 @@
 //
 // 切换后立刻生效（App.vue 里 PetAvatar 监听 petId 变化重载动画）。
 
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
 import { useConfigStore } from '../../stores/config'
 import {
   PETS,
@@ -62,8 +62,9 @@ function closeEditor() {
 
 function onEditorSaved(petId?: string) {
   closeEditor()
-  refreshOptions().then(() => {
-    // 上传成功后自动选中新宠物
+  refreshOptions().then(async () => {
+    // 等待 Vue 响应式更新完成后再设置 petId
+    await nextTick()
     if (petId) {
       store.config.petId = petId
     }
