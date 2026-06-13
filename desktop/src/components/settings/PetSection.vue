@@ -13,7 +13,6 @@ import {
   getCustomPets,
   isCustomPetId,
   loadCustomPets,
-  clearCustomPetsCache,
 } from '../../petManifest'
 import { customPetDelete } from '../../api/customPet'
 import CustomPetEditor from './CustomPetEditor.vue'
@@ -28,6 +27,11 @@ const showEditor = ref(false)
 const editingPetId = ref<string | undefined>()
 const editingPet = ref<any>(undefined)
 const petOptions = ref<DropdownOption[]>([])
+
+// 删除确认
+const showDeleteConfirm = ref(false)
+const deletingPetId = ref('')
+const deletingPetName = ref('')
 
 // 刷新宠物选项列表
 async function refreshOptions() {
@@ -56,24 +60,41 @@ function closeEditor() {
   editingPet.value = undefined
 }
 
-function onEditorSaved() {
+function onEditorSaved(petId?: string) {
   closeEditor()
-  refreshOptions()
+  refreshOptions().then(() => {
+    // 上传成功后自动选中新宠物
+    if (petId) {
+      store.config.petId = petId
+    }
+  })
 }
 
 function onCancel() {
   closeEditor()
 }
 
-async function deleteCustomPet(id: string) {
-  if (!confirm('确定要删除这个自定义宠物吗？')) return
+function openDeleteConfirm(id: string, name: string) {
+  deletingPetId.value = id
+  deletingPetName.value = name
+  showDeleteConfirm.value = true
+}
+
+function closeDeleteConfirm() {
+  showDeleteConfirm.value = false
+  deletingPetId.value = ''
+  deletingPetName.value = ''
+}
+
+async function confirmDelete() {
+  const id = deletingPetId.value
+  closeDeleteConfirm()
   try {
     // 如果删除的是当前使用的宠物，先切回默认
     if (store.config.petId === id) {
       store.config.petId = 'robo'
     }
     await customPetDelete(id)
-    clearCustomPetsCache()
     await refreshOptions()
   } catch (e) {
     console.error('删除自定义宠物失败:', e)
@@ -125,7 +146,7 @@ async function deleteCustomPet(id: string) {
           </button>
           <button
             class="settings-btn settings-btn-sm settings-btn-danger"
-            @click="deleteCustomPet(pet.id)"
+            @click="openDeleteConfirm(pet.id, pet.name)"
             title="删除"
           >
             删除
@@ -146,6 +167,20 @@ async function deleteCustomPet(id: string) {
           @saved="onEditorSaved"
           @cancel="onCancel"
         />
+      </div>
+    </div>
+
+    <!-- 删除确认弹窗 -->
+    <div v-if="showDeleteConfirm" class="pet-modal-mask" @click.self="closeDeleteConfirm">
+      <div class="pet-modal">
+        <h4 class="pet-modal-title">删除形象</h4>
+        <p class="pet-modal-body">
+          确定要删除「{{ deletingPetName }}」吗？此操作不可恢复。
+        </p>
+        <div class="pet-modal-actions">
+          <button class="settings-btn" @click="closeDeleteConfirm">取消</button>
+          <button class="settings-btn settings-btn-danger" @click="confirmDelete">删除</button>
+        </div>
       </div>
     </div>
 
@@ -242,5 +277,44 @@ async function deleteCustomPet(id: string) {
   font-size: 14px;
   font-weight: 600;
   color: var(--text);
+}
+
+/* 删除确认弹窗 */
+.pet-modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1001;
+  background: color-mix(in srgb, #000 45%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pet-modal {
+  width: min(320px, 88vw);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  background: var(--popup-bg);
+  border: var(--panel-border);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+}
+.pet-modal-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.pet-modal-body {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+.pet-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 </style>

@@ -126,9 +126,9 @@ export function isCustomPetId(id: string): boolean {
 }
 
 // 自定义宠物缓存
-let customPetsCache: PetInfo[] | null = null
+let customPetsCache: PetInfo[] = []
 
-/** 加载自定义宠物列表（从后端读取，带缓存） */
+/** 加载自定义宠物列表（从后端读取，覆盖缓存） */
 export async function loadCustomPets(): Promise<PetInfo[]> {
   try {
     const remotePets = await customPetList()
@@ -136,18 +136,13 @@ export async function loadCustomPets(): Promise<PetInfo[]> {
     return customPetsCache
   } catch (e) {
     console.error('加载自定义宠物失败:', e)
-    return []
+    return customPetsCache
   }
 }
 
 /** 获取缓存的自定义宠物列表（同步，需先调用 loadCustomPets） */
 export function getCustomPets(): PetInfo[] {
-  return customPetsCache ?? []
-}
-
-/** 清除缓存（上传/删除后调用） */
-export function clearCustomPetsCache(): void {
-  customPetsCache = null
+  return customPetsCache
 }
 
 function toPetInfo(pet: CustomPet): PetInfo {

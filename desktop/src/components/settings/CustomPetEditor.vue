@@ -2,7 +2,7 @@
 import { ref, computed } from 'vue'
 import { useConfigStore } from '../../stores/config'
 import { generateCustomPetId, customPetSave, type CustomPet, type ImageAnimation } from '../../api/customPet'
-import { clearCustomPetsCache, loadCustomPets, type PetInfo } from '../../petManifest'
+import { loadCustomPets, type PetInfo } from '../../petManifest'
 import CustomDropdown from '../ui/CustomDropdown.vue'
 
 const props = defineProps<{
@@ -13,7 +13,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  saved: []
+  saved: [petId: string]
   cancel: []
 }>()
 
@@ -123,9 +123,8 @@ async function save() {
       animation: form.value.animation,
     }
     await customPetSave(pet)
-    clearCustomPetsCache()
     await loadCustomPets()
-    emit('saved')
+    emit('saved', id)
   } catch (e: any) {
     error.value = String(e?.message ?? e)
   } finally {
