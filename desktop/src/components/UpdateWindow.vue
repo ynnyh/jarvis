@@ -66,8 +66,9 @@ async function handleInstall() {
 }
 
 function handleClose() {
-  // busy 状态下别让用户手贱关掉 —— 关了等于没人看进度，但 install 还在跑
-  if (updater.isBusy.value) return
+  // installing 阶段不能中断（替换 .app / NSIS 安装中，强关会损坏安装）；
+  // checking/downloading 阶段允许关闭逃离 —— 尤其网络卡死、UI 锁在"检查中/下载中"时。
+  if (updater.phase.value === 'installing') return
   store.showUpdateWindow = false
   updater.reset()
 }
@@ -81,7 +82,7 @@ function handleClose() {
           <span class="title-icon">✨</span>
           <span class="title-text">检查更新</span>
         </div>
-        <button class="icon-btn" :disabled="updater.isBusy.value" :title="updater.isBusy.value ? '更新中，请等待完成' : '关闭'" @click="handleClose">×</button>
+        <button class="icon-btn" :disabled="updater.phase.value === 'installing'" :title="updater.phase.value === 'installing' ? '安装中，请等待完成' : '关闭'" @click="handleClose">×</button>
       </header>
 
       <div class="panel-body">
@@ -146,7 +147,7 @@ function handleClose() {
         >
           {{ updater.phase.value === 'checking' ? '检查中…' : '检查更新' }}
         </button>
-        <button class="secondary-btn" :disabled="updater.isBusy.value" @click="handleClose">关闭</button>
+        <button class="secondary-btn" :disabled="updater.phase.value === 'installing'" @click="handleClose">关闭</button>
       </footer>
     </div>
   </Transition>

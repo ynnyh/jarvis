@@ -55,6 +55,15 @@ export interface DownloadProgress {
 
 const SIX_HOURS = 6 * 60 * 60 * 1000
 
+/** 给异步操作套超时，超时则 reject。endpoint(Gitee) 偶发网络 stall 时 check()
+ * 可能长时间不返回，UI 会卡在"检查中"并因 isBusy 锁死所有按钮（含关闭）。 */
+function withTimeout<T>(p: Promise<T>, ms: number, timeoutMsg: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(timeoutMsg)), ms)
+    p.then((v) => { clearTimeout(t); resolve(v) }, (e) => { clearTimeout(t); reject(e) })
+  })
+}
+
 export function useUpdater(options: UseUpdaterOptions = {}) {
   const { onAvailable, initialDelay = 30_000, interval = SIX_HOURS } = options
   const available = ref<Update | null>(null)
@@ -87,7 +96,9 @@ export function useUpdater(options: UseUpdaterOptions = {}) {
     phase.value = 'checking'
     lastError.value = null
     try {
-      const update = await check()
+      // check() 可能因 endpoint(Gitee) 网络 stall 长时间不返回 → phase 卡 checking、
+      // isBusy 锁死 UI，还会让后续自动轮询全部被 isBusy 拒绝。加 30s 超时解锁。
+      const update = await withTimeout(check(), 30_000, '检查更新超时，请稍后重试')
       if (update) {
         // markRaw：Tauri 的 Update 类内部用 #xxx 私有字段，ref/reactive 会拿
         // Proxy 包对象，而 JS 规范要求 # 字段访问的 this 必须是该类原始实例，
@@ -163,9 +174,12 @@ export function useUpdater(options: UseUpdaterOptions = {}) {
     }
   }
 
-  /** 回到 idle（清"已是最新"/"出错"等终态）。busy 时拒绝重置，避免下载中被打断 */
+  /** 回到 idle。installing 阶段（替换 .app / NSIS 安装）不可中断会损坏安装，禁止
+   * 重置；其余阶段（含 downloading）允许，让用户在网络/plugin 卡住时能关窗逃离锁死。
+   * 注意：Tauri updater 插件不支持取消进行中的下载，reset 只解锁 UI 状态机，
+   * 后台若最终完成仍会 relaunch（用户主动更新，完成重启属预期）。 */
   function reset() {
-    if (isBusy.value) return
+    if (phase.value === 'installing') return
     phase.value = 'idle'
     lastError.value = null
     downloadProgress.value = { downloaded: 0, total: 0, percent: 0 }
