@@ -29,7 +29,7 @@ pub async fn extract_facts_only(
     match extract_facts(user_msg, assistant_msg).await {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("[memory] 提取失败（静默跳过）: {}", e);
+            tracing::error!(target: "memory", "提取失败（静默跳过）: {}", e);
             Vec::new()
         }
     }

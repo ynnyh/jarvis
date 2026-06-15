@@ -246,10 +246,7 @@ pub async fn deploy_config_save(input: Value) -> Result<(), String> {
                 if !new_names.contains(&old_name) {
                     let account = token_keychain_account(&old_name);
                     if let Err(e) = crate::settings::secret_clear(&account) {
-                        eprintln!(
-                            "[deploy_config] 清理已删除凭据的密钥 '{}' 失败: {}",
-                            account, e
-                        );
+                        tracing::error!(target: "deploy_config", "清理已删除凭据的密钥 '{}' 失败: {}", account, e);
                     }
                 }
             }
@@ -286,10 +283,7 @@ pub async fn deploy_config_save(input: Value) -> Result<(), String> {
     //    把错误返回给前端，让用户立刻知道——此时配置已写盘，属正常。
     let mgr = crate::mcp_client::manager();
     if let Err(e) = mgr.shutdown_server(JENKINS_SERVER_ID).await {
-        eprintln!(
-            "[deploy_config] 重启前关停 jenkins 失败（可能未在运行）: {}",
-            e
-        );
+        tracing::error!(target: "deploy_config", "重启前关停 jenkins 失败（可能未在运行）: {}", e);
     }
     mgr.spawn_server(JENKINS_SERVER_ID, &jenkins_cfg).await?;
 

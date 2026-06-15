@@ -434,7 +434,7 @@ async fn start_build_polling(
             Err(e) => {
                 // 网络/协议错误：如果还没有 buildNumber，等一会重试；
                 // 有 buildNumber 了还报错，emit error 后停止。
-                eprintln!("[deploy] 轮询构建状态失败: {}", e);
+                tracing::error!(target: "deploy", "轮询构建状态失败: {}", e);
                 if current_build_number.is_some() {
                     let _ = app_handle.emit(
                         "build-status",
@@ -459,7 +459,7 @@ async fn start_build_polling(
 
         // 工具自身报错（如 buildNumber 不存在）：同上，分情况处理。
         if call_result.is_error == Some(true) {
-            eprintln!("[deploy] get_build_status 工具错误: {}", text);
+            tracing::error!(target: "deploy", "get_build_status 工具错误: {}", text);
             if current_build_number.is_some() {
                 let _ = app_handle.emit(
                     "build-status",
@@ -482,7 +482,7 @@ async fn start_build_polling(
         let status_json: Value = match serde_json::from_str(&text) {
             Ok(v) => v,
             Err(_) => {
-                eprintln!("[deploy] get_build_status 返回非 JSON: {}", text);
+                tracing::debug!(target: "deploy", "get_build_status 返回非 JSON: {}", text);
                 tokio::time::sleep(interval).await;
                 continue;
             }
@@ -658,7 +658,7 @@ fn append_deploy_audit(
         })
     {
         // 审计写失败不致命（发版本身已完成/失败），但必须可见，绝不静默吞。
-        eprintln!("[deploy] 写发版审计日志失败: {}", e);
+        tracing::error!(target: "deploy", "写发版审计日志失败: {}", e);
     }
 }
 

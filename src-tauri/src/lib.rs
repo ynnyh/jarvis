@@ -10,6 +10,7 @@ mod daily_review;
 mod fine_report;
 mod git_scan;
 mod llm;
+mod logging;
 mod mcp_client;
 mod memory;
 mod repo_recommender;
@@ -30,6 +31,13 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
+    // 日志必须最先初始化 —— 后续所有 plugin spawn / 业务逻辑都依赖 tracing 已就绪。
+    // WorkerGuard 必须保活到进程结束(appender drop 时 flush 尾部日志);
+    // forget 等同 leak,生命周期等于进程,可接受(全局单例,不应多个)。
+    if let Some(guard) = logging::init_logging() {
+        std::mem::forget(guard);
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -226,7 +234,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let app_handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     if let Err(e) = channels::start_gateway_background(app_handle) {
-                        eprintln!("[channels] 自动启动失败: {}", e);
+                        tracing::error!(target: "channels", "自动启动失败: {e}");
                     }
                 });
             }
@@ -240,16 +248,16 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             tauri::async_runtime::spawn(async move {
                 match crate::mcp_client::manager().spawn_all_from_config().await {
                     Ok(started) if !started.is_empty() => {
-                        eprintln!("[mcp_client] 已启动 MCP server: {:?}", started);
+                        tracing::info!(target: "mcp_client", "已启动 MCP server: {started:?}");
                     }
                     Ok(_) => {}
-                    Err(e) => eprintln!("[mcp_client] 启动 MCP server 失败: {}", e),
+                    Err(e) => tracing::error!(target: "mcp_client", "启动 MCP server 失败: {e}"),
                 }
             });
             // 启动时按当前开关状态注册语音全局热键：voiceInputEnabled=true 且资产就绪才注册，
             // 否则保持不占用。前端开关翻转 / 下载完成后还会再调 voice_hotkey_sync 校准。
             if let Err(e) = crate::voice::sync_hotkey(app.handle()) {
-                eprintln!("[voice] 启动注册语音热键失败: {}", e);
+                tracing::error!(target: "voice", "启动注册语音热键失败: {e}");
             }
 
             Ok(())
@@ -285,6 +293,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             commands::chat_close,
             commands::settings_open,
             commands::settings_close,
+            commands::export_diagnostic_logs,
             commands::today_plan_open,
             commands::today_plan_close,
             commands::write_hours_open,

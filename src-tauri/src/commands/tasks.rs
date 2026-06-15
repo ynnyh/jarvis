@@ -29,7 +29,7 @@ pub async fn fetch_task_alerts(app: tauri::AppHandle) -> Result<Vec<TaskAlert>, 
     let parsed = match crate::tools::get_tasks(serde_json::json!({})).await {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("[fetch_task_alerts] zentao 调用失败: {}", e);
+            tracing::error!(target: "fetch_task_alerts", "zentao 调用失败: {}", e);
             return Err(e);
         }
     };

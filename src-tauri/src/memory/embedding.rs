@@ -59,11 +59,8 @@ fn get_embedding_model() -> String {
 pub fn warn_unavailable_once(reason: &str) {
     static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-        eprintln!(
-            "[memory] ⚠ 嵌入服务不可用（{}）：长期记忆已降级为纯关键词(FTS)检索。\
-             如需向量检索，请在设置中配置 embeddingBaseUrl + embeddingModel（如指向本地 Ollama）。",
-            reason
-        );
+        tracing::warn!(target: "memory", "⚠ 嵌入服务不可用（{}）：长期记忆已降级为纯关键词(FTS)检索。\\
+             如需向量检索，请在设置中配置 embeddingBaseUrl + embeddingModel（如指向本地 Ollama）。", reason);
     }
 }
 

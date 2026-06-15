@@ -8,6 +8,7 @@ import DeploySection from './components/settings/DeploySection.vue'
 import DeployEnableSection from './components/settings/DeployEnableSection.vue'
 import VoiceInputSection from './components/settings/VoiceInputSection.vue'
 import EffortClosingSection from './components/settings/EffortClosingSection.vue'
+import DiagnosticLogsSection from './components/settings/DiagnosticLogsSection.vue'
 import ExcludedLinesSection from './components/settings/ExcludedLinesSection.vue'
 import FineReportSection from './components/settings/FineReportSection.vue'
 import LeftClickActionSection from './components/settings/LeftClickActionSection.vue'
@@ -52,7 +53,7 @@ export const SETTINGS_MENU: SettingsMenuItem[] = [
 ]
 
 export const SETTINGS_PAGE_COMPONENTS: Record<SettingsPageKey, Component[]> = {
-  general: [AutoStartSection, DeployEnableSection, VoiceInputSection, CostRatesSection],
+  general: [AutoStartSection, DeployEnableSection, VoiceInputSection, CostRatesSection, DiagnosticLogsSection],
   zentao: [ZentaoSection],
   finereport: [FineReportSection],
   ai: [LlmSection],

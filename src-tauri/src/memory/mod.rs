@@ -32,7 +32,7 @@ impl MemoryState {
                 db: Some(Arc::new(Mutex::new(db))),
             },
             Err(e) => {
-                eprintln!("[memory] 记忆数据库打开失败，记忆系统不可用: {}", e);
+                tracing::error!(target: "memory", "记忆数据库打开失败，记忆系统不可用: {}", e);
                 Self { db: None }
             }
         }

@@ -208,7 +208,7 @@ pub async fn chat_send_stream(
                 if let Err(e) =
                     crate::memory::extractor::store_fact_sync(fact, emb.as_deref(), conv, &db)
                 {
-                    eprintln!("[memory] 存储失败: {}", e);
+                    tracing::error!(target: "memory", "存储失败: {}", e);
                 }
             }
         });

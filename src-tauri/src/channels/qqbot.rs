@@ -115,7 +115,7 @@ async fn receive_loop(
     mut stop_rx: watch::Receiver<bool>,
 ) {
     if config.app_id.trim().is_empty() || config.app_secret.trim().is_empty() {
-        eprintln!("[channels/qqbot] appId/appSecret 为空，跳过 QQ Bot 接收");
+        tracing::warn!(target: "qqbot", "[channels/qqbot] appId/appSecret 为空，跳过 QQ Bot 接收");
         return;
     }
 
@@ -124,7 +124,7 @@ async fn receive_loop(
             break;
         }
         if let Err(e) = run_ws_once(&config, inbound.clone(), stop_rx.clone()).await {
-            eprintln!("[channels/qqbot] websocket 断开: {}", e);
+            tracing::debug!(target: "qqbot", "[channels/qqbot] websocket 断开: {}", e);
         }
         tokio::select! {
             _ = stop_rx.changed() => break,
@@ -400,13 +400,13 @@ async fn send_loop(
                     t
                 }
                 Err(e) => {
-                    eprintln!("[channels/qqbot] 发送前获取 token 失败: {}", e);
+                    tracing::error!(target: "qqbot", "[channels/qqbot] 发送前获取 token 失败: {}", e);
                     continue;
                 }
             },
         };
         if let Err(e) = send_message(&client, &config, &token, &msg).await {
-            eprintln!("[channels/qqbot] 发送失败: {}", e);
+            tracing::error!(target: "qqbot", "[channels/qqbot] 发送失败: {}", e);
             // 失败可能是 token 过期；清缓存下次强制刷新。
             cached_token = None;
         }

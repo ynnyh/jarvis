@@ -285,7 +285,7 @@ impl FineReportClient {
         if cfg!(debug_assertions) {
             let debug_path = jarvis_dir().join("finereport-debug.html");
             if let Err(e) = std::fs::write(&debug_path, &html) {
-                eprintln!("[FineReport] 写 debug HTML 失败（不致命）: {}", e);
+                tracing::error!(target: "FineReport", "写 debug HTML 失败（不致命）: {}", e);
             }
         }
 
@@ -448,7 +448,7 @@ impl FineReportClient {
         });
         let params_str = parameters.to_string();
         if cfg!(debug_assertions) {
-            eprintln!("[FineReport] submit_filter payload: {}", params_str);
+            tracing::debug!(target: "FineReport", "submit_filter payload: {}", params_str);
         }
 
         let url = self.url(&format!(
@@ -479,10 +479,7 @@ impl FineReportClient {
         let body = resp.text().await.unwrap_or_default();
         let preview: String = body.chars().take(500).collect();
         if cfg!(debug_assertions) {
-            eprintln!(
-                "[FineReport] submit_filter resp status={} body_preview={}",
-                status, preview
-            );
+            tracing::debug!(target: "FineReport", "submit_filter resp status={} body_preview={}", status, preview);
         }
         if !status.is_success() {
             return Err(format!("parameters_d 返回 {}：{}", status, preview));

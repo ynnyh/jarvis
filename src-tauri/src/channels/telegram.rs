@@ -148,7 +148,7 @@ async fn receive_loop(
     mut stop_rx: watch::Receiver<bool>,
 ) {
     if config.bot_token.trim().is_empty() {
-        eprintln!("[channels/telegram] botToken 为空，跳过 Telegram 接收");
+        tracing::warn!(target: "telegram", "[channels/telegram] botToken 为空，跳过 Telegram 接收");
         return;
     }
     let api_base = normalize_api_base(if config.api_base_url.trim().is_empty() {
@@ -159,7 +159,7 @@ async fn receive_loop(
     let client = match build_client(Some(config.proxy.trim())) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("[channels/telegram] client 构造失败: {}", e);
+            tracing::error!(target: "telegram", "[channels/telegram] client 构造失败: {}", e);
             return;
         }
     };
@@ -189,7 +189,7 @@ async fn receive_loop(
         let parsed = match resp.json::<TelegramUpdates>().await {
             Ok(v) => v,
             Err(e) => {
-                eprintln!("[channels/telegram] getUpdates 解析失败: {}", e);
+                tracing::error!(target: "telegram", "[channels/telegram] getUpdates 解析失败: {}", e);
                 tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                 continue;
             }
@@ -256,7 +256,7 @@ async fn send_loop(
     let client = match build_client(Some(config.proxy.trim())) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("[channels/telegram] client 构造失败: {}", e);
+            tracing::error!(target: "telegram", "[channels/telegram] client 构造失败: {}", e);
             return;
         }
     };
@@ -287,19 +287,13 @@ async fn send_telegram_chunk(client: &reqwest::Client, url: &str, chat_id: &str,
             Ok(resp) => {
                 let code = resp.status().as_u16();
                 if !(code == 429 || code >= 500) || attempt == 3 {
-                    eprintln!(
-                        "[channels/telegram] sendMessage 失败 HTTP {}（第 {} 次，放弃）",
-                        code, attempt
-                    );
+                    tracing::error!(target: "telegram", "[channels/telegram] sendMessage 失败 HTTP {}（第 {} 次，放弃）", code, attempt);
                     return;
                 }
             }
             Err(e) => {
                 if attempt == 3 {
-                    eprintln!(
-                        "[channels/telegram] sendMessage 网络失败（第 {} 次，放弃）: {}",
-                        attempt, e
-                    );
+                    tracing::error!(target: "telegram", "[channels/telegram] sendMessage 网络失败（第 {} 次，放弃）: {}", attempt, e);
                     return;
                 }
             }

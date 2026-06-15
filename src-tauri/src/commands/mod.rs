@@ -100,6 +100,13 @@ fn read_dotenv_value(root: &PathBuf, key: &str) -> Option<String> {
     None
 }
 
+/// 导出诊断日志:打包最近 3 天日志 + 脱敏环境摘要,弹保存框。
+/// 红线:导出内容不含 apiKey/token/password 明文。
+#[tauri::command]
+pub fn export_diagnostic_logs() -> Result<String, String> {
+    crate::logging::export_diagnostic_logs()
+}
+
 // ===== 共享类型 =====
 
 #[derive(Debug, Serialize, Deserialize)]
