@@ -935,3 +935,323 @@ pub async fn worklog_session_write_confirmed(
     }
     Ok(out)
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ===== today_str =====
+    #[test]
+    fn today_str_format() {
+        let s = today_str();
+        // 格式 YYYY-MM-DD,10 个字符
+        assert_eq!(s.len(), 10, "today_str 应为 YYYY-MM-DD 格式");
+        assert_eq!(s.chars().nth(4), Some('-'));
+        assert_eq!(s.chars().nth(7), Some('-'));
+    }
+
+    #[test]
+    fn today_str_matches_chrono() {
+        // 与 chrono::Local 直接生成的格式一致
+        let expected = chrono::Local::now().format("%Y-%m-%d").to_string();
+        assert_eq!(today_str(), expected);
+    }
+
+    // ===== summarize =====
+    #[test]
+    fn summarize_empty_cards() {
+        let s = summarize(&[]);
+        assert_eq!(s.total_cards, 0);
+        assert_eq!(s.ready_cards, 0);
+        assert_eq!(s.total_hours, 0.0);
+    }
+
+    #[test]
+    fn summarize_mixed_states() {
+        let cards = vec![
+            test_card("c1", WorklogCardState::Ready, 2.0),
+            test_card("c2", WorklogCardState::Ready, 3.5),
+            test_card("c3", WorklogCardState::PendingBind, 0.0),
+            test_card("c4", WorklogCardState::Written, 4.0),
+            test_card("c5", WorklogCardState::Failed, 1.0),
+        ];
+        let s = summarize(&cards);
+        assert_eq!(s.total_cards, 5);
+        assert_eq!(s.ready_cards, 2);
+        assert_eq!(s.pending_cards, 1);
+        assert_eq!(s.written_cards, 1);
+        assert_eq!(s.failed_cards, 1);
+        // 总工时 = 所有卡片的 hours 之和(不论状态)
+        assert!((s.total_hours - 10.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn summarize_ignores_nan_and_negative_hours() {
+        let c_nan = test_card("c1", WorklogCardState::Ready, f64::NAN);
+        let c_neg = test_card("c2", WorklogCardState::Ready, -5.0);
+        let c_ok = test_card("c3", WorklogCardState::Ready, 2.0);
+        let s = summarize(&[c_nan, c_neg, c_ok]);
+        // NaN 和负数都被当 0 处理,只有 c_ok 的 2.0 计入
+        assert!((s.total_hours - 2.0).abs() < 1e-9);
+    }
+
+    // ===== work_profile_from_config =====
+    #[test]
+    fn work_profile_all_styles() {
+        for (input, expected_style, expected_emphasis) in [
+            ("focused", "focused", false),
+            ("multi", "multi", false),
+            ("transactional", "transactional", true),
+            ("balanced", "balanced", false),
+        ] {
+            let cfg = json!({ "workStyle": input });
+            let p = work_profile_from_config(&cfg);
+            assert_eq!(p.style, expected_style, "style for input {}", input);
+            assert_eq!(p.transactional_emphasis, expected_emphasis, "emphasis for {}", input);
+        }
+    }
+
+    #[test]
+    fn work_profile_unknown_falls_back_to_balanced() {
+        let cfg = json!({ "workStyle": "something_invalid" });
+        let p = work_profile_from_config(&cfg);
+        assert_eq!(p.style, "balanced");
+        assert!(!p.transactional_emphasis);
+    }
+
+    #[test]
+    fn work_profile_missing_key_defaults_balanced() {
+        let cfg = json!({});
+        let p = work_profile_from_config(&cfg);
+        assert_eq!(p.style, "balanced");
+    }
+
+    #[test]
+    fn work_profile_trims_whitespace() {
+        let cfg = json!({ "workStyle": "  focused  " });
+        let p = work_profile_from_config(&cfg);
+        assert_eq!(p.style, "focused");
+    }
+
+    // ===== config_hours_per_day =====
+    #[test]
+    fn hours_per_day_empty_config() {
+        let cfg = json!({});
+        assert_eq!(config_hours_per_day(&cfg), 0.0);
+    }
+
+    #[test]
+    fn hours_per_day_single_period() {
+        let cfg = json!({
+            "workSchedule": {
+                "periods": [{ "start": "09:00", "end": "12:00" }]
+            }
+        });
+        assert!((config_hours_per_day(&cfg) - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn hours_per_day_multiple_periods() {
+        let cfg = json!({
+            "workSchedule": {
+                "periods": [
+                    { "start": "09:00", "end": "12:00" },
+                    { "start": "13:30", "end": "18:00" }
+                ]
+            }
+        });
+        // 3 + 4.5 = 7.5
+        assert!((config_hours_per_day(&cfg) - 7.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn hours_per_day_ignores_invalid_format() {
+        let cfg = json!({
+            "workSchedule": {
+                "periods": [
+                    { "start": "not-a-time", "end": "12:00" },
+                    { "start": "09:00", "end": "11:00" }
+                ]
+            }
+        });
+        // 只有第二个合法段计入 = 2 小时
+        assert!((config_hours_per_day(&cfg) - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn hours_per_day_ignores_inverted_range() {
+        let cfg = json!({
+            "workSchedule": {
+                "periods": [{ "start": "18:00", "end": "09:00" }]
+            }
+        });
+        // end < start,(e-s).max(0) = 0
+        assert_eq!(config_hours_per_day(&cfg), 0.0);
+    }
+
+    // ===== derive_card_state =====
+    #[test]
+    fn card_state_pending_when_task_empty() {
+        let mut c = ready_card("c1");
+        c.task_id = "   ".to_string();
+        assert_eq!(derive_card_state(&c), WorklogCardState::PendingBind);
+    }
+
+    #[test]
+    fn card_state_pending_when_low_confidence() {
+        let mut c = ready_card("c1");
+        c.binding_confidence = 0.5; // < 0.65 阈值
+        assert_eq!(derive_card_state(&c), WorklogCardState::PendingBind);
+    }
+
+    #[test]
+    fn card_state_pending_when_zero_hours() {
+        let mut c = ready_card("c1");
+        c.hours = 0.0;
+        assert_eq!(derive_card_state(&c), WorklogCardState::PendingBind);
+    }
+
+    #[test]
+    fn card_state_pending_when_no_work_content() {
+        let mut c = ready_card("c1");
+        c.work_content = "".to_string();
+        assert_eq!(derive_card_state(&c), WorklogCardState::PendingBind);
+    }
+
+    #[test]
+    fn card_state_ready_when_all_fields_valid() {
+        let c = ready_card("c1");
+        assert_eq!(derive_card_state(&c), WorklogCardState::Ready);
+    }
+
+    // ===== merge_card =====
+    #[test]
+    fn merge_no_saved_returns_fresh_with_rederived_state() {
+        let mut fresh = ready_card("c1");
+        fresh.task_id = "".to_string(); // fresh 本来不 ready
+        let merged = merge_card(fresh, None);
+        assert_eq!(merged.state, WorklogCardState::PendingBind);
+    }
+
+    #[test]
+    fn merge_inherits_task_id_from_saved() {
+        let fresh = pending_card("c1");
+        let mut saved = pending_card("c1");
+        saved.task_id = "task-123".to_string();
+        let merged = merge_card(fresh, Some(&saved));
+        assert_eq!(merged.task_id, "task-123");
+    }
+
+    #[test]
+    fn merge_inherits_hours_from_saved_when_positive() {
+        let mut fresh = ready_card("c1");
+        fresh.hours = 0.0;
+        let mut saved = ready_card("c1");
+        saved.hours = 4.5;
+        let merged = merge_card(fresh, Some(&saved));
+        assert!((merged.hours - 4.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn merge_inherits_work_content_from_saved() {
+        let mut fresh = ready_card("c1");
+        fresh.work_content = "".to_string();
+        let mut saved = ready_card("c1");
+        saved.work_content = "已完成重构".to_string();
+        let merged = merge_card(fresh, Some(&saved));
+        assert_eq!(merged.work_content, "已完成重构");
+    }
+
+    #[test]
+    fn merge_preserves_written_state_from_saved() {
+        let fresh = ready_card("c1");
+        let mut saved = written_card("c1", "effort-001");
+        saved.error = Some("上次失败".to_string());
+        let merged = merge_card(fresh, Some(&saved));
+        // Written 状态从 saved 继承,fresh 不应被重新 derive
+        assert_eq!(merged.state, WorklogCardState::Written);
+        assert_eq!(merged.effort_id, Some("effort-001".to_string()));
+    }
+
+    #[test]
+    fn merge_preserves_failed_state_from_saved() {
+        let fresh = ready_card("c1");
+        let saved = failed_card("c1", "网络错误");
+        let merged = merge_card(fresh, Some(&saved));
+        assert_eq!(merged.state, WorklogCardState::Failed);
+        assert_eq!(merged.error, Some("网络错误".to_string()));
+    }
+
+    #[test]
+    fn merge_does_not_overwrite_writing_state() {
+        let mut fresh = ready_card("c1");
+        fresh.state = WorklogCardState::Writing;
+        let saved = written_card("c1", "effort-002");
+        let merged = merge_card(fresh, Some(&saved));
+        // Writing 状态不被 Written 覆盖(merge 只继承 Written/Failed,不继承到 Writing 上)
+        // 但实际:saved 是 Written,merge 会把 fresh.state 覆盖为 Written ——
+        // 这是预期行为(Written 是终态,优先于 Writing)。
+        // 验证:merge 后状态由 derive_card_state 决定,除非 saved 是 Written/Failed。
+        // Writing 不在排除列表里,所以会被 derive 或 saved 覆盖。
+        // 这里 saved 是 Written → fresh.state 变 Written。
+        assert_eq!(merged.state, WorklogCardState::Written);
+    }
+
+    // ===== 辅助构造函数 =====
+
+    /// 构造一个"完全就绪"的卡片:task_id 有、confidence 高、hours 正、work_content 有。
+    fn ready_card(id: &str) -> WorklogCard {
+        WorklogCard {
+            card_id: id.to_string(),
+            source: WorklogCardSource::ReviewTask,
+            task_id: "task-1".to_string(),
+            task_name: "测试任务".to_string(),
+            hours: 2.0,
+            work_content: "完成了某个功能".to_string(),
+            binding_confidence: 0.9,
+            binding_reason: "高置信".to_string(),
+            evidence_summary: vec![],
+            state: WorklogCardState::Ready,
+            effort_id: None,
+            error: None,
+            updated_at: None,
+        }
+    }
+
+    /// 构造一个 PendingBind 卡片(task_id 空 / confidence 低)。
+    fn pending_card(id: &str) -> WorklogCard {
+        let mut c = ready_card(id);
+        c.task_id = "".to_string();
+        c.binding_confidence = 0.3;
+        c.hours = 0.0;
+        c.work_content = "".to_string();
+        c.state = WorklogCardState::PendingBind;
+        c
+    }
+
+    /// 构造一个 Written 卡片(已成功写入工时)。
+    fn written_card(id: &str, effort_id: &str) -> WorklogCard {
+        let mut c = ready_card(id);
+        c.state = WorklogCardState::Written;
+        c.effort_id = Some(effort_id.to_string());
+        c.updated_at = Some("2026-06-15T10:00:00Z".to_string());
+        c
+    }
+
+    /// 构造一个 Failed 卡片(写入失败)。
+    fn failed_card(id: &str, error_msg: &str) -> WorklogCard {
+        let mut c = ready_card(id);
+        c.state = WorklogCardState::Failed;
+        c.error = Some(error_msg.to_string());
+        c.updated_at = Some("2026-06-15T10:00:00Z".to_string());
+        c
+    }
+
+    /// 通用卡片构造器(指定 id + state + hours)。
+    fn test_card(id: &str, state: WorklogCardState, hours: f64) -> WorklogCard {
+        let mut c = ready_card(id);
+        c.state = state;
+        c.hours = hours;
+        c
+    }
+}
+

@@ -29,8 +29,9 @@ pub fn secret_get(account: &str) -> Option<String> {
         // 否则凭据静默变空，表现为"密码明明配了却登录失败"，极难排查。
         Err(keyring::Error::NoEntry) => None,
         Err(e) => {
-            eprintln!(
-                "[settings] 读取密钥链 '{}' 失败（非 NoEntry，凭据按空处理）: {}",
+            tracing::warn!(
+                target: "settings",
+                "读取密钥链 '{}' 失败（非 NoEntry，凭据按空处理）: {}",
                 account, e
             );
             None
@@ -255,3 +256,88 @@ pub fn get_zentao_credentials() -> ZentaoCredentials {
         session_cookie,
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ===== secret_set 短路逻辑 =====
+    // secret_set 对空值/placeholder 直接返回 Ok,不碰密钥链。
+    // 这是不依赖 IO 的纯逻辑分支,可以安全单测。
+
+    #[test]
+    fn secret_set_empty_value_is_noop() {
+        // 空字符串 → trim 后为空 → 直接 Ok,不碰密钥链
+        assert!(secret_set("test-account-empty", "").is_ok());
+    }
+
+    #[test]
+    fn secret_set_whitespace_only_is_noop() {
+        // 只有空白 → trim 后为空 → 直接 Ok
+        assert!(secret_set("test-account-ws", "   \t\n  ").is_ok());
+    }
+
+    #[test]
+    fn secret_set_placeholder_is_noop() {
+        // placeholder("********")→ 直接 Ok,避免 UI 回显值覆盖真实密钥
+        assert!(secret_set("test-account-ph", SECRET_PLACEHOLDER).is_ok());
+    }
+
+    // ===== jarvis_dir 路径拼接 =====
+    // jarvis_dir 读 USERPROFILE(Windows)或 HOME(*nix)。
+    // 注意:std::env::set_var 非线程安全,测试并行时有风险。
+    // 这里测试只 set/restore 本进程的环境变量,操作极快,
+    // 且用不存在的 account 测 secret_set 短路(不碰真实密钥链)。
+    // jarvis_dir 测试用独立的 account 名隔离。
+
+    #[test]
+    fn jarvis_dir_joins_home_dot_jarvis() {
+        // 备份原值
+        let orig_profile = std::env::var("USERPROFILE").ok();
+        let orig_home = std::env::var("HOME").ok();
+
+        // Windows 优先 USERPROFILE
+        std::env::set_var("USERPROFILE", r"C:\fake\home");
+        std::env::remove_var("HOME");
+        let dir = jarvis_dir();
+        assert_eq!(dir, std::path::PathBuf::from(r"C:\fake\home\.jarvis"));
+
+        // 恢复
+        match orig_profile {
+            Some(v) => std::env::set_var("USERPROFILE", v),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+        match orig_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+    }
+
+    #[test]
+    fn jarvis_dir_falls_back_to_home_when_no_userprofile() {
+        let orig_profile = std::env::var("USERPROFILE").ok();
+        let orig_home = std::env::var("HOME").ok();
+
+        std::env::remove_var("USERPROFILE");
+        std::env::set_var("HOME", "/fake/unix-home");
+        let dir = jarvis_dir();
+        assert_eq!(dir, std::path::PathBuf::from("/fake/unix-home/.jarvis"));
+
+        match orig_profile {
+            Some(v) => std::env::set_var("USERPROFILE", v),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+        match orig_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+    }
+
+    #[test]
+    fn config_path_appends_config_json() {
+        let dir = jarvis_dir();
+        let cfg = config_path();
+        assert_eq!(cfg, dir.join("config.json"));
+        assert!(cfg.to_string_lossy().ends_with("config.json"));
+    }
+}
+
