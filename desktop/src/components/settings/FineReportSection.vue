@@ -331,7 +331,7 @@ async function fetchEfforts() {
         v-model="store.config.fineReport.baseUrl"
         class="settings-input"
         type="url"
-        placeholder="http://REDACTED_DOMAIN"
+        placeholder="https://your-fine-report.example.com"
       />
     </label>
 

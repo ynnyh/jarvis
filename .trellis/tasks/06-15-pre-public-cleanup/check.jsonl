@@ -1,0 +1,1 @@
+{"file": ".trellis/tasks/06-15-pre-public-cleanup/prd.md", "reason": "prd §6 验收标准(7 条)是 check 的权威清单:特别是 §6 #4『git 历史无敏感字符串』是硬指标,git log --all -S 必须无输出"}

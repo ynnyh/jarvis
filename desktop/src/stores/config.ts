@@ -64,7 +64,7 @@ export interface JarvisConfig {
   }
   /** 工时统计（FineReport）：禅道工时通过帆软报表读，密码在 keychain */
   fineReport: {
-    baseUrl: string           // 如 http://REDACTED_DOMAIN
+    baseUrl: string           // 如 https://your-fine-report.example.com
     account: string           // 帆软用户名（多为禅道账号同名）
     realName: string          // 中文显示名 —— 用于按本人过滤工时，空则不查询
   }
@@ -191,8 +191,8 @@ const defaultConfig = (): JarvisConfig => ({
     todayMode: 'normal',
     todayModeSetOn: '',
   },
-  zentao: { baseUrl: 'http://REDACTED_INTERNAL_IP:8989/zentao', account: '' },
-  fineReport: { baseUrl: 'http://REDACTED_DOMAIN', account: '', realName: '' },
+  zentao: { baseUrl: 'https://your-zentao.example.com', account: '' },
+  fineReport: { baseUrl: 'https://your-fine-report.example.com', account: '', realName: '' },
   llm: {
     provider: 'deepseek',
     baseUrl: 'https://api.deepseek.com',
