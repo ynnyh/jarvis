@@ -1,0 +1,65 @@
+name: CI
+
+# 质量门：push 到 main 或提 PR 时跑。发版走 release.yml，职责分离。
+# 三步：check:text（乱码审计）→ cargo test（测试）→ cargo clippy（lint）。
+# 跨平台：Windows + macOS（本项目是桌面应用，无 linux target）。
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      # 一个平台挂了不要取消另一个。
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+          - os: macos-latest
+            name: macos
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Install macOS universal Rust targets
+        if: matrix.os == 'macos-latest'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
+
+      - name: Install npm deps
+        run: npm ci --no-audit --no-fund
+        timeout-minutes: 5
+
+      - name: Check text encoding
+        run: npm run check:text
+
+      - name: cargo test
+        run: cargo test --lib --manifest-path src-tauri/Cargo.toml
+        timeout-minutes: 30
+
+      - name: cargo clippy
+        # TODO: 升级为 -D warnings（清理存量 warning 后）。
+        # 首版用 -W warnings 过渡：让 clippy 跑起来、暴露问题，但不因存量 warning fail。
+        # 目标是 -D warnings（warning 即 fail），过渡期允许 warn。
+        run: cargo clippy --all-targets --manifest-path src-tauri/Cargo.toml -- -W warnings
+        timeout-minutes: 30
