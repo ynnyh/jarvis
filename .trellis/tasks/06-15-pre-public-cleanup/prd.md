@@ -1,4 +1,4 @@
-# Public 前安全清理
+﻿# Public 前安全清理
 
 > 阶段一(内功期)的预备任务。目标:清除仓库里的敏感信息(禅道密码/账号、公司内网地址),
 > 使代码"配得上开源"的安全维度。本任务做完**不改 Public**,等阶段一全部完成后再公开。
@@ -97,7 +97,7 @@ git filter-repo --replace-text .trellis/tasks/06-15-pre-public-cleanup/replaceme
 ```
 
 ### Step 5:验证
-1. `git grep -E "REDACTED_ACCOUNT|REDACTED_DOMAIN|Aa123"` → 应无任何输出(当前代码干净)。
+1. `git grep -E "REDACTED_ACCOUNT|REDACTED_DOMAIN|REDACTED_PASSWORD"` → 应无任何输出(当前代码干净)。
 2. 在历史里搜:`git log --all -S "REDACTED_PASSWORD"` → 应无输出(历史也清了)。
 3. `git log --all -S "REDACTED_DOMAIN"` → 应无输出。
 4. 随机抽查几个历史 commit:`git show <hash> | grep -i REDACTED_DOMAIN` → 应为 REDACTED。
@@ -134,7 +134,7 @@ git filter-repo --replace-text .trellis/tasks/06-15-pre-public-cleanup/replaceme
 |---|------|---------|
 | 1 | 65 个探针脚本已删,8 个有用脚本保留 | `git ls-files scripts/` |
 | 2 | desktop/ 公司 URL 改为占位符 | `git grep REDACTED_DOMAIN` 无输出 |
-| 3 | 当前代码无敏感字符串 | `git grep -E "REDACTED_ACCOUNT\|REDACTED_DOMAIN\|Aa123"` 无输出 |
+| 3 | 当前代码无敏感字符串 | `git grep -E "REDACTED_ACCOUNT\|REDACTED_DOMAIN\|REDACTED_PASSWORD"` 无输出 |
 | 4 | **git 历史无敏感字符串** | `git log --all -S "REDACTED_PASSWORD"` 无输出;`git log --all -S "REDACTED_DOMAIN"` 无输出 |
 | 5 | 备份存在且完整 | 备份目录可独立 `git log` |
 | 6 | 构建未破坏 | `cargo check` + `npm run check:text` 通过 |
