@@ -40,6 +40,13 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
+      - name: Install WebView2 Runtime
+        if: matrix.os == 'windows-latest'
+        run: |
+          Invoke-WebRequest -Uri 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile 'MicrosoftEdgeWebview2Setup.exe'
+          Start-Process -FilePath 'MicrosoftEdgeWebview2Setup.exe' -ArgumentList '/silent', '/install' -Wait
+        shell: powershell
+
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
