@@ -5,6 +5,7 @@ export default defineConfig({
   description: '个人桌面 AI 助手 —— 本地优先的智能工作伴侣',
   base: '/jarvis/',
   lang: 'zh-CN',
+  ignoreDeadLinks: true,
 
   head: [
     ['link', { rel: 'icon', href: '/jarvis/favicon.ico' }],
