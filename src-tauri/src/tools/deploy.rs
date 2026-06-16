@@ -783,7 +783,7 @@ mod tests {
         let cfg = config_from_json(happy_config_json());
         let mut params = Map::new();
         params.insert("node_version".to_string(), json!("nodejs-16.20.0"));
-        params.insert("server_ip".to_string(), json!("192.0.2.21"));
+        params.insert("server_ip".to_string(), json!("192.0.2.1"));
         let out = build_deploy_card(&cfg, "质量系统", "test", Some("develop"), params).expect("应成功");
 
         assert_eq!(out["pendingWrite"], true);
@@ -796,7 +796,7 @@ mod tests {
         assert_eq!(out["payload"]["args"]["branch"], "develop");
         assert_eq!(
             out["payload"]["args"]["parameters"]["server_ip"],
-            "192.0.2.21"
+            "192.0.2.1"
         );
         let summary = out["summary"].as_str().unwrap();
         assert!(summary.contains("质量系统") && summary.contains("server_ip="), "summary: {}", summary);
