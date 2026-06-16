@@ -20,7 +20,7 @@
 | S1 | 生产代码无敏感信息 | ✅ | `git grep -E "密码\|账号\|公司域名\|内网IP"` 无输出 | pre-public-cleanup 已做 |
 | S2 | git 历史无敏感信息 | ✅ | `git log --all -S "<敏感串>"` 无输出 | filter-repo 已重写 |
 | S3 | .env 不入库 | ✅ | `.gitignore` 含 `.env`；`git log -- .env` 无历史 | |
-| S4 | 远程 tag 状态一致 | ❌ | 本地/远程 `git ls-remote --tags` hash 一致 | **安全本质：filter-repo 重写了历史去敏感信息,但远程旧 tag 若仍指向重写前的 commit,被清除的敏感历史会通过 tag 重新可达。开源前必须:删远程旧 tag 或重打。同步动作要避开 release.yml(tag push 触发发版,没额度)** |
+| S4 | 远程无脏 tag 暴露 | ✅ | `git ls-remote --tags origin` 不含指向旧历史的 tag | **2026-06-16 已删全部 60+ 远程脏 tag,ls-remote 现为空,脏历史失去 tag 引用。本地干净 tag 全保留,开源后(有额度/临时禁 release.yml)再补 push。unreachable commit 缓存见 S6** |
 | S5 | 备份目录已清理 | ✅ | `project-agent.backup-20260615\` 已删 | 2026-06-16 已 rm（确认含 .env 真实凭据），无残留 |
 | S6 | GitHub 旧历史缓存已清 | ⚠️ | 通过旧 hash 访问 commit URL 返回 404 | 需联系 GitHub Support 或等 90 天 GC。单人项目可降级为 P1 |
 
@@ -67,16 +67,16 @@
 签署记录：
 - [ ] 第一次评估(2026-06-15)：P0 4/15。不允许 Public。
 - [ ] 第二次评估(2026-06-16)：P0 9/15（+D1-D4 + S5）。不允许 Public。
-- [ ] 第三次评估(2026-06-16，CI 认知修正)：厘清 CI 额度耗尽 → 测试网开源前无法验证,Q1/Q2/Q5/Q6 重定性为 🔒 开源后验证。**开源前 P0 = 非🔒 共 11 项,已绿 9（S1/S2/S3/S5/Q4/D1/D2/D3/D4),仅剩 Q3(App.vue) + S4(tag) 两项**。这两项 + S6 降级决策做完即可转 Public。
+- [ ] 第三次评估(2026-06-16，CI 认知修正)：厘清 CI 额度耗尽 → 测试网开源前无法验证,Q1/Q2/Q5/Q6 重定性为 🔒 开源后验证。
+- [ ] 第四次评估(2026-06-16，S4 完成)：删全部远程脏 tag,S4 ✅。**开源前 P0 = 非🔒 共 11 项,已绿 10(S1/S2/S3/S4/S5/Q4/D1/D2/D3/D4),仅剩 Q3(App.vue 拆分)一项** + S6 降级决策。Q3 一完成即可签署「可转 Public」。
 
 ---
 
 ## 当前卡点
 
 **开源前（必须做完，本地可验，不依赖 CI）**：
-1. **Q3 仅剩 App.vue 拆分** —— llm 已拆、voice 已删；App.vue 高耦合 + 前端无类型网,设计稿已备(research/),vite build 验证。留 fresh session 专注做。
-2. **S4 远程 tag 同步** —— 安全项:远程旧 tag 可能让 filter-repo 清掉的敏感历史重新可达。需删/重打远程 tag,避开 release.yml 触发(无发版额度)。
-3. **S6 决策** —— 降级 P1 还是处理(联系 GitHub Support / 等 GC)。
+1. **Q3 仅剩 App.vue 拆分** —— llm 已拆、voice 已删；App.vue 高耦合 + 前端无类型网,设计稿已备(research/),vite build 验证。留 fresh session 专注做。**这是开源前最后一项「非🔒」P0。**
+2. **S6 决策** —— 降级 P1 还是处理(联系 GitHub Support / 等 GC 清 unreachable commit 缓存)。
 
 **开源后（转 Public 第一批）**：Q1/Q2/Q5/Q6 —— CI 实跑 + cargo test + clippy 收紧 -D warnings。
 
