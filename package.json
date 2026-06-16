@@ -22,7 +22,7 @@
     "agent"
   ],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "devDependencies": {
     "@tauri-apps/cli": "^2.5.0",
     "@types/node": "^25.7.0",
