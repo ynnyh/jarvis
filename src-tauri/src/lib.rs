@@ -34,7 +34,6 @@ mod task_bindings;
 mod task_snapshot;
 mod tools;
 mod util;
-mod voice;
 mod worklog;
 mod zentao;
 
@@ -60,7 +59,6 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
-        .plugin(voice::global_shortcut_plugin())
         .manage(commands::WriteHoursState::default())
         .manage(channels::ChannelServiceState::default())
         .manage(memory::MemoryState::new(&memory::default_db_path()))
@@ -268,11 +266,16 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                     Err(e) => tracing::error!(target: "mcp_client", "启动 MCP server 失败: {e}"),
                 }
             });
-            // 启动时按当前开关状态注册语音全局热键：voiceInputEnabled=true 且资产就绪才注册，
-            // 否则保持不占用。前端开关翻转 / 下载完成后还会再调 voice_hotkey_sync 校准。
-            if let Err(e) = crate::voice::sync_hotkey(app.handle()) {
-                tracing::error!(target: "voice", "启动注册语音热键失败: {e}");
+            // 语音功能已下线：一次性清理遗留的本地模型目录(~/.jarvis/voice/)与云端 token。
+            // 幂等——目录/钥匙串条目不存在则跳过，清理过的老用户后续启动直接 noop。
+            let voice_dir = crate::settings::jarvis_dir().join("voice");
+            if voice_dir.exists() {
+                match std::fs::remove_dir_all(&voice_dir) {
+                    Ok(_) => tracing::info!(target: "cleanup", "已清理废弃语音目录 {}", voice_dir.display()),
+                    Err(e) => tracing::warn!(target: "cleanup", "清理废弃语音目录失败: {e}"),
+                }
             }
+            let _ = crate::settings::secret_clear("voice.cloud.volcAccessToken");
 
             Ok(())
         })
@@ -362,13 +365,6 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             worklog::worklog_card_write,
             worklog::worklog_session_write_confirmed,
             repo_recommender::recommend_repos_for_task,
-            voice::voice_assets_status,
-            voice::voice_download_assets,
-            voice::voice_open_dir,
-            voice::voice_start,
-            voice::voice_stop_and_transcribe,
-            voice::voice_hotkey_sync,
-            voice::voice_cloud_status,
         ])
         .build(tauri::generate_context!())?
         .run(|_app_handle, _event| {});

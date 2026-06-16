@@ -1,0 +1,1 @@
+{"file": ".trellis/tasks/06-16-remove-voice-input/prd.md", "reason": "§4 验收 7 条:重点 #2 clippy --all-targets -D warnings、#3 依赖删除清单(8删1留)、#4 前端无残留、#5 启动清理生效、#7 拆分 PRD 去 Batch 2"}

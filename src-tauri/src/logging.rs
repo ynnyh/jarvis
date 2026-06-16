@@ -185,7 +185,7 @@ fn build_environment_summary() -> String {
     }
 
     s.push_str("\n## 密钥链状态(只记存在性,不含内容)\n");
-    for account_label in ["zentao", "fineReport", "llm", "voiceCloud"] {
+    for account_label in ["zentao", "fineReport", "llm"] {
         // 这里只检测密钥是否已设(secret_get 不调用,避免任何泄露风险)。
         // 用 secret_exists 而非 secret_get。
         let exists = crate::settings::secret_exists(account_label);

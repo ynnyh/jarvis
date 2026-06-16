@@ -37,7 +37,6 @@
     "updater:allow-download-and-install",
     "process:default",
     "process:allow-restart",
-    "autostart:default",
-    "global-shortcut:default"
+    "autostart:default"
   ]
 }
