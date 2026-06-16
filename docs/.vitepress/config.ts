@@ -25,16 +25,9 @@ export default defineConfig({
     sidebar: {
       '/guide/': [
         {
-          text: '快速开始',
+          text: '指南',
           items: [
-            { text: '安装', link: '/guide/' },
-            { text: '首次配置', link: '/guide/configuration' },
-            { text: '功能介绍', link: '/guide/features' },
-          ]
-        },
-        {
-          text: '进阶',
-          items: [
+            { text: '快速开始', link: '/guide/' },
             { text: '隐私政策', link: '/guide/privacy' },
             { text: '贡献指南', link: '/guide/contributing' },
           ]
