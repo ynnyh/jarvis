@@ -299,7 +299,9 @@ mod tests {
         std::env::set_var("USERPROFILE", r"C:\fake\home");
         std::env::remove_var("HOME");
         let dir = jarvis_dir();
-        assert_eq!(dir, std::path::PathBuf::from(r"C:\fake\home\.jarvis"));
+        // join() 会使用当前操作系统的路径分隔符，因此用 PathBuf 构造期望值
+        let expected = std::path::PathBuf::from(r"C:\fake\home").join(".jarvis");
+        assert_eq!(dir, expected);
 
         // 恢复
         match orig_profile {
@@ -320,7 +322,9 @@ mod tests {
         std::env::remove_var("USERPROFILE");
         std::env::set_var("HOME", "/fake/unix-home");
         let dir = jarvis_dir();
-        assert_eq!(dir, std::path::PathBuf::from("/fake/unix-home/.jarvis"));
+        // join() 会使用当前操作系统的路径分隔符
+        let expected = std::path::PathBuf::from("/fake/unix-home").join(".jarvis");
+        assert_eq!(dir, expected);
 
         match orig_profile {
             Some(v) => std::env::set_var("USERPROFILE", v),
