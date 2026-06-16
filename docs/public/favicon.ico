@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
+  <!-- Gradient background -->
+  <defs>
+    <linearGradient id="jarvis-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#764ba2;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Circle background -->
+  <circle cx="50" cy="50" r="45" fill="url(#jarvis-gradient)"/>
+
+  <!-- Stylized "J" -->
+  <path d="M 35 30 L 45 30 L 45 55 Q 45 65 35 65 Q 25 65 25 55 L 32 55 Q 32 58 35 58 Q 38 58 38 55 L 38 30"
+        fill="white" stroke="white" stroke-width="1" stroke-linejoin="round"/>
+
+  <!-- AI assistant dots (representing intelligence) -->
+  <circle cx="60" cy="35" r="3" fill="white" opacity="0.9"/>
+  <circle cx="70" cy="40" r="3" fill="white" opacity="0.7"/>
+  <circle cx="65" cy="50" r="3" fill="white" opacity="0.8"/>
+  <circle cx="72" cy="58" r="2.5" fill="white" opacity="0.6"/>
+</svg>

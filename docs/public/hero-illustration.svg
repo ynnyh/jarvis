@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" fill="none">
+  <defs>
+    <linearGradient id="primary" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#764ba2;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="secondary" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f093fb;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#f5576c;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Desktop screen -->
+  <rect x="80" y="80" width="240" height="150" rx="8" fill="#f8f9fa" stroke="#dee2e6" stroke-width="2"/>
+
+  <!-- Screen glow -->
+  <rect x="85" y="85" width="230" height="140" rx="4" fill="url(#primary)" opacity="0.1"/>
+
+  <!-- Chat bubbles inside screen -->
+  <g opacity="0.9">
+    <!-- User message -->
+    <rect x="140" y="100" width="160" height="24" rx="12" fill="#e9ecef"/>
+    <text x="150" y="116" font-family="system-ui, sans-serif" font-size="10" fill="#495057">今天有哪些任务？</text>
+
+    <!-- AI response -->
+    <rect x="100" y="135" width="180" height="32" rx="12" fill="url(#primary)"/>
+    <text x="110" y="149" font-family="system-ui, sans-serif" font-size="9" fill="white">找到 3 个待办任务</text>
+    <text x="110" y="160" font-family="system-ui, sans-serif" font-size="9" fill="white" opacity="0.9">✓ 优化性能 ✓ 修复bug</text>
+  </g>
+
+  <!-- AI assistant character (cute robot) -->
+  <g transform="translate(40, 140)">
+    <!-- Body -->
+    <circle cx="20" cy="30" r="22" fill="url(#secondary)" opacity="0.95"/>
+
+    <!-- Eyes -->
+    <circle cx="14" cy="26" r="3" fill="white"/>
+    <circle cx="26" cy="26" r="3" fill="white"/>
+    <circle cx="15" cy="26" r="1.5" fill="#333"/>
+    <circle cx="27" cy="26" r="1.5" fill="#333"/>
+
+    <!-- Smile -->
+    <path d="M 12 34 Q 20 38 28 34" stroke="white" stroke-width="2" fill="none" stroke-linecap="round"/>
+
+    <!-- Antenna -->
+    <line x1="20" y1="8" x2="20" y2="2" stroke="url(#secondary)" stroke-width="2" stroke-linecap="round"/>
+    <circle cx="20" cy="2" r="2" fill="#f5576c"/>
+  </g>
+
+  <!-- Floating icons (representing features) -->
+  <g opacity="0.7">
+    <!-- Lock (security) -->
+    <g transform="translate(340, 100)">
+      <rect x="0" y="8" width="16" height="12" rx="2" fill="url(#primary)" opacity="0.3"/>
+      <circle cx="8" cy="6" r="5" stroke="url(#primary)" stroke-width="2" fill="none"/>
+    </g>
+
+    <!-- Check (tasks) -->
+    <g transform="translate(340, 140)">
+      <circle cx="8" cy="8" r="8" fill="url(#primary)" opacity="0.3"/>
+      <path d="M 4 8 L 7 11 L 12 5" stroke="url(#primary)" stroke-width="2" fill="none" stroke-linecap="round"/>
+    </g>
+
+    <!-- Lightning (fast) -->
+    <g transform="translate(340, 180)">
+      <path d="M 8 0 L 3 10 L 8 10 L 7 16 L 13 6 L 8 6 Z" fill="url(#secondary)" opacity="0.3"/>
+    </g>
+  </g>
+
+  <!-- Decorative dots -->
+  <circle cx="60" cy="60" r="3" fill="url(#primary)" opacity="0.4"/>
+  <circle cx="350" cy="240" r="4" fill="url(#secondary)" opacity="0.3"/>
+  <circle cx="100" cy="250" r="2" fill="url(#primary)" opacity="0.5"/>
+</svg>

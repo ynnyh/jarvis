@@ -13,7 +13,10 @@
     "release:gitee": "node scripts/publish-to-gitee.mjs",
     "release:sync-gitee": "node scripts/publish-to-gitee.mjs --sync-from-github",
     "pre-release": "node scripts/pre-release.mjs",
-    "desktop:portable": "npm run desktop:build-binary && node scripts/portable-zip.mjs"
+    "desktop:portable": "npm run desktop:build-binary && node scripts/portable-zip.mjs",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
   },
   "keywords": [
     "ai",
@@ -27,7 +30,8 @@
     "@tauri-apps/cli": "^2.5.0",
     "@types/node": "^25.7.0",
     "typescript": "^6.0.3",
-    "undici": "^7.25.0"
+    "undici": "^7.25.0",
+    "vitepress": "^1.6.4"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.3.0",
