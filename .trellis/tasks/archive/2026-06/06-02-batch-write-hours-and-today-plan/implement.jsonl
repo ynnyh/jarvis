@@ -1,4 +1,0 @@
-{"file": "spec/frontend/component-guidelines.md", "reason": "BatchWriteApp.vue and updated TodayPlanApp.vue follow Vue SFC conventions"}
-{"file": "spec/frontend/state-management.md", "reason": "Batch write data flow and store interactions"}
-{"file": "spec/frontend/type-safety.md", "reason": "TypeScript interfaces for batch write entries and today plan items"}
-{"file": "spec/guides/code-reuse-thinking-guide.md", "reason": "Reuse existing log-task-effort, get_daily_review, etc. rather than reimplement"}

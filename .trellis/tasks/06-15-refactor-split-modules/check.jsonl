@@ -1,1 +1,0 @@
-{"file": ".trellis/tasks/06-15-refactor-split-modules/prd.md", "reason": "prd §5 验收标准(7 条)是 check 清单:特别 §5 #4(现有测试全过)、#7(纯 move 无逻辑改动)是硬指标"}

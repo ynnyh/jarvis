@@ -43,7 +43,7 @@ const PROJECT_ALL = '__all__'
 const PROJECT_UNKNOWN = '（未归项目）'
 
 // 任务名前缀作为项目名：取第一个「（」或「(」之前的部分。
-// 如「26年计量管理系统（数据核对）常规运维」→「26年计量管理系统」。
+// 如「26年某管理系统（数据核对）常规运维」→「26年某管理系统」。
 function extractProject(name: string): string {
   let idx = name.length
   const a = name.indexOf('（')

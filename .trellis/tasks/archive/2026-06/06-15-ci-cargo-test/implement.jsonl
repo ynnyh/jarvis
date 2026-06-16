@@ -1,5 +1,0 @@
-{"file": ".trellis/spec/backend/memory-system.md", "reason": "测试崩溃疑似 sqlite-vec 原生扩展在测试二进制启动时加载失败;memory-system spec 记录了 vec 扩展注册契约(register_vec_extension 必须在第一次 Connection::open 前调用),是排查修复的核心参考"}
-{"file": ".github/workflows/release.yml", "reason": "现有 GHA 发版流程,ci.yml 要复用其缓存策略(Swatinem/rust-cache@v2 + npm cache)、Node/Rust setup 步骤、check:text 调用方式,保持风格一致"}
-{"file": ".circleci/config.yml", "reason": "另一套 CI;本任务不碰它,但需了解现有双 CI 职责划分,确认 ci.yml 独立新增而非与发版流程耦合"}
-{"file": "src-tauri/Cargo.toml", "reason": "依赖与特性声明源头;rusqlite features、sqlite-vec、profile 配置都在此,排查崩溃和 clippy 配置需参考"}
-{"file": "src-tauri/src/memory/db.rs", "reason": "register_vec_extension + SCHEMA 的定义处;若崩溃定位到 sqlite-vec 初始化,修复落点在此"}

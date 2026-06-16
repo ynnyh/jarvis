@@ -579,7 +579,7 @@ mod tests {
             "acct-1",
             "user",
             Some("tok"),
-            vec![proj("job-a", "质量系统"), proj("job-b", "人资")],
+            vec![proj("job-a", "质量系统示例"), proj("job-b", "人资系统示例")],
         )];
         assert!(validate_project_aliases(&creds).is_ok());
         // 无项目的账号也 OK。
@@ -681,7 +681,7 @@ mod tests {
             "主账号",
             "zhang-san",
             Some("tok"),
-            vec![proj("example-quality-web", "质量系统")],
+            vec![proj("example-quality-web", "质量系统示例")],
         )];
         let out = build_deploy_presets_json("http://jenkins.example.internal:8080/", &creds);
         assert_eq!(out["jenkinsUrl"], "http://jenkins.example.internal:8080/");
@@ -696,7 +696,7 @@ mod tests {
         let projects = credentials[0]["projects"].as_array().unwrap();
         assert_eq!(projects.len(), 1);
         assert_eq!(projects[0]["job"], "example-quality-web");
-        assert_eq!(projects[0]["alias"], "质量系统");
+        assert_eq!(projects[0]["alias"], "质量系统示例");
     }
 
     // 与 deploy.rs 的读端做最小往返：build 出的 presets 能被同款 serde 模型解析回来。
@@ -728,8 +728,8 @@ mod tests {
             "zhang-san",
             Some("tok"),
             vec![
-                proj("example-quality-web", "质量系统"),
-                proj("example-access-web", "人资管理端"),
+                proj("example-quality-web", "质量系统示例"),
+                proj("example-access-web", "人资系统示例"),
             ],
         )];
         let presets = build_deploy_presets_json("http://jenkins.example.internal:8080/", &creds);
@@ -742,7 +742,7 @@ mod tests {
         assert_eq!(cred.token, "keychain:jenkins-主账号-token");
         assert_eq!(cred.projects.len(), 2);
         assert_eq!(cred.projects[0].job, "example-quality-web");
-        assert_eq!(cred.projects[0].alias, "质量系统");
+        assert_eq!(cred.projects[0].alias, "质量系统示例");
     }
 
     // ---- mcp-servers.json 往返：保留其它 server、jenkins 被重写 ----

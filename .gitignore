@@ -48,3 +48,6 @@ rustup-init.exe
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# 内部开发笔记（Trellis 任务/规划/spec，含开发期业务信息，不开源）
+.trellis/

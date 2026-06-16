@@ -1,4 +1,0 @@
-{"file": ".trellis/tasks/06-03-agent/prd.md", "reason": "完整需求文档：三层架构、提取时机、嵌入选型、验收标准"}
-{"file": ".trellis/spec/backend/index.md", "reason": "Rust 后端开发约定和现有 spec 索引"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "记忆系统跨 LLM→存储→Agent 三层，需关注层间数据流"}
-{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "需复用现有 llm.rs 客户端、conversations.rs 存储模式、util.rs 工具函数"}

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub(super) const DEFAULT_VIEWLET: &str = "zentao/effort-report-example.cpt";
+pub(super) const DEFAULT_VIEWLET: &str = "example/effort-report.cpt";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

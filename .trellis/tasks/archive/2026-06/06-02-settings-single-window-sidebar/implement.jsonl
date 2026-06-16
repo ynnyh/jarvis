@@ -1,4 +1,0 @@
-{"file": "spec/frontend/component-guidelines.md", "reason": "SettingsDetailApp 侧边栏+内容区布局遵循 Vue SFC 规范"}
-{"file": "spec/frontend/state-management.md", "reason": "设置窗口改为 SPA 内路由切换，需调整 store 状态"}
-{"file": "spec/frontend/type-safety.md", "reason": "更新 settings-menu.ts 的类型定义"}
-{"file": "spec/guides/code-reuse-thinking-guide.md", "reason": "合并页面时复用现有 Section 组件，不改内部实现"}

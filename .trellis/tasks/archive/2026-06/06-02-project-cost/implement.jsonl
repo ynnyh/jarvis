@@ -1,8 +1,0 @@
-{"file":"tasks/06-02-project-cost/prd.md","reason":"需求定义：成本分析功能，含工时计算规则、时薪配置、时间范围、展示方式"}
-{"file":"src-tauri/src/zentao.rs","reason":"禅道 API 客户端：已有 get_my_tasks/get_task/add_effort，需新增 list_projects"}
-{"file":"src-tauri/src/fine_report.rs","reason":"FineReport 工时数据源：按项目+人员+日期的明细，成本计算的数据基础"}
-{"file":"desktop/src/stores/config.ts","reason":"前端配置 store：需新增 costFeatureEnabled 和成本配置字段"}
-{"file":"desktop/src/settings-menu.ts","reason":"设置页路由：需新增人员时薪配置页注册"}
-{"file":"desktop/src/menu-themes.ts","reason":"右键菜单主题：需新增项目成本菜单项（条件显示）"}
-{"file":"desktop/src/App.vue","reason":"主应用：右键菜单条件渲染、成本窗口入口"}
-{"file":"src-tauri/src/lib.rs","reason":"Tauri 命令注册：新增成本相关命令"}

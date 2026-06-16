@@ -1,1 +1,0 @@
-{"file": ".trellis/tasks/06-15-test-coverage/prd.md", "reason": "prd §2 列出 worklog.rs 的 8 个纯逻辑函数 + settings.rs 的降级逻辑,是实现要逐个覆盖的清单"}

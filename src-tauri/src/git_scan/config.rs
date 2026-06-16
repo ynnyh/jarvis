@@ -5,7 +5,7 @@ pub fn load_business_aliases() -> HashMap<String, Vec<String>> {
     let path = crate::settings::jarvis_dir().join("business-aliases.json");
     if !path.exists() {
         let _ = std::fs::create_dir_all(crate::settings::jarvis_dir());
-        let default = serde_json::json!({ "示例业务线": ["门禁", "计量"] });
+        let default = serde_json::json!({ "示例业务线": ["关键词1", "关键词2"] });
         let _ = crate::util::write_atomic(&path, &serde_json::to_string_pretty(&default).unwrap_or_default());
     }
     let content = match std::fs::read_to_string(&path) {
@@ -34,7 +34,7 @@ pub fn load_excluded_business_lines() -> HashSet<String> {
     let path = crate::settings::jarvis_dir().join("excluded-business-lines.json");
     if !path.exists() {
         let _ = std::fs::create_dir_all(crate::settings::jarvis_dir());
-        let default = serde_json::json!(["my-mcp-servers"]);
+        let default = serde_json::json!(["example-excluded-line"]);
         let _ = crate::util::write_atomic(&path, &serde_json::to_string_pretty(&default).unwrap_or_default());
     }
     let content = match std::fs::read_to_string(&path) {

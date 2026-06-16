@@ -119,7 +119,7 @@ fn basename(p: &str) -> String {
     np.rsplit('/').next().unwrap_or("").to_string()
 }
 
-/// 业务线 = rootDir 下第一层目录名（外接磁盘 `D:/coding/物流/foo` → "物流"）。
+/// 业务线 = rootDir 下第一层目录名（外接磁盘 `D:/coding/sample/foo` → "sample"）。
 /// 仅用于零散修复桶的分组展示，不再参与匹配判定。
 pub fn extract_business_line(repo_path: &str, root_dirs: &[String]) -> String {
     let np = norm_path(repo_path);
@@ -434,16 +434,16 @@ mod tests {
     fn business_line_extraction() {
         let roots = vec!["D:/coding".to_string()];
         assert_eq!(
-            extract_business_line("D:/coding/物流/logistics-web", &roots),
-            "物流"
+            extract_business_line("D:/coding/sample-billing/billing-web", &roots),
+            "sample-billing"
         );
         assert_eq!(
             extract_business_line("D:/coding/deer-flow", &roots),
             "deer-flow"
         );
         assert_eq!(
-            extract_business_line("D:\\coding\\示例销售线\\example-sale-app", &roots),
-            "示例销售线"
+            extract_business_line("D:\\coding\\sample-sales\\sale-app", &roots),
+            "sample-sales"
         );
     }
 

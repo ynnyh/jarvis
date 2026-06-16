@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/backend/index.md", "reason": "backend spec 总索引 + 质量检查清单;日志/错误处理的约定可能在此,实现前核对是否符合后端质量标准"}
-{"file": "src-tauri/src/settings.rs", "reason": "jarvis_dir() / config_path() 的定义处;日志目录复用 ~/.jarvis/,环境摘要需读 settings 且脱敏(secret_get/SECRET_PLACEHOLDER 机制在此)"}
-{"file": "src-tauri/Cargo.toml", "reason": "依赖管理;tauri-plugin-log 已声明但未用,tracing 新依赖加在这里,需避免与现有依赖冲突"}

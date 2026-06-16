@@ -1,7 +1,0 @@
-{"file": ".trellis/spec/backend/mcp-client.md", "reason": "PR1 改 spawn_running（加 Windows CREATE_NO_WINDOW）+ call_tool 僵尸自愈，必须遵其 spawn/transport/两层错误(Err vs is_error)/keychain env 注入约定，且不破坏 RunningService 保活语义"}
-{"file": ".trellis/spec/backend/mcp-deploy-confirm.md", "reason": "PR2 去凭据名改内部稳定 id：deploy-presets.json 结构 + keychain account(jenkins-<id>-token) + JENKINS_ENV_<ID>_* 派生这套契约不能破，id 必须稳定不漂移"}
-{"file": ".trellis/tasks/06-06-jenkins-deploy/research/rmcp-stdio-client.md", "reason": "rmcp 1.7 子进程 transport/serve/RunningService 生命周期(drop=kill child) + Windows 注意；PR1 隐藏窗口与自愈重连的直接依据"}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "PR2 重写 DeploySection.vue（账号卡片 + 添加账号、去凭据名输入）须遵组件规范"}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "账号卡片列表的 reactive 编辑态 + 内部 id 随 reload 回填，遵状态管理约定"}
-{"file": ".trellis/spec/frontend/type-safety.md", "reason": "deploy_config_get/save 前后端 TS 契约变更（CredentialView 隐藏内部 id、加 username），不得用 any，契约两端一致"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "发版配置跨 Rust 后端↔Vue 前端，id/username/token 多层数据流一致性"}

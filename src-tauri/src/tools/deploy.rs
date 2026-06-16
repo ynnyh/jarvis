@@ -681,7 +681,7 @@ mod tests {
                         "name": "主账号",
                         "token": "keychain:jenkins-main-token",
                         "projects": [
-                            { "job": "example-access-web", "alias": "人资管理端" }
+                            { "job": "example-access-web", "alias": "人资系统示例" }
                         ]
                     }
                 ]
@@ -694,7 +694,7 @@ mod tests {
         assert_eq!(cred.token, "keychain:jenkins-main-token");
         assert_eq!(cred.projects.len(), 1);
         assert_eq!(cred.projects[0].job, "example-access-web");
-        assert_eq!(cred.projects[0].alias, "人资管理端");
+        assert_eq!(cred.projects[0].alias, "人资系统示例");
     }
 
     #[test]
@@ -712,15 +712,15 @@ mod tests {
                     "name": "主账号",
                     "token": "keychain:jenkins-main-token",
                     "projects": [
-                        { "job": "example-access-web-test", "alias": "人资管理端" },
-                        { "job": "example-quality-web", "alias": "质量系统" }
+                        { "job": "example-access-web-test", "alias": "人资系统示例" },
+                        { "job": "example-quality-web", "alias": "质量系统示例" }
                     ]
                 },
                 {
                     "name": "prod账号",
                     "token": "keychain:jenkins-prod-token",
                     "projects": [
-                        { "job": "example-access-web-prod", "alias": "人资管理端-prod" }
+                        { "job": "example-access-web-prod", "alias": "人资系统示例-prod" }
                     ]
                 }
             ]
@@ -731,7 +731,7 @@ mod tests {
     fn prepare_deploy_requires_explicit_environment() {
         let cfg = config_from_json(happy_config_json());
         // 环境为空 → Err。
-        let e = build_deploy_lookup(&cfg, "人资管理端", "", None).unwrap_err();
+        let e = build_deploy_lookup(&cfg, "人资系统示例", "", None).unwrap_err();
         assert!(e.contains("显式指定环境"), "实得: {}", e);
         // 未知项目 → Err。
         let e = build_deploy_lookup(&cfg, "不存在的项目", "test", None).unwrap_err();
@@ -741,13 +741,13 @@ mod tests {
     #[test]
     fn prepare_deploy_happy_path() {
         let cfg = config_from_json(happy_config_json());
-        let out = build_deploy_lookup(&cfg, "人资管理端", "test", None).expect("应成功");
+        let out = build_deploy_lookup(&cfg, "人资系统示例", "test", None).expect("应成功");
 
         assert_eq!(out["needsParameters"], true);
         assert_eq!(out["job"], "example-access-web-test");
         assert_eq!(out["credentialName"], "主账号");
         assert_eq!(out["jenkinsUrl"], "http://jenkins.example.internal:8080/");
-        assert_eq!(out["project"], "人资管理端");
+        assert_eq!(out["project"], "人资系统示例");
         assert_eq!(out["environment"], "test");
         assert!(out["branch"].is_null());
         assert!(out["message"].as_str().unwrap().contains("匹配"));
@@ -756,7 +756,7 @@ mod tests {
     #[test]
     fn prepare_deploy_branch_provided() {
         let cfg = config_from_json(happy_config_json());
-        let out = build_deploy_lookup(&cfg, "质量系统", "test", Some("feature/x")).expect("应成功");
+        let out = build_deploy_lookup(&cfg, "质量系统示例", "test", Some("feature/x")).expect("应成功");
         assert_eq!(out["job"], "example-quality-web");
         assert_eq!(out["branch"], "feature/x");
     }
@@ -764,15 +764,15 @@ mod tests {
     #[test]
     fn prepare_deploy_branch_whitespace_filtered() {
         let cfg = config_from_json(happy_config_json());
-        let out = build_deploy_lookup(&cfg, "质量系统", "test", Some("  ")).expect("应成功");
+        let out = build_deploy_lookup(&cfg, "质量系统示例", "test", Some("  ")).expect("应成功");
         assert!(out["branch"].is_null(), "空白 branch 应被过滤: {}", out["branch"]);
     }
 
     #[test]
     fn prepare_deploy_cross_credential_lookup() {
-        // "人资管理端-prod" 在第二个 credential 里。
+        // "人资系统示例-prod" 在第二个 credential 里。
         let cfg = config_from_json(happy_config_json());
-        let out = build_deploy_lookup(&cfg, "人资管理端-prod", "prod", None).expect("应成功");
+        let out = build_deploy_lookup(&cfg, "人资系统示例-prod", "prod", None).expect("应成功");
         assert_eq!(out["job"], "example-access-web-prod");
         assert_eq!(out["credentialName"], "prod账号");
     }
@@ -784,7 +784,7 @@ mod tests {
         let mut params = Map::new();
         params.insert("node_version".to_string(), json!("nodejs-16.20.0"));
         params.insert("server_ip".to_string(), json!("192.0.2.1"));
-        let out = build_deploy_card(&cfg, "质量系统", "test", Some("develop"), params).expect("应成功");
+        let out = build_deploy_card(&cfg, "质量系统示例", "test", Some("develop"), params).expect("应成功");
 
         assert_eq!(out["pendingWrite"], true);
         assert_eq!(out["kind"], "mcp-deploy");
@@ -799,7 +799,7 @@ mod tests {
             "192.0.2.1"
         );
         let summary = out["summary"].as_str().unwrap();
-        assert!(summary.contains("质量系统") && summary.contains("server_ip="), "summary: {}", summary);
+        assert!(summary.contains("质量系统示例") && summary.contains("server_ip="), "summary: {}", summary);
     }
 
     #[test]
@@ -811,10 +811,10 @@ mod tests {
 
     #[test]
     fn prepare_deploy_card_cross_credential_environment() {
-        // "人资管理端-prod" 在第二个 credential（"prod账号"）里，
+        // "人资系统示例-prod" 在第二个 credential（"prod账号"）里，
         // environment 必须是该凭据名小写，而不是第一个。
         let cfg = config_from_json(happy_config_json());
-        let out = build_deploy_card(&cfg, "人资管理端-prod", "prod", None, Map::new()).expect("应成功");
+        let out = build_deploy_card(&cfg, "人资系统示例-prod", "prod", None, Map::new()).expect("应成功");
         assert_eq!(out["payload"]["args"]["jobName"], "example-access-web-prod");
         assert_eq!(out["payload"]["args"]["environment"], "prod账号");
     }

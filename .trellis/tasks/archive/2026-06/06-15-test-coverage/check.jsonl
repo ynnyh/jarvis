@@ -1,1 +1,0 @@
-{"file": ".trellis/tasks/06-15-test-coverage/prd.md", "reason": "prd §4 验收标准(6 条)是 check 清单:特别 §4 #4(cargo test --no-run 编译通过)和 §4 #6(测试不依赖文件系统/网络/密钥链)"}

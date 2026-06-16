@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/backend/index.md", "reason": "backend spec 总索引 + Quality Check 检查清单,验证测试/CI 改动是否符合后端质量约定"}
-{"file": ".github/workflows/release.yml", "reason": "校验 ci.yml 的步骤顺序、缓存 key、超时设置、平台矩阵与现有发版流程风格一致,不引入冗余"}
-{"file": "src-tauri/Cargo.toml", "reason": "确认 clippy/test 相关改动未破坏依赖特性配置;验证 profile.release 不受影响"}

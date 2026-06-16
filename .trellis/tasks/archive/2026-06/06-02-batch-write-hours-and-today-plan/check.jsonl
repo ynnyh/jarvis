@@ -1,3 +1,0 @@
-{"file": "spec/frontend/quality-guidelines.md", "reason": "Verify lint/typecheck pass and no regressions"}
-{"file": "spec/frontend/type-safety.md", "reason": "Verify all new TypeScript interfaces are sound"}
-{"file": "spec/guides/cross-layer-thinking-guide.md", "reason": "Verify frontend-backend data flow: batch_write_open -> get_daily_review -> log-task-effort loop"}

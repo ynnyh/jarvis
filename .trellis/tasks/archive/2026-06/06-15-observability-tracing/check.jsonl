@@ -1,2 +1,0 @@
-{"file": ".trellis/spec/backend/index.md", "reason": "backend 质量检查清单;验证日志改动是否符合错误处理约定、是否破坏现有降级语义"}
-{"file": ".trellis/tasks/06-15-observability-tracing/prd.md", "reason": "prd §5 验收标准(9 条)是 check 的权威清单,特别是 §5 #3(eprintln 清零)、#5(导出脱敏)是硬指标"}
