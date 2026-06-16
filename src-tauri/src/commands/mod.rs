@@ -44,13 +44,17 @@ fn project_root() -> PathBuf {
 
 /// 创建不弹出 console 窗口的 Command
 fn silent_command(program: &str) -> Command {
-    let mut cmd = Command::new(program);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
+        let mut cmd = Command::new(program);
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        cmd
     }
-    cmd
+    #[cfg(not(windows))]
+    {
+        Command::new(program)
+    }
 }
 
 /// 用系统默认浏览器打开 URL
@@ -69,7 +73,7 @@ fn open_url_in_browser(url: &str) -> Result<(), String> {
             .arg(url)
             .spawn()
             .map_err(|e| format!("打开浏览器失败: {}", e))?;
-        return Ok(());
+        Ok(())
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
