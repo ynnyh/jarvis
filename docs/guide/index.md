@@ -162,6 +162,6 @@ jarvis_2024-01-15.log
 
 ## 下一步
 
-- 查看 [功能介绍](./features) 了解更多能力
 - 阅读 [隐私政策](./privacy) 了解数据处理细节
-- 遇到问题？查看 [FAQ](/faq)
+- 查看 [FAQ](/faq) 了解常见问题
+- 遇到问题？前往 [GitHub Issues](https://github.com/ynnyh/jarvis/issues)
