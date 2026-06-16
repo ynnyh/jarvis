@@ -76,8 +76,6 @@ jobs:
         timeout-minutes: 15
 
       - name: cargo clippy
-        # TODO: 升级为 -D warnings（清理存量 warning 后）。
-        # 首版用 -W warnings 过渡：让 clippy 跑起来、暴露问题，但不因存量 warning fail。
-        # 目标是 -D warnings（warning 即 fail），过渡期允许 warn。
-        run: cargo clippy --all-targets --manifest-path src-tauri/Cargo.toml -- -W warnings
+        # 升级为 -D warnings：warning 即 fail，确保代码质量。
+        run: cargo clippy --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings
         timeout-minutes: 30
