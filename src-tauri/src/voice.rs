@@ -1645,7 +1645,7 @@ pub fn voice_open_dir() -> Result<(), String> {
             .arg(&dir)
             .spawn()
             .map_err(|e| format!("打开目录失败: {}", e))?;
-        return Ok(());
+        Ok(())
     }
     #[cfg(target_os = "macos")]
     {
@@ -1964,11 +1964,12 @@ mod tests {
         let body = r#"{"result":{"text":"你好世界","is_final":true}}"#.as_bytes();
         let gz = gzip_compress(body).unwrap();
         // 服务端帧带 LastNoSeq 标志（无序号字段），serialization=JSON, compression=Gzip。
-        let mut frame = Vec::new();
-        frame.push((VOLC_PROTOCOL_VERSION << 4) | VOLC_HEADER_SIZE);
-        frame.push((VOLC_MSG_FULL_SERVER << 4) | VOLC_FLAG_LAST_NO_SEQ);
-        frame.push((VOLC_SER_JSON << 4) | VOLC_COMP_GZIP);
-        frame.push(0x00);
+        let mut frame = vec![
+            (VOLC_PROTOCOL_VERSION << 4) | VOLC_HEADER_SIZE,
+            (VOLC_MSG_FULL_SERVER << 4) | VOLC_FLAG_LAST_NO_SEQ,
+            (VOLC_SER_JSON << 4) | VOLC_COMP_GZIP,
+            0x00,
+        ];
         frame.extend_from_slice(&(gz.len() as u32).to_be_bytes());
         frame.extend_from_slice(&gz);
 
@@ -1983,11 +1984,12 @@ mod tests {
     #[test]
     fn volc_parse_rejects_truncated_frame() {
         // 越界保护：声明 payload 100 字节但实际没有 → Err 而非 panic（按字符/字节切片越界铁律）。
-        let mut frame = Vec::new();
-        frame.push((VOLC_PROTOCOL_VERSION << 4) | VOLC_HEADER_SIZE);
-        frame.push((VOLC_MSG_FULL_SERVER << 4) | 0); // NoSeq：无序号字段
-        frame.push((VOLC_SER_JSON << 4) | 0); // 不压缩
-        frame.push(0x00);
+        let mut frame = vec![
+            (VOLC_PROTOCOL_VERSION << 4) | VOLC_HEADER_SIZE,
+            VOLC_MSG_FULL_SERVER << 4, // NoSeq：无序号字段
+            VOLC_SER_JSON << 4,        // 不压缩
+            0x00,
+        ];
         frame.extend_from_slice(&100u32.to_be_bytes()); // 声明 100 字节但后面啥都没有
         assert!(volc_parse(&frame).is_err());
         // 比 4 字节头还短：也应 Err。

@@ -62,11 +62,10 @@ pub fn parse_detail_html(html: &str) -> Result<Vec<EffortRecord>, String> {
                 "row" => row = a[2].parse().ok(),
                 "rowSpan" => row_span = a[2].parse().unwrap_or(1),
                 "colSpan" => col_span = a[2].parse().unwrap_or(1),
-                "style" => {
-                    if a[2].contains("display:none") {
+                "style"
+                    if a[2].contains("display:none") => {
                         hidden = true;
                     }
-                }
                 _ => {}
             }
         }

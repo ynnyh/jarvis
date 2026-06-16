@@ -91,9 +91,9 @@ pub async fn probe(
         u.result
             .into_iter()
             .filter_map(|update| update.message)
-            .filter_map(|msg| {
+            .map(|msg| {
                 let chat_id = msg.chat.id.to_string();
-                Some(TelegramRecentChat {
+                TelegramRecentChat {
                     chat_id,
                     chat_type: msg.chat.kind,
                     title: msg.chat.title.or(msg.chat.username),
@@ -105,7 +105,7 @@ pub async fn probe(
                             .or_else(|| f.last_name.clone())
                     }),
                     text: msg.text,
-                })
+                }
             })
             .collect::<Vec<_>>()
     })

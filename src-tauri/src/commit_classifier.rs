@@ -184,7 +184,7 @@ fn parse_response(
         _ => {
             return Err(format!(
                 "LLM 输出不含 JSON 数组: {}",
-                crate::util::truncate_chars(&text, 200)
+                crate::util::truncate_chars(text, 200)
             ))
         }
     };

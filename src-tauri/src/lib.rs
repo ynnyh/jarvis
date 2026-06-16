@@ -1,3 +1,17 @@
+// clippy 风格类 lint 的 crate 级 allow。
+// 这些是"风格偏好"而非"潜在 bug"。只 allow 这些具体 lint,不 allow clippy::all。
+#![allow(
+    clippy::doc_lazy_continuation,
+    clippy::empty_line_after_doc_comments,
+    // 以下为代码风格偏好,逐个修收益低;设计上已确认这些写法可接受
+    clippy::while_let_loop,            // for + if let Ok 模式,业务逻辑需保留迭代器语义
+    clippy::too_many_arguments,        // write_card_impl 等业务函数参数多,拆 context struct 收益不抵风险
+    clippy::enum_variant_names,        // WorklogCardSource 的 *Task 后缀是语义清晰的命名约定
+    clippy::missing_transmute_annotations,  // memory/db.rs 的 sqlite-vec 扩展注册,unsafe 已有注释论证
+    clippy::manual_map,                // 个别 filter_map 写法,改 map 降可读性
+    clippy::unnecessary_unwrap,
+)]
+
 mod channels;
 mod chat_agent;
 mod commands;

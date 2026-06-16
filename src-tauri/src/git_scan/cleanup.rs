@@ -21,9 +21,9 @@ pub fn clean_commit_title(title: &str, max_len: usize) -> String {
 }
 
 fn strip_leading_emoji(s: &str) -> String {
-    let mut iter = s.char_indices();
+    let iter = s.char_indices();
     let mut cut = 0usize;
-    while let Some((i, c)) = iter.next() {
+    for (i, c) in iter {
         if c.is_whitespace() && cut > 0 { cut = i + c.len_utf8(); continue; }
         if !c.is_ascii() && !is_cjk(c) { cut = i + c.len_utf8(); continue; }
         break;
@@ -70,7 +70,7 @@ pub(crate) fn is_generated_path(p: &str) -> bool {
         "composer.lock", "poetry.lock", "gemfile.lock", "go.sum", "bun.lockb",
     ];
     let last_seg = lower.rsplit('/').next().unwrap_or("");
-    if lock_files.iter().any(|f| last_seg == *f) { return true; }
+    if lock_files.contains(&last_seg) { return true; }
     if lower.ends_with(".min.js") || lower.ends_with(".min.css") { return true; }
     if lower.ends_with(".map") { return true; }
     for dir in ["node_modules", "dist", "build", "out", ".next", "target", ".cache", ".turbo"] {

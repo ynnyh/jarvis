@@ -36,11 +36,11 @@ pub fn init_logging() -> Option<WorkerGuard> {
 
     // 先建日志目录(rolling appender 不会自动建父目录)。
     // 建目录失败 → 降级 stderr-only,不阻断 app。
-    let file_result = std::fs::create_dir_all(&logs).and_then(|_| {
+    let file_result = std::fs::create_dir_all(&logs).map(|_| {
         let file_appender = tracing_appender::rolling::daily(&logs, "jarvis.log");
         // non_blocking 包装:避免磁盘 IO 阻塞业务线程。
         let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
-        Ok::<_, std::io::Error>((non_blocking, guard))
+        (non_blocking, guard)
     });
 
     let (file_layer, guard) = match file_result {
@@ -115,23 +115,22 @@ pub fn export_diagnostic_logs() -> Result<String, String> {
     let mut entries: Vec<PathBuf> = Vec::new();
     if logs.exists() {
         let cutoff = chrono::Utc::now().date_naive() - chrono::Duration::days(DIAGNOSTIC_LOG_RETENTION_DAYS);
-        for e in std::fs::read_dir(&logs).map_err(|e| format!("读取日志目录失败: {e}"))? {
-            if let Ok(entry) = e {
-                let path = entry.path();
-                // 文件名形如 jarvis.log.2026-06-15 或 jarvis.log(当天)
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if let Some(date_str) = name.strip_prefix("jarvis.log.") {
-                        if let Ok(d) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
-                            if d >= cutoff {
-                                entries.push(path);
-                            }
-                            continue;
+        for entry in std::fs::read_dir(&logs).map_err(|e| format!("读取日志目录失败: {e}"))? {
+            let Ok(entry) = entry else { continue };
+            let path = entry.path();
+            // 文件名形如 jarvis.log.2026-06-15 或 jarvis.log(当天)
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if let Some(date_str) = name.strip_prefix("jarvis.log.") {
+                    if let Ok(d) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
+                        if d >= cutoff {
+                            entries.push(path);
                         }
+                        continue;
                     }
-                    // 当天日志(无日期后缀)也收
-                    if name == "jarvis.log" {
-                        entries.push(path);
-                    }
+                }
+                // 当天日志(无日期后缀)也收
+                if name == "jarvis.log" {
+                    entries.push(path);
                 }
             }
         }

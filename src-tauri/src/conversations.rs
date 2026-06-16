@@ -7,6 +7,7 @@
 // - 文件名不可信场景下走严格白名单校验（防穿越攻击），但这是本机程序，校验仍做一道
 
 use serde::{Deserialize, Serialize};
+use std::cmp::Reverse;
 use std::fs;
 use std::path::PathBuf;
 
@@ -125,7 +126,7 @@ pub fn conversations_list() -> Result<Vec<ConversationMeta>, String> {
         });
     }
     // 最近更新的排前面
-    metas.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    metas.sort_by_key(|m| Reverse(m.updated_at));
     Ok(metas)
 }
 

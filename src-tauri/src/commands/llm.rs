@@ -1,4 +1,4 @@
-/// LLM Profile 管理
+//! LLM Profile 管理
 
 use crate::commands;
 

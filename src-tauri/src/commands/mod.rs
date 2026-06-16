@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 // ===== 子模块声明 =====
@@ -61,7 +61,7 @@ fn open_url_in_browser(url: &str) -> Result<(), String> {
             .args(["/C", "start", "", url])
             .spawn()
             .map_err(|e| format!("打开浏览器失败: {}", e))?;
-        return Ok(());
+        Ok(())
     }
     #[cfg(target_os = "macos")]
     {
@@ -82,7 +82,7 @@ fn open_url_in_browser(url: &str) -> Result<(), String> {
 }
 
 /// 简易读取项目根目录下 .env 中指定 key 的值（不依赖 dotenv crate）
-fn read_dotenv_value(root: &PathBuf, key: &str) -> Option<String> {
+fn read_dotenv_value(root: &Path, key: &str) -> Option<String> {
     let env_path = root.join(".env");
     let content = std::fs::read_to_string(&env_path).ok()?;
     for line in content.lines() {

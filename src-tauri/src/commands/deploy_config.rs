@@ -670,7 +670,7 @@ mod tests {
         explicit.insert("*".to_string(), "confirm".to_string());
         let cfg = build_jenkins_server_config(r"D:\x\index.js", "http://x", &[], true, explicit);
         assert_eq!(cfg.tool_policy.get("*").map(String::as_str), Some("confirm"));
-        assert!(cfg.tool_policy.get("trigger_build").is_none());
+        assert!(!cfg.tool_policy.contains_key("trigger_build"));
     }
 
     // ---- deploy-presets.json 形态：{jenkinsUrl, credentials} ----
@@ -792,7 +792,7 @@ mod tests {
 
         // jenkins 被新 env 重写：旧 OLD 三件套没了，新 TEST 三件套在。
         let jenkins = mcp_cfg.servers.get("jenkins").unwrap();
-        assert!(jenkins.env.get("JENKINS_ENV_OLD_URL").is_none());
+        assert!(!jenkins.env.contains_key("JENKINS_ENV_OLD_URL"));
         assert_eq!(
             jenkins.env.get("JENKINS_ENV_TEST_URL").unwrap(),
             "http://jenkins.example.internal:8080/"

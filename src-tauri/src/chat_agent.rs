@@ -129,7 +129,7 @@ pub async fn run_agent(opts: RunAgentOptions<'_>) -> RunAgentResult {
             name: None,
         });
     }
-    messages.extend(opts.messages.into_iter());
+    messages.extend(opts.messages);
 
     let tools = build_all_tool_definitions(opts.allowed_tools).await;
     let mut new_messages: Vec<ChatMessage> = Vec::new();
@@ -252,7 +252,7 @@ pub async fn run_agent_streaming(
             name: None,
         });
     }
-    messages.extend(opts.messages.into_iter());
+    messages.extend(opts.messages);
 
     let tools = build_all_tool_definitions(opts.allowed_tools).await;
     let mut new_messages: Vec<ChatMessage> = Vec::new();

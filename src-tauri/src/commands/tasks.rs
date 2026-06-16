@@ -1,4 +1,4 @@
-/// 任务提醒与禅道集成
+//! 任务提醒与禅道集成
 
 use serde::{Deserialize, Serialize};
 use crate::commands;
@@ -246,7 +246,7 @@ pub async fn fetch_task_alerts(app: tauri::AppHandle) -> Result<Vec<TaskAlert>, 
         });
     }
 
-    alerts.sort_by(|a, b| a.days_until_due.cmp(&b.days_until_due));
+    alerts.sort_by_key(|a| a.days_until_due);
     Ok(alerts)
 }
 

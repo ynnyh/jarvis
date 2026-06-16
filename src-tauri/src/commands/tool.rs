@@ -1,4 +1,4 @@
-/// Tool 调度入口
+//! Tool 调度入口
 
 use crate::commands::ToolResult;
 

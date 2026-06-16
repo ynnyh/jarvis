@@ -1,7 +1,7 @@
-/// 自定义宠物管理：上传、列表、删除
-///
-/// 自定义宠物存储在 ~/.jarvis/custom-pets/ 目录下，每个宠物一个 JSON 文件。
-/// 文件名 = pet-id.json，内容包含元数据 + Lottie/图片/GIF 数据。
+//! 自定义宠物管理：上传、列表、删除
+//!
+//! 自定义宠物存储在 ~/.jarvis/custom-pets/ 目录下，每个宠物一个 JSON 文件。
+//! 文件名 = pet-id.json，内容包含元数据 + Lottie/图片/GIF 数据。
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;

@@ -14,6 +14,7 @@
 // - repoRoots 只有 1 个 → 跳过 LLM 直接返回（省钱省时间）
 // - LLM 返回内容解析不出 JSON → 按 repoRoots 原顺序返回 50 分，前端仍能渲染
 
+use std::cmp::Reverse;
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
@@ -204,7 +205,7 @@ fn parse_recommendations(text: &str, profiles: &[RepoProfile]) -> Vec<RepoRecomm
         });
     }
     // 防御性二次排序：LLM 没排好我们自己排
-    result.sort_by(|a, b| b.score.cmp(&a.score));
+    result.sort_by_key(|r| Reverse(r.score));
     if let Some(first) = result.first_mut() {
         first.is_top = true;
     }

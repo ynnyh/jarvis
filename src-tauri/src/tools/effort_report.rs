@@ -515,13 +515,13 @@ fn build_effort_report_text(
         if !theme.tasks.is_empty() {
             lines.push(format!(
                 "   代表任务：{}",
-                theme.tasks.iter().cloned().collect::<Vec<_>>().join("；")
+                theme.tasks.to_vec().join("；")
             ));
         }
         if !theme.work_items.is_empty() {
             lines.push(format!(
                 "   具体事项：{}",
-                theme.work_items.iter().cloned().collect::<Vec<_>>().join("；")
+                theme.work_items.to_vec().join("；")
             ));
         }
     }

@@ -35,7 +35,7 @@ pub async fn get_today_tasks(_input: Value) -> Result<Value, String> {
         .into_iter()
         .filter(|t| {
             let dl = t.get("deadline").and_then(|v| v.as_str()).unwrap_or("");
-            dl.len() >= 10 && &dl[..10] == today
+            dl.len() >= 10 && dl[..10] == today
         })
         .collect();
     Ok(Value::Array(filtered))

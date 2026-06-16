@@ -1,4 +1,4 @@
-/// 配置加载/保存
+//! 配置加载/保存
 
 use tauri::Emitter;
 use crate::commands;

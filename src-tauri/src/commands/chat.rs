@@ -1,7 +1,7 @@
-/// chat_send_stream — 流式聊天命令，绕开 tool_execute 直接调 agent loop。
-///
-/// 与 chat_send tool 的输入相同，但额外接收 AppHandle 用于发射事件：
-///   chat:stream — 事件体是 chat_agent::StreamEvent（JSON，含 type 标签）
+//! chat_send_stream — 流式聊天命令，绕开 tool_execute 直接调 agent loop。
+//!
+//! 与 chat_send tool 的输入相同，但额外接收 AppHandle 用于发射事件：
+//!   chat:stream — 事件体是 chat_agent::StreamEvent（JSON，含 type 标签）
 
 use std::sync::Arc;
 
@@ -192,7 +192,7 @@ pub async fn chat_send_stream(
             let embeddings: Vec<Option<Vec<f32>>> = futures_util::future::join_all(
                 facts
                     .iter()
-                    .map(|f| crate::memory::extractor::compute_fact_embedding(f)),
+                    .map(crate::memory::extractor::compute_fact_embedding),
             )
             .await;
 

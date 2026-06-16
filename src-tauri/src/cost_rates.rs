@@ -1,6 +1,6 @@
-/// 人员时薪配置，存于 ~/.jarvis/cost-rates.json。
-///
-/// 结构: { "account": { "hourlyRate": 150, "displayName": "张三" }, ... }
+//! 人员时薪配置，存于 ~/.jarvis/cost-rates.json。
+//!
+//! 结构: { "account": { "hourlyRate": 150, "displayName": "张三" }, ... }
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

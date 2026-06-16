@@ -66,7 +66,7 @@ pub fn get_repo_roots() -> Vec<String> {
         .unwrap_or_default();
     if !from_cfg.is_empty() { return from_cfg; }
     if let Ok(raw) = std::env::var("TENCENT_CODE_LOCAL_ROOTS") {
-        return raw.split(|c| c == ';' || c == ',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+        return raw.split([';', ',']).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
     }
     Vec::new()
 }

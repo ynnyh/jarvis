@@ -110,7 +110,7 @@ pub async fn get_local_commits(repo: &str, opts: GetCommitsOpts<'_>) -> Result<V
     if opts.include_stat && !commits.is_empty() {
         let sha_list: Vec<String> = commits.iter().map(|c| c.sha.clone()).collect();
         let stats = run_concurrent_stats(repo, &sha_list, 4).await;
-        for (c, s) in commits.iter_mut().zip(stats.into_iter()) { c.stat = s; }
+        for (c, s) in commits.iter_mut().zip(stats) { c.stat = s; }
     }
     Ok(commits)
 }
@@ -159,7 +159,7 @@ pub async fn get_commit_diff(repo: &str, sha: &str) -> Result<CommitDiff, String
     let meta = meta_out.trim_end_matches('\n');
     let parts: Vec<&str> = meta.split(FIELD_SEP).collect();
     if parts.len() < 5 {
-        return Err(format!("git show meta 输出格式异常: {}", crate::util::truncate_chars(&meta, 200)));
+        return Err(format!("git show meta 输出格式异常: {}", crate::util::truncate_chars(meta, 200)));
     }
     let sha_out = parts[0].trim().to_string();
     let body = parts.iter().skip(5).cloned().collect::<Vec<&str>>().join(&FIELD_SEP.to_string()).trim().to_string();
