@@ -32,7 +32,7 @@
 
 ## 下载安装
 
-从 [Releases](https://gitee.com/ynnyh/jarvis/releases) 下载对应平台的安装包：
+从 [GitHub Releases](https://github.com/ynnyh/jarvis/releases) 下载对应平台的安装包（[国内用户可走 Gitee 镜像](https://gitee.com/ynnyh/jarvis/releases)，速度更快）：
 
 - **Windows**：`.exe`（NSIS 安装包），双击安装
 - **macOS**：`.dmg`（Universal），拖入 Applications

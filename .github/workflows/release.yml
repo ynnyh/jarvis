@@ -6,6 +6,9 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
@@ -235,3 +238,43 @@ jobs:
           ARTIFACTS_DIR: artifacts
         run: node scripts/publish-to-gitee.mjs
         timeout-minutes: 45
+
+      - name: Publish to GitHub Releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          echo "发布 GitHub Release: $TAG"
+
+          # 收集所有平台的用户可下载安装包（.exe / .dmg），排除 .sig / PLATFORM_ID
+          STAGING="gh-release-staging"
+          mkdir -p "$STAGING"
+          find artifacts -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.app.tar.gz" \) \
+            ! -name "*.sig" -exec cp {} "$STAGING/" \;
+          echo "待上传文件："
+          ls -la "$STAGING/"
+
+          # 从 CHANGELOG.md 提取本版本更新说明（失败则用 tag 名兜底）
+          NOTES_FILE="release-notes.md"
+          VERSION="${TAG#v}"
+          if awk "/^## ${TAG}/{f=1;next} /^## /{f=0} f" CHANGELOG.md > "$NOTES_FILE" && [ -s "$NOTES_FILE" ]; then
+            echo "✓ 从 CHANGELOG.md 提取了 ${TAG} 的更新说明"
+          else
+            echo "Jarvis ${TAG}" > "$NOTES_FILE"
+            echo "⚠ CHANGELOG 未找到 ${TAG}，用 tag 名兜底"
+          fi
+
+          # 创建/更新 GitHub Release（已存在则跳过，改用 upload 补传）
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在，补充上传资产"
+            gh release upload "$TAG" "$STAGING"/* --clobber
+          else
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes-file "$NOTES_FILE" \
+              --target main \
+              "$STAGING"/*
+          fi
+          echo "✓ GitHub Release $TAG 发布完成"
+        timeout-minutes: 15

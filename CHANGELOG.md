@@ -4,6 +4,15 @@
 
 ## Unreleased
 
+### 开源准备
+- **安全脱敏**：清理生产代码与 git 历史中的内网地址、公司业务信息（禅道/帆软/Jenkins 相关），统一替换为通用示例或 RFC 5737 文档 IP。重写全部 git 历史确保无残留。
+- **移除内部开发笔记**：`.trellis/` 目录（开发期任务规划/spec）移出开源仓库。
+- **新增 SECURITY.md**：安全漏洞披露通道 + 本地优先架构的安全说明。
+- **修复 dev.mjs 启动**：`npx tauri dev` 改为直接调用本地 `@tauri-apps/cli`，避免误拉同名占位包；同时消除 `shell:true` 安全告警。
+- **新增项目级 `.npmrc`**：`include=dev` 对抗 `NODE_ENV=production` 导致 devDependencies 被跳过的问题。
+- **CI 双源发布**：release.yml 新增 GitHub Releases 发布步骤（此前仅发 Gitee）。
+- **文档完善**：README 补充应用截图；官网首页 hero 图换为真实桌宠截图，新增界面预览画廊。
+
 ## v0.10.2
 
 ### 修复
