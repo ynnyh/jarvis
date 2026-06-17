@@ -57,7 +57,7 @@ export const ToolRegistry = {
     ]
   },
 
-  async getTaskDetail(id: string): Promise<Task | null> {
+  async getTaskDetail(_id: string): Promise<Task | null> {
     return null
   },
 

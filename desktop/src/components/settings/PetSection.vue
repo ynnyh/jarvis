@@ -7,11 +7,9 @@
 import { ref, onMounted, nextTick } from 'vue'
 import { useConfigStore } from '../../stores/config'
 import {
-  PETS,
   PET_CATEGORY_LABELS,
   getAllPets,
   getCustomPets,
-  isCustomPetId,
   loadCustomPets,
 } from '../../petManifest'
 import { customPetDelete } from '../../api/customPet'

@@ -23,7 +23,6 @@ function startWork() {
   emit('start-work')
 }
 
-const urgentTasks = props.tasks.filter(t => t.priority === 'urgent')
 const overdueCount = props.riskAnalysis?.overdueTasks.length || 0
 </script>
 

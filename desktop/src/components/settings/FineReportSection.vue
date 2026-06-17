@@ -161,7 +161,6 @@ const hasRealName = computed(() => !!store.config.fineReport.realName.trim())
 
 const showEffortDetail = ref(false)
 
-const PREVIEW_COUNT = 3
 const expandSummary = ref(false)
 const expandThemes = ref(false)
 const expandProjects = ref(false)

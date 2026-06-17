@@ -31,11 +31,20 @@ jobs:
           # 安装阶段仍走默认源（含镜像），避免装包慢
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # —— npm 依赖审计 ——
-      # --audit-level=high：只有高危及以上才让 workflow 失败，避免低危噪音。
-      - name: npm audit (high+)
-        run: npm audit --audit-level=high
-        continue-on-error: true  # 漏洞不阻断，只在日志报告
+      # —— npm 生产依赖审计（阻断） ——
+      # 只审计运行时依赖（--omit=dev）。桌面应用打包只含生产依赖，
+      # 生产路径必须 0 高危漏洞。
+      - name: npm audit production deps (blocking)
+        run: npm audit --omit=dev --audit-level=high
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # —— npm 全量审计（含 devDependencies，仅报告不阻断） ——
+      # vitepress 1.x 锁死 vite 5.x，其 dev-server 漏洞（path traversal / fs.deny）
+      # 仅影响本地 docs:dev，不影响打包产物和线上静态站点。
+      # 待 vitepress 2.0 稳定后可消除。详见 SECURITY.md。
+      - name: npm audit all deps (report only)
+        run: npm audit --audit-level=high || true
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -45,4 +54,3 @@ jobs:
 
       - name: cargo audit
         run: cargo audit --file src-tauri/Cargo.lock
-        continue-on-error: true  # 漏洞不阻断，只在日志报告

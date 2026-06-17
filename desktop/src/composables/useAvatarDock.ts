@@ -43,7 +43,7 @@ export interface UseAvatarDockOptions {
 }
 
 export function useAvatarDock(options: UseAvatarDockOptions) {
-  const { avatarAnchor, closeAllPanels, showMenu } = options
+  const { avatarAnchor, showMenu } = options
 
   // ===== State =====
   const dockEdge = ref<DockEdge | null>(null)

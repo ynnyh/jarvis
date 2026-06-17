@@ -78,12 +78,27 @@ export default tseslint.config(
     },
   },
 
-  // ===== 脚本文件放宽（构建/发布脚本允许 CommonJS 风格） =====
+  // ===== 脚本/工具文件放宽（CLI 脚本用 console 输出是合理的） =====
   {
-    files: ['scripts/**/*.mjs', 'scripts/**/*.js', 'tools/**/*.mjs'],
+    files: [
+      'scripts/**/*.mjs',
+      'scripts/**/*.js',
+      'scripts/**/*.ts',
+      'tools/**/*.mjs',
+      'tools/**/*.js',
+    ],
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
       'no-console': 'off',
+    },
+  },
+
+  // ===== mock 文件放宽（模拟数据，console/any 用于调试和简化类型） =====
+  {
+    files: ['**/*.mock.ts', '**/*.mock.vue', '**/mocks/**'],
+    rules: {
+      'no-console': 'off',
+      '@typescript-eslint/no-explicit-any': 'off',
     },
   },
 

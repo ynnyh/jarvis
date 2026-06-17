@@ -1,7 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
 import {
-  isPermissionGranted,
-  requestPermission,
   sendNotification,
 } from '@tauri-apps/plugin-notification'
 import { useAppStore } from '../stores/app'
@@ -18,17 +16,6 @@ interface TaskAlertRaw {
 const THROTTLE_MS = 5 * 60 * 1000
 
 const notified = new Set<string>()
-
-async function ensureNotificationPermission(): Promise<boolean> {
-  try {
-    let granted = await isPermissionGranted()
-    if (!granted) {
-      const r = await requestPermission()
-      granted = r === 'granted'
-    }
-    return granted
-  } catch { return false }
-}
 
 export function useTaskAlerts() {
   const store = useAppStore()

@@ -95,37 +95,6 @@ async function requestAiRecommendation() {
   }
 }
 
-async function fetchRecommendations() {
-  const task = currentTask.value
-  if (!task) return
-  const roots = repoRoots.value
-  if (!roots || roots.length === 0) {
-    error.value = '尚未配置代码文件夹（设置 → 代码根目录）。无法绑定项目。'
-    recommendations.value = []
-    return
-  }
-  loading.value = true
-  error.value = null
-  try {
-    const res = await invoke<RepoRecommendation[]>('recommend_repos_for_task', {
-      taskTitle: task.title,
-      taskDescription: '',          // 当前禅道 list 接口不带 desc，后续可以补一次 get-task
-      deadline: task.deadline,
-      repoRoots: roots,
-    })
-    recommendations.value = res
-    // 默认选中 top1
-    const top = res.find(r => r.isTop) || res[0]
-    selectedRepos.value = new Set(top ? [top.repoRoot] : [])
-    multiSelectMode.value = false
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
-    recommendations.value = []
-  } finally {
-    loading.value = false
-  }
-}
-
 function toggleRepo(repoRoot: string) {
   if (multiSelectMode.value) {
     const s = new Set(selectedRepos.value)

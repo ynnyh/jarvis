@@ -15,7 +15,7 @@
 
 import { fileURLToPath } from 'url'
 import { dirname, resolve } from 'path'
-import { existsSync, statSync, mkdirSync, readdirSync, readFileSync, writeFileSync, createWriteStream } from 'fs'
+import { existsSync, statSync, mkdirSync, writeFileSync } from 'fs'
 import { execSync } from 'child_process'
 import os from 'os'
 

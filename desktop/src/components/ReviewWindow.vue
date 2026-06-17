@@ -1,5 +1,6 @@
 <template src="./ReviewWindow.template.html"></template>
 <script setup lang="ts">
+/* eslint-disable @typescript-eslint/no-unused-vars -- template 引用外部 .html 文件，ESLint 无法检测 template 内的变量使用 */
 import { ref, computed, watch, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { emit } from '@tauri-apps/api/event'

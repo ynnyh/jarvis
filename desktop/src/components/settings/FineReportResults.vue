@@ -1,5 +1,6 @@
 <template src="./FineReportResults.template.html"></template>
 <script setup lang="ts">
+/* eslint-disable @typescript-eslint/no-unused-vars -- template 引用外部 .html 文件，ESLint 无法检测 template 内的变量使用 */
 import { computed, ref } from 'vue'
 
 interface EffortRecord {

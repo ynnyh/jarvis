@@ -81,12 +81,10 @@ async function doImport() {
   if (selected.value.size === 0) return
   importing.value = true
   const ids = Array.from(selected.value)
-  let okCount = 0
   for (const pid of ids) {
     try {
-      const r = await invoke<any>('cc_switch_import_provider', { providerId: pid })
-      if (r?.success) okCount++
-    } catch (e) {
+      await invoke('cc_switch_import_provider', { providerId: pid })
+          } catch (e) {
       console.error('导入 CC Switch provider 失败:', pid, e)
     }
   }

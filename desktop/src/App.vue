@@ -16,7 +16,7 @@ const {
   dailyMenuItems, systemMenuItems, costMenuItem,
   dockEdge, isPoked, updater, needsWizard,
   configStore, store,
-  toggleMenu, menuShowAlerts, menuShowRisk, menuShowReview, menuOpenTodayPlan,
+  toggleMenu, menuShowAlerts, menuShowReview, menuOpenTodayPlan,
   menuOpenCost, menuOpenChat, menuShowSettings, menuCheckUpdate, menuQuit,
   onAvatarHover, onAvatarLeave, onMouseDown,
   runAlertAction, dismissAlert, onWizardDone,

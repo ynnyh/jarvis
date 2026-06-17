@@ -108,7 +108,6 @@ export function useWindowOrchestration() {
     onAvatarHover,
     onAvatarLeave,
     exitDock,
-    menuToggleDock,
     breakoutFromDock,
   } = useAvatarDock({ avatarAnchor, closeAllPanels, showMenu })
 

@@ -14,11 +14,10 @@ type TickFn = () => void
 
 let sharedTimer: ReturnType<typeof setInterval> | null = null
 const subscribers = new Set<TickFn>()
-let isFirstTick = true
 
 function fireAll() {
   for (const fn of subscribers) {
-    try { fn() } catch (e) { console.error('[sharedTick] subscriber error:', e) }
+    try { fn() } catch { /* 单个回调异常不影响其他 */ }
   }
 }
 
@@ -27,7 +26,6 @@ export function useSharedTick(fn: TickFn) {
     subscribers.add(fn)
     if (!sharedTimer) {
       setTimeout(() => {
-        isFirstTick = false
         fireAll()
         sharedTimer = setInterval(fireAll, TICK_INTERVAL)
       }, INITIAL_DELAY)

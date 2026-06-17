@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { useConfigStore } from '../../stores/config'
 import { generateCustomPetId, customPetSave, type CustomPet, type ImageAnimation } from '../../api/customPet'
 import { loadCustomPets, type PetInfo } from '../../petManifest'
 import CustomDropdown from '../ui/CustomDropdown.vue'
@@ -17,7 +16,6 @@ const emit = defineEmits<{
   cancel: []
 }>()
 
-const store = useConfigStore()
 
 const form = ref({
   name: '',
