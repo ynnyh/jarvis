@@ -62,6 +62,11 @@ jobs:
       - name: Check text encoding
         run: npm run check:text
 
+      - name: ESLint (frontend lint)
+        # 前端质量门：error 阻断，warning 不阻断（渐进收紧）。
+        run: npm run lint
+        timeout-minutes: 5
+
       - name: cargo test
         # Windows 上 Tauri 测试需要完整 WebView2 COM 环境，CI runner 无法满足。
         # 仅在 macOS 运行测试，Windows 通过 clippy 和 check 验证编译正确性。

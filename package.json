@@ -6,6 +6,8 @@
   "scripts": {
     "check:text": "node scripts/check-mojibake.mjs --mode=strict",
     "check:text:full": "node scripts/check-mojibake.mjs --mode=full",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
     "desktop:dev": "node scripts/dev.mjs",
     "desktop:build": "tauri build",
     "desktop:build-macos-dev": "tauri build --target universal-apple-darwin",
@@ -27,11 +29,17 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@tauri-apps/cli": "^2.5.0",
     "@types/node": "^25.7.0",
+    "eslint": "^10.5.0",
+    "eslint-plugin-vue": "^10.9.2",
+    "globals": "^17.6.0",
     "typescript": "^6.0.3",
+    "typescript-eslint": "^8.61.1",
     "undici": "^7.25.0",
-    "vitepress": "^1.6.4"
+    "vitepress": "^1.6.4",
+    "vue-eslint-parser": "^10.4.1"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.3.0",

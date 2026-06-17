@@ -33,7 +33,7 @@ async function ensureNotificationPermission(): Promise<boolean> {
 export function useTaskAlerts() {
   const store = useAppStore()
   const configStore = useConfigStore()
-  let permissionGranted = false
+  const permissionGranted = false
   let isFirstFetch = true
   let lastFetch = 0
 

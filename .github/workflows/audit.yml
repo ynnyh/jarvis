@@ -1,0 +1,48 @@
+name: Dependency Audit
+
+# 定期依赖漏洞扫描，不阻断主开发流。
+# 每周一扫描 + 手动触发。npm audit 用官方 registry（镜像源不支持 audit 端点）。
+on:
+  schedule:
+    - cron: '0 3 * * 1'  # 每周一 11:00 (UTC+8) 扫描
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          registry-url: 'https://registry.npmjs.org'  # 用官方源跑 audit
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install npm deps
+        run: npm ci --no-audit --no-fund
+        env:
+          # 安装阶段仍走默认源（含镜像），避免装包慢
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # —— npm 依赖审计 ——
+      # --audit-level=high：只有高危及以上才让 workflow 失败，避免低危噪音。
+      - name: npm audit (high+)
+        run: npm audit --audit-level=high
+        continue-on-error: true  # 漏洞不阻断，只在日志报告
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # —— cargo 依赖审计 ——
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: cargo audit
+        run: cargo audit --file src-tauri/Cargo.lock
+        continue-on-error: true  # 漏洞不阻断，只在日志报告
