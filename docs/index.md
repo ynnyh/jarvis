@@ -6,8 +6,8 @@ hero:
   text: 个人桌面 AI 助手
   tagline: 本地优先 · 隐私安全 · 智能高效
   image:
-    src: /hero-illustration.svg
-    alt: Jarvis AI Assistant
+    src: /screenshot-pet.png
+    alt: Jarvis 桌宠形象
   actions:
     - theme: brand
       text: 立即下载
@@ -54,7 +54,66 @@ features:
   transform: translateY(-4px);
   box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
 }
+
+.screenshot-gallery {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px;
+  margin: 32px 0;
+}
+
+.screenshot-card {
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--vp-c-bg-soft);
+  border: 1px solid var(--vp-c-divider);
+  transition: all 0.3s ease;
+}
+
+.screenshot-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+  border-color: var(--vp-c-brand-1);
+}
+
+.screenshot-card img {
+  width: 100%;
+  display: block;
+}
+
+.screenshot-card p {
+  margin: 0;
+  padding: 12px 16px;
+  color: var(--vp-c-text-2);
+  font-size: 0.9em;
+  text-align: center;
+}
+
+.screenshot-card--wide {
+  grid-column: 1 / -1;
+}
 </style>
+
+## 界面预览
+
+<div class="screenshot-gallery">
+
+<div class="screenshot-card">
+  <img src="/screenshot-tips.png" alt="今日计划提醒气泡" />
+  <p>桌宠状态气泡 · 今日计划提醒</p>
+</div>
+
+<div class="screenshot-card">
+  <img src="/screenshot-menu.png" alt="右键菜单" />
+  <p>右键菜单 · 快速操作入口</p>
+</div>
+
+<div class="screenshot-card screenshot-card--wide">
+  <img src="/screenshot-settings.png" alt="外观与行为设置页" />
+  <p>外观与行为设置 · 主题 / 桌宠形象 / 交互</p>
+</div>
+
+</div>
 
 ## 为什么选择 Jarvis？
 

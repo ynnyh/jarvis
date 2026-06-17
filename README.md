@@ -4,7 +4,21 @@
 
 基于 **Tauri v2 (Rust) + Vue 3**，本地优先：数据存在你自己机器的 `~/.jarvis/`，密钥走操作系统钥匙链，不上传任何第三方服务器（除你自己配置的禅道 / 帆软 / LLM）。
 
-<!-- TODO(截图): 补一张桌宠 + 任务气泡 + 设置页的截图，放这里 -->
+<!-- 截图：主视觉（桌宠形象）+ 交互细节（气泡/菜单）+ 设置页 -->
+
+<p align="center">
+  <img src="docs/public/screenshot-pet.png" width="240" alt="Jarvis 桌宠形象" />
+</p>
+
+<p align="center">
+  <img src="docs/public/screenshot-tips.png" width="280" alt="今日计划提醒" />
+  &nbsp;&nbsp;
+  <img src="docs/public/screenshot-menu.png" width="280" alt="右键菜单" />
+</p>
+
+<p align="center">
+  <img src="docs/public/screenshot-settings.png" width="640" alt="外观与行为设置页" />
+</p>
 
 ## 功能
 
