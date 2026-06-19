@@ -21,6 +21,65 @@ fn is_login_page(html: &str) -> bool {
     html.to_lowercase().contains("decision/login")
 }
 
+/// 检测帆软返回的 HTML 是否为「出错页面」（模板缺失 / 服务端异常等）。
+///
+/// 帆软对这类错误返回 HTTP 200 + 通用错误页（而非 4xx），页面特征：
+///   - `<title>出错页面</title>`
+///   - 含异常类名 `Fine-Core_*`（如 Fine-Core_Invalid_CID）
+///   - 含「错误代码」字样（HTML 实体编码的 `错误代码` 也会出现）
+///
+/// 只在 open_report 用——它拿到的是完整 HTML 页面。read_w_content / submit_filter
+/// 的响应是 JSON 或片段，不会命中，因此不会误伤。检测到错误页时必须抛清晰错误，
+/// 否则 open_report 会从错误页里抓个偶然出现的 UUID 当 sessionID，连锁导致
+/// submit_filter 401 等毫不相干的误导性报错。
+fn is_fine_error_page(html: &str) -> bool {
+    // 实测错误页 title 固定是「出错页面」（HTML 实体编码后也能被 title 标签匹配到）
+    html.contains("<title>出错页面</title>") || html.contains("Fine-Core_")
+}
+
+/// 从帆软「出错页面」HTML 里提取可读的错误摘要（错误代码 + 原因）。
+/// 失败时返回兜底文案，保证调用方总能拿到非空字符串。
+///
+/// 只提 ASCII 部分（错误码数字、模板路径、Fine-Core_* 异常名），避免依赖中文实体解码。
+fn extract_fine_error_message(html: &str) -> String {
+    use std::collections::HashSet;
+    let mut parts: Vec<String> = Vec::new();
+
+    // 错误代码：形如「错误代码:11300004」（中文可能是 HTML 实体，但数字稳定可抓）。
+    // 优先匹配紧贴在 errorcode 标识后的数字；失败则兜底抓页面里独立的 7~8 位错误码。
+    let re_errcode = regex::Regex::new(r"(?i)errorcode[&#\d:;:]*?(\d{6,})").ok();
+    let re_digit = regex::Regex::new(r"\b(\d{7,8})\b").ok();
+    let errcode = re_errcode
+        .and_then(|re| re.captures(html))
+        .or_else(|| re_digit.and_then(|re| re.captures(html)));
+    if let Some(cap) = errcode {
+        parts.push(format!("错误代码:{}", &cap[1]));
+    }
+
+    // 模板路径：reportlets/xxx/xxx.cpt
+    if let Some(re) = regex::Regex::new(r"(?i)reportlets/[A-Za-z0-9_./-]+\.cpt").ok() {
+        if let Some(m) = re.find(html) {
+            parts.push(format!("模板:{}", m.as_str()));
+        }
+    }
+
+    // Fine-Core_* 异常名（去重）。正则编译到绑定变量再 find_iter，避免借用局部正则。
+    let mut seen = HashSet::new();
+    if let Some(re) = regex::Regex::new(r"Fine-Core_[A-Za-z_]+").ok() {
+        for cap in re.find_iter(html) {
+            if seen.insert(cap.as_str().to_string()) {
+                parts.push(cap.as_str().to_string());
+            }
+        }
+    }
+
+    if parts.is_empty() {
+        format!("帆软返回出错页面（HTML {} 字符，未能提取具体错误码）", html.len())
+    } else {
+        parts.join(" | ")
+    }
+}
+
 // ============================================================================
 // JWT 缓存
 // ============================================================================
@@ -279,6 +338,17 @@ impl FineReportClient {
         }
         if is_login_page(&html) {
             return Err("AUTH_EXPIRED: 打开报表返回登录页 HTML，JWT 已过期".into());
+        }
+        // 帆软「出错页面」(HTTP 200)：模板缺失 / 服务端异常等。必须在抓 sessionID 之前
+        // 拦下——否则会从错误页里抓到偶然出现的 UUID 当 sessionID，连锁导致 submit_filter
+        // 401 / read_w_content Invalid_CID 等毫不相干的误导性报错。
+        // 报错里带上具体错误码/模板路径，方便定位真因（典型：viewlet 路径写错）。
+        if is_fine_error_page(&html) {
+            return Err(format!(
+                "帆软报表打开失败（viewlet={}）：{}",
+                viewlet,
+                extract_fine_error_message(&html)
+            ));
         }
 
         // dump HTML 备查（仅 debug 构建；release 不落盘，避免工时 PII 残留磁盘）
@@ -553,5 +623,74 @@ impl FineReportClient {
             )
         })?;
         Ok(html.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ===== is_fine_error_page =====
+
+    #[test]
+    fn error_page_detected_by_title() {
+        // 模板缺失页：title 固定是「出错页面」
+        let html = r#"<!doctype html><html><head><title>出错页面</title></head><body>Oops!!!</body></html>"#;
+        assert!(is_fine_error_page(html));
+    }
+
+    #[test]
+    fn error_page_detected_by_fine_core_exception() {
+        // Invalid_CID 页：异常类名 Fine-Core_Invalid_CID
+        let html = r#"<html><head><title>出错页面</title></head>Fine-Core_Invalid_CID at com.fr..."#;
+        assert!(is_fine_error_page(html));
+    }
+
+    #[test]
+    fn normal_report_page_not_misdetected() {
+        // 正常报表页（含 FR.SessionMgr.register）不应被误判为错误页
+        let html = r#"<html><head><title>chandaogongshitongji</title></head>
+            <script>FR.SessionMgr.register('19576f9f-f7e8-431c-be4d-99bab77dc581', contentPane)</script>
+            </html>"#;
+        assert!(!is_fine_error_page(html));
+    }
+
+    #[test]
+    fn empty_html_not_error_page() {
+        assert!(!is_fine_error_page(""));
+    }
+
+    // ===== extract_fine_error_message =====
+
+    #[test]
+    fn extract_template_missing_errorcode_and_path() {
+        // 实测 dump：错误代码 11300004 + 模板路径（中文「错误代码」是 HTML 实体编码）
+        let html = r#"<title>出错页面</title>&#38169;&#35823;&#20195;&#30721;&#58;11300004
+            &#27809;&#26377;&#25214;&#21040;&#27169;&#26495;&#25991;&#20214;&#58;reportlets/example/effort-report.cpt
+            at com.fr.io.reader.StreamTemplateWorkBookReader.read"#;
+        let msg = extract_fine_error_message(html);
+        assert!(msg.contains("错误代码:11300004"), "应提取错误代码，实际: {}", msg);
+        assert!(
+            msg.contains("reportlets/example/effort-report.cpt"),
+            "应提取模板路径，实际: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn extract_invalid_cid_exception_name() {
+        let html = r#"<title>出错页面</title>Fine-Core_Invalid_CID
+            at com.fr.web.core.cid.BrowserConcurrencyManager.verifyCid"#;
+        let msg = extract_fine_error_message(html);
+        assert!(msg.contains("Fine-Core_Invalid_CID"), "应提取异常名，实际: {}", msg);
+    }
+
+    #[test]
+    fn extract_falls_back_when_no_codes() {
+        // 错误页但提取不到任何已知字段时，返回非空兜底文案
+        let html = r#"<title>出错页面</title><body>未知错误</body>"#;
+        let msg = extract_fine_error_message(html);
+        assert!(!msg.is_empty());
+        assert!(msg.contains("未能提取"), "应返回兜底文案，实际: {}", msg);
     }
 }
