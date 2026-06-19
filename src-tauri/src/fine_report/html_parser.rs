@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-pub(super) const DEFAULT_VIEWLET: &str = "example/effort-report.cpt";
+/// 帆软报表模板路径。曾在 example/effort-report.cpt，但该模板在 sxjbjt.com:19085
+/// 服务器上不存在，open_report 会拿到 11300004 错误页，连锁导致 parameters_d 401。
+/// 实际路径见浏览器地址栏 viewlet= 参数（zentao/chandaogongshitongji.cpt）。
+pub(super) const DEFAULT_VIEWLET: &str = "zentao/chandaogongshitongji.cpt";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
