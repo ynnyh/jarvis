@@ -32,10 +32,13 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # —— npm 生产依赖审计（阻断） ——
-      # 只审计运行时依赖（--omit=dev）。桌面应用打包只含生产依赖，
+      # 只审计运行时依赖。--omit=dev + --include=prod 双保险：npm audit 默认会把
+      # 所有直接依赖（含 devDep）算进审计范围，单靠 --omit=dev 在某些 npm 版本下
+      # 仍会把 vitepress（devDep，含已知 vite/esbuild dev-server 漏洞）当作直接
+      # 依赖报出来。--include=prod 强制只扫生产树。桌面应用打包只含生产依赖，
       # 生产路径必须 0 高危漏洞。
       - name: npm audit production deps (blocking)
-        run: npm audit --omit=dev --audit-level=high
+        run: npm audit --omit=dev --include=prod --audit-level=high
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
