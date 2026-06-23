@@ -57,7 +57,7 @@ fn extract_fine_error_message(html: &str) -> String {
     }
 
     // 模板路径：reportlets/xxx/xxx.cpt
-    if let Some(re) = regex::Regex::new(r"(?i)reportlets/[A-Za-z0-9_./-]+\.cpt").ok() {
+    if let Ok(re) = regex::Regex::new(r"(?i)reportlets/[A-Za-z0-9_./-]+\.cpt") {
         if let Some(m) = re.find(html) {
             parts.push(format!("模板:{}", m.as_str()));
         }
@@ -65,7 +65,7 @@ fn extract_fine_error_message(html: &str) -> String {
 
     // Fine-Core_* 异常名（去重）。正则编译到绑定变量再 find_iter，避免借用局部正则。
     let mut seen = HashSet::new();
-    if let Some(re) = regex::Regex::new(r"Fine-Core_[A-Za-z_]+").ok() {
+    if let Ok(re) = regex::Regex::new(r"Fine-Core_[A-Za-z_]+") {
         for cap in re.find_iter(html) {
             if seen.insert(cap.as_str().to_string()) {
                 parts.push(cap.as_str().to_string());
