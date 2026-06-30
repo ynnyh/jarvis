@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { getCurrentWindow, LogicalSize, LogicalPosition, currentMonitor } from '@tauri-apps/api/window'
+import { getCurrentWindow, LogicalSize, LogicalPosition, primaryMonitor } from '@tauri-apps/api/window'
 import { useConfigStore, type WorkStyle } from '../stores/config'
 import { normalizeZentaoBaseUrl } from '../composables/zentaoUrl'
 
@@ -31,12 +31,18 @@ async function enterWizardMode() {
       y: Math.round(outerPos.y / scale),
     }
     await win.setSize(new LogicalSize(WIZARD_W, WIZARD_H))
-    const monitor = await currentMonitor()
+    // 钉到主屏正中：用 primaryMonitor（用户在系统里标的主屏），不用 currentMonitor。
+    // currentMonitor 在「外接屏设为主屏 + mac 笔记本副屏」场景会拿到副屏，窗口跑副屏
+    // 去用户看不见。lib.rs 启动定位也是 primary 优先，这里保持一致。
+    const monitor = await primaryMonitor()
     if (monitor) {
+      // monitor.position/size 是 physical，除以 scale 转逻辑后算居中（窗口坐标是 logical）。
+      const monX = monitor.position.x / scale
+      const monY = monitor.position.y / scale
       const monW = monitor.size.width / scale
       const monH = monitor.size.height / scale
-      const cx = Math.round((monW - WIZARD_W) / 2)
-      const cy = Math.round((monH - WIZARD_H) / 2)
+      const cx = Math.round(monX + (monW - WIZARD_W) / 2)
+      const cy = Math.round(monY + (monH - WIZARD_H) / 2)
       await win.setPosition(new LogicalPosition(cx, cy))
     }
   } catch (error) {
@@ -60,6 +66,18 @@ async function exitWizardMode() {
 
 onMounted(enterWizardMode)
 onUnmounted(exitWizardMode)
+
+// 标题栏按住拖动整个 wizard：调 Rust drag_window(start_dragging)，
+// 跟小人拖拽用同一个底层机制。只挂在左键 mousedown，不影响标题里的步骤进度展示。
+// 注意：按钮、输入框的 mousedown 不能冒泡到 header 触发拖动，否则会抢点击 ——
+// 这里只在 .wizard-header 上绑定，header 里只有标题和进度点，没有可交互控件。
+async function startDrag() {
+  try {
+    await invoke('drag_window')
+  } catch (e) {
+    console.error('[wizard] 拖动失败:', e)
+  }
+}
 
 const step = ref(1)
 const totalSteps = 6
@@ -151,7 +169,7 @@ function prev() {
 <template>
   <div class="wizard-overlay pointer-target">
     <div class="wizard">
-      <header class="wizard-header">
+      <header class="wizard-header" @mousedown.left="startDrag">
         <div class="wizard-title">
           <span class="wizard-icon">✨</span>
           <span>欢迎使用 {{ store.config.assistantName }}</span>
@@ -311,6 +329,7 @@ function prev() {
   justify-content: space-between;
   background: rgba(0, 0, 0, 0.2);
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  cursor: move;  /* 提示标题栏可拖动整个引导窗 */
 }
 
 .wizard-title {
