@@ -1,0 +1,77 @@
+name: Quality
+
+# 可复用质量门：check:text（乱码审计）→ ESLint → cargo test/check → cargo clippy。
+# 被 ci.yml（push/PR 触发）和 release.yml（tag 发版前置）共同调用，
+# 靠 workflow_call 保证两处质量标准完全一致、永不漂移——发版的 tag 必须先过
+# 与 CI 一模一样的门，杜绝「clippy 没过却发版」。
+# 跨平台：Windows + macOS（本项目是桌面应用，无 linux target）。
+on:
+  workflow_call:
+
+jobs:
+  test:
+    strategy:
+      # 一个平台挂了不要取消另一个。
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+          - os: macos-latest
+            name: macos
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Install macOS universal Rust targets
+        if: matrix.os == 'macos-latest'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
+
+      - name: Install npm deps
+        run: npm ci --no-audit --no-fund
+        timeout-minutes: 5
+
+      - name: Check text encoding
+        run: npm run check:text
+
+      - name: ESLint (frontend lint)
+        # 前端质量门：error 阻断，warning 不阻断（渐进收紧）。
+        run: npm run lint
+        timeout-minutes: 5
+
+      - name: cargo test
+        # Windows 上 Tauri 测试需要完整 WebView2 COM 环境，CI runner 无法满足。
+        # 仅在 macOS 运行测试，Windows 通过 clippy 和 check 验证编译正确性。
+        if: matrix.os == 'macos-latest'
+        run: cargo test --lib --manifest-path src-tauri/Cargo.toml
+        timeout-minutes: 30
+
+      - name: cargo check (Windows fallback)
+        # Windows 跳过测试，但验证编译通过
+        if: matrix.os == 'windows-latest'
+        run: cargo check --lib --manifest-path src-tauri/Cargo.toml
+        timeout-minutes: 15
+
+      - name: cargo clippy
+        # 升级为 -D warnings：warning 即 fail，确保代码质量。
+        run: cargo clippy --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings
+        timeout-minutes: 30

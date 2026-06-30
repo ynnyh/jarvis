@@ -1,86 +1,12 @@
 name: CI
 
-# 质量门：push 到 main 或提 PR 时跑。发版走 release.yml，职责分离。
-# 三步：check:text（乱码审计）→ cargo test（测试）→ cargo clippy（lint）。
-# 跨平台：Windows + macOS（本项目是桌面应用，无 linux target）。
+# 质量门：push 到 main 或提 PR 时跑。实际检查逻辑在可复用的 quality.yml，
+# 发版 release.yml 也调同一个 workflow，保证「CI 跑的」和「发版前置跑的」完全一致。
 on:
   push:
     branches: [main]
   pull_request:
 
 jobs:
-  test:
-    strategy:
-      # 一个平台挂了不要取消另一个。
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            name: windows
-          - os: macos-latest
-            name: macos
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
-      - name: Install macOS universal Rust targets
-        if: matrix.os == 'macos-latest'
-        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
-
-      # Windows 上不运行 cargo test（需要完整 COM 环境），WebView2 安装不再需要
-      # 保留此步骤以防将来需要 Windows 集成测试
-      # - name: Install WebView2 Runtime
-      #   if: matrix.os == 'windows-latest'
-      #   run: |
-      #     Invoke-WebRequest -Uri 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile 'MicrosoftEdgeWebview2Setup.exe'
-      #     Start-Process -FilePath 'MicrosoftEdgeWebview2Setup.exe' -ArgumentList '/silent', '/install' -Wait
-      #   shell: powershell
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-          cache-on-failure: true
-
-      - name: Install npm deps
-        run: npm ci --no-audit --no-fund
-        timeout-minutes: 5
-
-      - name: Check text encoding
-        run: npm run check:text
-
-      - name: ESLint (frontend lint)
-        # 前端质量门：error 阻断，warning 不阻断（渐进收紧）。
-        run: npm run lint
-        timeout-minutes: 5
-
-      - name: cargo test
-        # Windows 上 Tauri 测试需要完整 WebView2 COM 环境，CI runner 无法满足。
-        # 仅在 macOS 运行测试，Windows 通过 clippy 和 check 验证编译正确性。
-        if: matrix.os == 'macos-latest'
-        run: cargo test --lib --manifest-path src-tauri/Cargo.toml
-        timeout-minutes: 30
-
-      - name: cargo check (Windows fallback)
-        # Windows 跳过测试，但验证编译通过
-        if: matrix.os == 'windows-latest'
-        run: cargo check --lib --manifest-path src-tauri/Cargo.toml
-        timeout-minutes: 15
-
-      - name: cargo clippy
-        # 升级为 -D warnings：warning 即 fail，确保代码质量。
-        run: cargo clippy --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings
-        timeout-minutes: 30
+  quality:
+    uses: ./.github/workflows/quality.yml
