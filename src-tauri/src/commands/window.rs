@@ -7,43 +7,49 @@ pub async fn drag_window(window: tauri::WebviewWindow) -> Result<(), String> {
     window.start_dragging().map_err(|e| e.to_string())
 }
 
-/// 返回鼠标相对窗口左上角的逻辑坐标（CSS px）。
+/// 返回鼠标相对窗口左上角的逻辑坐标（CSS px），外加原始 OS 值用于诊断。
+///
+/// 返回元组：(css_x, css_y, cursor_x, cursor_y, win_x, win_y, scale)
+///   - (css_x, css_y)：喂给 document.elementFromPoint 的 CSS 逻辑坐标
+///   - 后 5 个：OS 原始值。macOS 上 tao 的 DPI 换算有隐患（见下），单靠源码推断
+///     cursor 到底是 logical 还是 physical 不可靠，前端会把这些原始值打日志，
+///     在真机上一眼定夺，避免再凭公式赌一次。
 ///
 /// 为什么不靠 WebView 的 mousemove + :hover：windowed 透明窗口启用 ignoreCursorEvents
 /// 之后，OS 不再向 WebView 派发鼠标事件，CSS :hover 卡在最后一次状态。
-///
-/// 用 Tauri 的 cursor_position() 直接从 OS 取真实坐标，再换算到窗口本地 CSS 坐标，
-/// 让前端 document.elementFromPoint(x, y) 自己判断鼠标下到底是不是可点击元素。
 #[tauri::command]
 pub fn cursor_pos_in_window(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
-) -> Result<(f64, f64), String> {
+) -> Result<(f64, f64, f64, f64, i32, i32, f64), String> {
     let cursor = app.cursor_position().map_err(|e| e.to_string())?;
     let win_pos = window.outer_position().map_err(|e| e.to_string())?;
     let scale = window.scale_factor().map_err(|e| e.to_string())?;
 
-    // 历史教训：Tauri 2.x 在 macOS 上 `app.cursor_position()` 类型标的是
-    // PhysicalPosition，但实测返回的是 **logical** 像素；`outer_position()` 仍是
-    // physical。直接 (cur - win)/scale 在 retina 副屏（scale=2）上把 cursor 多除
-    // 一次 → CSS 坐标变成真实值的两倍 → elementFromPoint 落到窗口外 → 永远判定
-    // 不在 UI 上 → setIgnoreCursorEvents(true) → 整窗被穿透。主屏 1920 (scale=1)
-    // logical==physical 歪打正着没事，副屏一定挂。
+    // macOS 坐标换算目前不可靠，正在排查整窗穿透回归（v0.5.4 引入的 "cursor 当
+    // logical" 前提与 tao 0.35.2 源码 .to_physical(scale) 矛盾）。诊断期：macOS
+    // 暂时和非 macOS 一样用 (cursor - win)/scale，同时把原始值一起返回给前端打
+    // 日志，真机读数确认 cursor 真实量级后再定最终公式。
     //
-    // 修法：macOS 上先把 win 转 logical 再减 logical 的 cursor。其它平台保持
-    // 原算法（实测 Windows 上两者都是 physical，原公式正确）。
+    // 旧版"历史教训"注释（断言 macOS cursor 是 logical）保留作背景：
+    //   Tauri 2.x 在 macOS 上 cursor_position() 标 PhysicalPosition，但 v0.5.4 实测
+    //   认为返回 logical；outer_position 仍 physical。(cur-win)/scale 在 retina 副屏
+    //   (scale=2) 上被指会把 cursor 多除一次 → CSS 坐标 ×2 → elementFromPoint 落窗外
+    //   → 全窗判定为非 UI → setIgnoreCursorEvents(true) → 整窗穿透。主屏 scale=1 时
+    //   logical==physical 歪打正着没事。但该结论与 tao 源码矛盾，需真机复核。
     #[cfg(target_os = "macos")]
     {
-        let win_x_logical = win_pos.x as f64 / scale;
-        let win_y_logical = win_pos.y as f64 / scale;
-        Ok((cursor.x - win_x_logical, cursor.y - win_y_logical))
+        // 诊断期：先用通用公式（与非 macOS 一致），靠原始值复核。
+        let x = (cursor.x - win_pos.x as f64) / scale;
+        let y = (cursor.y - win_pos.y as f64) / scale;
+        Ok((x, y, cursor.x, cursor.y, win_pos.x, win_pos.y, scale))
     }
 
     #[cfg(not(target_os = "macos"))]
     {
         let x = (cursor.x - win_pos.x as f64) / scale;
         let y = (cursor.y - win_pos.y as f64) / scale;
-        Ok((x, y))
+        Ok((x, y, cursor.x, cursor.y, win_pos.x, win_pos.y, scale))
     }
 }
 

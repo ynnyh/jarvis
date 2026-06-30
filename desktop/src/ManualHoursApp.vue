@@ -630,10 +630,13 @@ onUnmounted(() => {
   right: 0;
   max-height: 280px;
   overflow-y: auto;
-  background: var(--surface);
+  /* 用不透明的 --popup-bg：--surface 只有 3% alpha，下拉会和后面内容互相穿透。
+     --overlay token 不存在（box-shadow 直接失效），换成 --panel-shadow 给阴影。
+     与 BatchWriteApp.vue / CustomDropdown.vue 的下拉保持一致。 */
+  background: var(--popup-bg);
   border: 1px solid var(--border);
   border-radius: 6px;
-  box-shadow: 0 8px 24px var(--overlay);
+  box-shadow: var(--panel-shadow);
   z-index: 10;
   padding: 4px;
 }

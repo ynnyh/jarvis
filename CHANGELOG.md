@@ -2,6 +2,14 @@
 
 记录每个版本的新增、优化和修复。版本号遵循语义化版本（major.minor.patch）。
 
+## v0.10.3
+
+### 修复
+- **工时事务类下拉透明穿透**：手动工时窗口选「事务」类工作后弹出的任务下拉、写工时窗口的任务搜索下拉，背景用了只有 3% 透明度的 `--surface`，且阴影引用了不存在的 `--overlay` token 导致阴影失效，下拉跟后面内容互相穿透。改为不透明的 `--popup-bg` + `--panel-shadow`，与批量写工时下拉的现成写法对齐。
+
+### 诊断（macOS）
+- **欢迎页整窗穿透排查**：macOS 上欢迎页（及整个小人窗口）无法点击、鼠标穿透到桌面。根因锁定在 `cursor_pos_in_window` 的坐标换算——v0.5.4 的「cursor 当 logical」前提与 tao 0.35.2 源码（末尾 `.to_physical(scale)`）矛盾，retina 屏（M 芯片）算出的 CSS 坐标落到窗外，前端误判「鼠标不在 UI 上」于是 `setIgnoreCursorEvents(true)` 整窗穿透。本版**临时**统一走 `(cursor-win)/scale` 公式，并让后端多返回 5 个原始 OS 坐标、前端在「判窗外穿透」时打 `[passthrough][diag]` 日志，供真机读数定夺最终公式。确认完会回退成干净版。
+
 ## Unreleased
 
 ### 开源准备

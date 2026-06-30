@@ -453,12 +453,12 @@ onUnmounted(() => {
   list-style: none;
   margin: 2px 0 0;
   padding: 4px 0;
-  background: var(--surface);
+  background: var(--popup-bg);
   border: 1px solid var(--border);
   border-radius: 6px;
   max-height: 220px;
   overflow-y: auto;
-  box-shadow: 0 8px 24px var(--overlay);
+  box-shadow: var(--panel-shadow);
 }
 .task-search-dropdown::-webkit-scrollbar { width: 4px; }
 .task-search-dropdown::-webkit-scrollbar-track { background: transparent; }
