@@ -2,63 +2,37 @@
 
 use tauri::Manager;
 
-/// `cursor_pos_in_window` 的返回元组：(css_x, css_y, cursor_x, cursor_y, win_x, win_y, scale)。
-///
-/// 刻意用 `type` 别名而非 struct：该值跨 Tauri command 边界序列化给前端，目前以
-/// JSON 数组（按位）传递，前端按下标读取。换成 struct 会变成对象、字段名上线，
-/// 前端解析逻辑全部得改，线格式也不再兼容。别名只为消 `clippy::type_complexity`，
-/// 不改变任何运行时/序列化行为。
-type CursorPosResult = (f64, f64, f64, f64, i32, i32, f64);
-
 #[tauri::command]
 pub async fn drag_window(window: tauri::WebviewWindow) -> Result<(), String> {
     window.start_dragging().map_err(|e| e.to_string())
 }
 
-/// 返回鼠标相对窗口左上角的逻辑坐标（CSS px），外加原始 OS 值用于诊断。
-///
-/// 返回元组：(css_x, css_y, cursor_x, cursor_y, win_x, win_y, scale)
-///   - (css_x, css_y)：喂给 document.elementFromPoint 的 CSS 逻辑坐标
-///   - 后 5 个：OS 原始值。macOS 上 tao 的 DPI 换算有隐患（见下），单靠源码推断
-///     cursor 到底是 logical 还是 physical 不可靠，前端会把这些原始值打日志，
-///     在真机上一眼定夺，避免再凭公式赌一次。
+/// 返回鼠标相对窗口左上角的逻辑坐标（CSS px）。
 ///
 /// 为什么不靠 WebView 的 mousemove + :hover：windowed 透明窗口启用 ignoreCursorEvents
 /// 之后，OS 不再向 WebView 派发鼠标事件，CSS :hover 卡在最后一次状态。
+///
+/// 用 Tauri 的 cursor_position() 直接从 OS 取真实坐标，再换算到窗口本地 CSS 坐标，
+/// 让前端 document.elementFromPoint(x, y) 自己判断鼠标下到底是不是可点击元素。
+///
+/// 历史教训：v0.5.4 曾以为 macOS 上 cursor_position() 返回 logical（与文档标的
+/// PhysicalPosition 不符），单独给 macOS 写了"把 win 转 logical 再减 logical 的 cursor"
+/// 分支。但 tao 0.35.2 源码（platform_impl/macos/util/mod.rs::cursor_position）末尾
+/// 调了 .to_physical(scale)，cursor 和 outer_position 实际都是 physical，两者量纲一致，
+/// 统一走 (cursor - win)/scale 即可。v0.5.4 的特殊分支反而导致 retina 屏整窗穿透。
+/// v0.10.3 起去掉 macOS 分支统一公式，macOS 真机走完引导页正常，确认该公式正确。
 #[tauri::command]
 pub fn cursor_pos_in_window(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
-) -> Result<CursorPosResult, String> {
+) -> Result<(f64, f64), String> {
     let cursor = app.cursor_position().map_err(|e| e.to_string())?;
     let win_pos = window.outer_position().map_err(|e| e.to_string())?;
     let scale = window.scale_factor().map_err(|e| e.to_string())?;
 
-    // macOS 坐标换算目前不可靠，正在排查整窗穿透回归（v0.5.4 引入的 "cursor 当
-    // logical" 前提与 tao 0.35.2 源码 .to_physical(scale) 矛盾）。诊断期：macOS
-    // 暂时和非 macOS 一样用 (cursor - win)/scale，同时把原始值一起返回给前端打
-    // 日志，真机读数确认 cursor 真实量级后再定最终公式。
-    //
-    // 旧版"历史教训"注释（断言 macOS cursor 是 logical）保留作背景：
-    //   Tauri 2.x 在 macOS 上 cursor_position() 标 PhysicalPosition，但 v0.5.4 实测
-    //   认为返回 logical；outer_position 仍 physical。(cur-win)/scale 在 retina 副屏
-    //   (scale=2) 上被指会把 cursor 多除一次 → CSS 坐标 ×2 → elementFromPoint 落窗外
-    //   → 全窗判定为非 UI → setIgnoreCursorEvents(true) → 整窗穿透。主屏 scale=1 时
-    //   logical==physical 歪打正着没事。但该结论与 tao 源码矛盾，需真机复核。
-    #[cfg(target_os = "macos")]
-    {
-        // 诊断期：先用通用公式（与非 macOS 一致），靠原始值复核。
-        let x = (cursor.x - win_pos.x as f64) / scale;
-        let y = (cursor.y - win_pos.y as f64) / scale;
-        Ok((x, y, cursor.x, cursor.y, win_pos.x, win_pos.y, scale))
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        let x = (cursor.x - win_pos.x as f64) / scale;
-        let y = (cursor.y - win_pos.y as f64) / scale;
-        Ok((x, y, cursor.x, cursor.y, win_pos.x, win_pos.y, scale))
-    }
+    let x = (cursor.x - win_pos.x as f64) / scale;
+    let y = (cursor.y - win_pos.y as f64) / scale;
+    Ok((x, y))
 }
 
 // ===== 应用控制 =====
