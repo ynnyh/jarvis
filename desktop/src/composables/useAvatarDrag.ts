@@ -4,15 +4,14 @@ import { invoke } from '@tauri-apps/api/core'
 import type { AvatarAnchor, DockEdge } from './useAvatarDock'
 import { ANCHOR_AVATAR_CENTER } from './useAvatarDock'
 
-// 【临时诊断】avatar 拖拽上半屏失效排查。每次按下小人时拉一次窗口+屏幕原始几何，
-// 打日志供真机读数。排查完连同 diag_window_geom 命令一起删除。
-async function diagGeom() {
+/** 读 OS 全局逻辑鼠标坐标（top-left 原点，CSS px）。avatar 全部坐标交互的唯一真值源，
+ *  retina 真机已验证。拖拽不再用 MouseEvent.screenX/screenY（WKWebView 上量纲不一致）。 */
+async function cursorAbs(): Promise<{ x: number; y: number } | null> {
   try {
-    const g = await invoke<Record<string, unknown>>('diag_window_geom')
-    // eslint-disable-next-line no-console
-    console.log('[avatar-drag][diag] window/monitor 几何', g)
-  } catch (e) {
-    console.error('[avatar-drag][diag] 失败:', e)
+    const [x, y] = await invoke<[number, number]>('cursor_abs_logical')
+    return { x, y }
+  } catch {
+    return null
   }
 }
 
@@ -44,26 +43,54 @@ export function useAvatarDrag(options: UseAvatarDragOptions) {
 
   // ===== Drag state =====
   let mouseDownTime = 0
-  let mouseDownX = 0
-  let mouseDownY = 0
+  // mousedown 时的鼠标全局逻辑坐标，用于「是否真拖动」阈值与单击判定
+  let downCursorX = 0
+  let downCursorY = 0
+  // 抓取偏移：mousedown 时鼠标逻辑位 - 窗口逻辑位，拖拽全程保持不变
+  let grabOffsetX = 0
+  let grabOffsetY = 0
+  // 最近一次读到的鼠标逻辑坐标（RAF 循环更新），mouseup 时算位移用
+  let lastCursorX = 0
+  let lastCursorY = 0
   let isDragging = false
-
-  let dragStartWinLogicalX = 0
-  let dragStartWinLogicalY = 0
-  let pendingDragX: number | null = null
-  let pendingDragY: number | null = null
+  let dragActive = false
   let dragRafId: number | null = null
 
-  // ===== RAF flush =====
+  // ===== Cursor-driven RAF loop =====
+  // 每帧读一次 OS 鼠标逻辑坐标，窗位 = cursor - grabOffset。await 自带节流：
+  // 上一帧的 invoke 没回来就不排下一帧，天然不会叠加调用。
 
-  function flushDragPosition() {
-    dragRafId = null
-    if (pendingDragX === null || pendingDragY === null) return
-    const x = pendingDragX
-    const y = pendingDragY
-    pendingDragX = null
-    pendingDragY = null
-    getCurrentWindow().setPosition(new LogicalPosition(x, y)).catch(() => {})
+  function startDragLoop() {
+    dragActive = true
+    const loop = async () => {
+      if (!dragActive) return
+      const c = await cursorAbs()
+      if (c) {
+        lastCursorX = c.x
+        lastCursorY = c.y
+        if (!isDragging) {
+          if (Math.abs(c.x - downCursorX) > 5 || Math.abs(c.y - downCursorY) > 5) {
+            isDragging = true
+            if (dockEdge.value) onDragStart()
+          }
+        }
+        if (isDragging) {
+          getCurrentWindow()
+            .setPosition(new LogicalPosition(Math.round(c.x - grabOffsetX), Math.round(c.y - grabOffsetY)))
+            .catch(() => {})
+        }
+      }
+      if (dragActive) dragRafId = requestAnimationFrame(loop)
+    }
+    dragRafId = requestAnimationFrame(loop)
+  }
+
+  function stopDragLoop() {
+    dragActive = false
+    if (dragRafId !== null) {
+      cancelAnimationFrame(dragRafId)
+      dragRafId = null
+    }
   }
 
   // ===== Anchor computation =====
@@ -106,58 +133,43 @@ export function useAvatarDrag(options: UseAvatarDragOptions) {
     if (e.button !== 0) return
     isDragging = false
     mouseDownTime = Date.now()
-    mouseDownX = e.screenX
-    mouseDownY = e.screenY
+    // 抓取偏移 = 当前鼠标逻辑位 - 当前窗口逻辑位；二者都走已验证的 OS 坐标，不碰 screenX/Y
+    const c = await cursorAbs()
+    if (!c) return
     try {
       const win = getCurrentWindow()
       const pos = await win.outerPosition()
       const scale = await win.scaleFactor()
-      dragStartWinLogicalX = pos.x / scale
-      dragStartWinLogicalY = pos.y / scale
+      grabOffsetX = c.x - pos.x / scale
+      grabOffsetY = c.y - pos.y / scale
     } catch {
       return
     }
+    downCursorX = c.x
+    downCursorY = c.y
+    lastCursorX = c.x
+    lastCursorY = c.y
     window.addEventListener('mousemove', onWindowMouseMove)
     window.addEventListener('mouseup', onWindowMouseUp)
-    // 【临时诊断】按下时拉一次几何值，看 outerPosition.y/scale 与 monitor.size 的真实量级
-    diagGeom()
+    startDragLoop()
   }
 
+  // mousemove 只作安全网：浏览器侧发现左键已松开就收尾（防 mouseup 丢失）。
+  // 真正的位置跟踪在 startDragLoop 的 RAF 循环里读 OS 鼠标位完成。
   function onWindowMouseMove(e: MouseEvent) {
     if (!(e.buttons & 1)) {
-      onWindowMouseUp(e)
-      return
-    }
-    if (!isDragging) {
-      const dx = Math.abs(e.screenX - mouseDownX)
-      const dy = Math.abs(e.screenY - mouseDownY)
-      if (dx <= 5 && dy <= 5) return
-      isDragging = true
-      if (dockEdge.value) {
-        onDragStart()
-      }
-    }
-    const dxLogical = e.screenX - mouseDownX
-    const dyLogical = e.screenY - mouseDownY
-    pendingDragX = dragStartWinLogicalX + dxLogical
-    pendingDragY = dragStartWinLogicalY + dyLogical
-    if (dragRafId === null) {
-      dragRafId = requestAnimationFrame(flushDragPosition)
+      onWindowMouseUp()
     }
   }
 
-  function onWindowMouseUp(e: MouseEvent) {
+  function onWindowMouseUp() {
     window.removeEventListener('mousemove', onWindowMouseMove)
     window.removeEventListener('mouseup', onWindowMouseUp)
-    if (dragRafId !== null) {
-      cancelAnimationFrame(dragRafId)
-      dragRafId = null
-    }
-    flushDragPosition()
+    stopDragLoop()
 
     const duration = Date.now() - mouseDownTime
-    const dx = Math.abs(e.screenX - mouseDownX)
-    const dy = Math.abs(e.screenY - mouseDownY)
+    const dx = Math.abs(lastCursorX - downCursorX)
+    const dy = Math.abs(lastCursorY - downCursorY)
     if (!isDragging && duration < 300 && dx < 5 && dy < 5) {
       onClick()
     }

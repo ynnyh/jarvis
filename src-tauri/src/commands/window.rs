@@ -7,39 +7,33 @@ pub async fn drag_window(window: tauri::WebviewWindow) -> Result<(), String> {
     window.start_dragging().map_err(|e| e.to_string())
 }
 
-/// 【临时诊断】avatar 拖拽上半屏失效排查：返回窗口 + 各屏幕的原始几何值，
-/// 让前端打日志、真机读数定根因。排查完删除（连同 invoke_handler 注册）。
+/// 把 app.cursor_position()（物理像素，按「主屏」scale 量化）换成全局逻辑坐标。
 ///
-/// 返回 JSON：{ outer:{x,y,w,h}, scale, primary:{pos,size,scale}, current:{...} }
-/// 关键验证点：primary.size.height ÷ scale 是否等于真实逻辑屏高（tao size() 有 unit 混用嫌疑）；
-///            outerPosition.y ÷ scale 是否带 H_logical 偏移（tao outer_position Y 翻转混用）。
+/// 关键：tao 的 util::cursor_position() 末尾 .to_physical(primary_monitor().scale_factor())，
+/// 用的是「主屏」scale，**不是光标当前所在屏**的 scale。混合 DPI 多屏（retina 笔记本 scale=2
+/// + 外接 scale=1）下，光标在外接屏时这个物理值仍按主屏 scale 放大，量纲和窗口所在屏不一致。
+/// 必须用主屏 scale 把它还原成逻辑坐标，才能和窗口逻辑坐标（按窗口屏 scale 算）对齐。
+fn cursor_logical(app: &tauri::AppHandle) -> Result<(f64, f64), String> {
+    let cursor = app.cursor_position().map_err(|e| e.to_string())?;
+    let primary_scale = app
+        .primary_monitor()
+        .map_err(|e| e.to_string())?
+        .map(|m| m.scale_factor())
+        .unwrap_or(1.0);
+    Ok((cursor.x / primary_scale, cursor.y / primary_scale))
+}
+
+/// 返回鼠标的全局逻辑坐标（top-left 原点，CSS px），供 avatar 拖拽使用。
+///
+/// 为什么不在前端用 MouseEvent.screenX/screenY：那是 avatar 唯一吃浏览器屏幕坐标的
+/// 交互，WKWebView 在透明/无边框/非 key 窗口上 screenY 的原点与量纲跟 tao 的 top-left
+/// 逻辑屏不一致，增量被压缩，Mac 上表现为「上半屏够不到、只能停在中线以下」。
+///
+/// 走 cursor_logical（主屏 scale 还原），拖拽时 mousedown 记一次窗口逻辑位与鼠标逻辑位的
+/// 差（抓取偏移），move 时用 cursorLogical - grabOffset 反推窗位，全程不碰浏览器坐标。
 #[tauri::command]
-pub fn diag_window_geom(window: tauri::WebviewWindow) -> Result<serde_json::Value, String> {
-    use serde_json::json;
-    let outer_pos = window.outer_position().map_err(|e| e.to_string())?;
-    let outer_size = window.outer_size().map_err(|e| e.to_string())?;
-    let scale = window.scale_factor().map_err(|e| e.to_string())?;
-
-    fn monitor_json(m: Option<tauri::Monitor>) -> serde_json::Value {
-        match m {
-            Some(m) => json!({
-                "pos": { "x": m.position().x, "y": m.position().y },
-                "size": { "w": m.size().width, "h": m.size().height },
-                "scale": m.scale_factor(),
-            }),
-            None => serde_json::Value::Null,
-        }
-    }
-
-    Ok(json!({
-        "outer": {
-            "x": outer_pos.x, "y": outer_pos.y,
-            "w": outer_size.width, "h": outer_size.height,
-        },
-        "scale": scale,
-        "primary": monitor_json(window.primary_monitor().ok().flatten()),
-        "current": monitor_json(window.current_monitor().ok().flatten()),
-    }))
+pub fn cursor_abs_logical(app: tauri::AppHandle) -> Result<(f64, f64), String> {
+    cursor_logical(&app)
 }
 
 /// 返回鼠标相对窗口左上角的逻辑坐标（CSS px）。
@@ -53,20 +47,24 @@ pub fn diag_window_geom(window: tauri::WebviewWindow) -> Result<serde_json::Valu
 /// 历史教训：v0.5.4 曾以为 macOS 上 cursor_position() 返回 logical（与文档标的
 /// PhysicalPosition 不符），单独给 macOS 写了"把 win 转 logical 再减 logical 的 cursor"
 /// 分支。但 tao 0.35.2 源码（platform_impl/macos/util/mod.rs::cursor_position）末尾
-/// 调了 .to_physical(scale)，cursor 和 outer_position 实际都是 physical，两者量纲一致，
-/// 统一走 (cursor - win)/scale 即可。v0.5.4 的特殊分支反而导致 retina 屏整窗穿透。
-/// v0.10.3 起去掉 macOS 分支统一公式，macOS 真机走完引导页正常，确认该公式正确。
+/// 调了 .to_physical(scale)，cursor 和 outer_position 实际都是 physical。
+///
+/// v0.10.x 教训补充：cursor_position() 的 to_physical 用的是「主屏」scale，outer_position()
+/// 用「窗口屏」scale。早先 (cursor - win)/窗口scale 在单屏/同 DPI 多屏下恰好成立（两 scale 相
+/// 等），但混合 DPI 多屏（retina 笔记本 + 外接普通屏）下两者量纲不一致 → 命中测算到窗外 →
+/// 小人收不到任何事件（既点不了也拖不动）。正解：cursor 按主屏 scale、win 按窗口屏 scale
+/// 各自还原成逻辑坐标再相减。单屏退化为原公式，不影响已验证场景。
 #[tauri::command]
 pub fn cursor_pos_in_window(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
 ) -> Result<(f64, f64), String> {
-    let cursor = app.cursor_position().map_err(|e| e.to_string())?;
+    let (cursor_lx, cursor_ly) = cursor_logical(&app)?;
     let win_pos = window.outer_position().map_err(|e| e.to_string())?;
-    let scale = window.scale_factor().map_err(|e| e.to_string())?;
+    let win_scale = window.scale_factor().map_err(|e| e.to_string())?;
 
-    let x = (cursor.x - win_pos.x as f64) / scale;
-    let y = (cursor.y - win_pos.y as f64) / scale;
+    let x = cursor_lx - win_pos.x as f64 / win_scale;
+    let y = cursor_ly - win_pos.y as f64 / win_scale;
     Ok((x, y))
 }
 
