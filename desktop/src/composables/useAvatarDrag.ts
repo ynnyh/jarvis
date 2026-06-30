@@ -1,7 +1,20 @@
 import { type Ref } from 'vue'
 import { getCurrentWindow, LogicalPosition, currentMonitor } from '@tauri-apps/api/window'
+import { invoke } from '@tauri-apps/api/core'
 import type { AvatarAnchor, DockEdge } from './useAvatarDock'
 import { ANCHOR_AVATAR_CENTER } from './useAvatarDock'
+
+// 【临时诊断】avatar 拖拽上半屏失效排查。每次按下小人时拉一次窗口+屏幕原始几何，
+// 打日志供真机读数。排查完连同 diag_window_geom 命令一起删除。
+async function diagGeom() {
+  try {
+    const g = await invoke<Record<string, unknown>>('diag_window_geom')
+    // eslint-disable-next-line no-console
+    console.log('[avatar-drag][diag] window/monitor 几何', g)
+  } catch (e) {
+    console.error('[avatar-drag][diag] 失败:', e)
+  }
+}
 
 /** 获取当前窗口所在屏幕的逻辑像素全局边界（支持多屏幕） */
 async function getMonitorBounds(): Promise<{ x: number; y: number; w: number; h: number }> {
@@ -106,6 +119,8 @@ export function useAvatarDrag(options: UseAvatarDragOptions) {
     }
     window.addEventListener('mousemove', onWindowMouseMove)
     window.addEventListener('mouseup', onWindowMouseUp)
+    // 【临时诊断】按下时拉一次几何值，看 outerPosition.y/scale 与 monitor.size 的真实量级
+    diagGeom()
   }
 
   function onWindowMouseMove(e: MouseEvent) {

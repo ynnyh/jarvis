@@ -7,6 +7,41 @@ pub async fn drag_window(window: tauri::WebviewWindow) -> Result<(), String> {
     window.start_dragging().map_err(|e| e.to_string())
 }
 
+/// 【临时诊断】avatar 拖拽上半屏失效排查：返回窗口 + 各屏幕的原始几何值，
+/// 让前端打日志、真机读数定根因。排查完删除（连同 invoke_handler 注册）。
+///
+/// 返回 JSON：{ outer:{x,y,w,h}, scale, primary:{pos,size,scale}, current:{...} }
+/// 关键验证点：primary.size.height ÷ scale 是否等于真实逻辑屏高（tao size() 有 unit 混用嫌疑）；
+///            outerPosition.y ÷ scale 是否带 H_logical 偏移（tao outer_position Y 翻转混用）。
+#[tauri::command]
+pub fn diag_window_geom(window: tauri::WebviewWindow) -> Result<serde_json::Value, String> {
+    use serde_json::json;
+    let outer_pos = window.outer_position().map_err(|e| e.to_string())?;
+    let outer_size = window.outer_size().map_err(|e| e.to_string())?;
+    let scale = window.scale_factor().map_err(|e| e.to_string())?;
+
+    fn monitor_json(m: Option<tauri::Monitor>) -> serde_json::Value {
+        match m {
+            Some(m) => json!({
+                "pos": { "x": m.position().x, "y": m.position().y },
+                "size": { "w": m.size().width, "h": m.size().height },
+                "scale": m.scale_factor(),
+            }),
+            None => serde_json::Value::Null,
+        }
+    }
+
+    Ok(json!({
+        "outer": {
+            "x": outer_pos.x, "y": outer_pos.y,
+            "w": outer_size.width, "h": outer_size.height,
+        },
+        "scale": scale,
+        "primary": monitor_json(window.primary_monitor().ok().flatten()),
+        "current": monitor_json(window.current_monitor().ok().flatten()),
+    }))
+}
+
 /// 返回鼠标相对窗口左上角的逻辑坐标（CSS px）。
 ///
 /// 为什么不靠 WebView 的 mousemove + :hover：windowed 透明窗口启用 ignoreCursorEvents
