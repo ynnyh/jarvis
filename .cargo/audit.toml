@@ -1,0 +1,25 @@
+# cargo-audit 配置 —— 被 cargo audit 自动读取（CWD 下 .cargo/audit.toml）。
+# CI 从仓库根运行 `cargo audit --file src-tauri/Cargo.lock`，故此处命中。
+#
+# 忽略清单全部为 gtk3-rs 整批 unmaintained/unsound 告警 + proc-macro-error。
+# 背景：Tauri v2 在 Linux 上仍依赖 gtk3 栈（webkit2gtk），上游 gtk-rs 已迁 gtk4、
+# 不再维护 gtk3 绑定，本桌面应用无可迁移路径。这批告警仅 Linux 构建链涉及，
+# 不进入 Windows/macOS 产物，且均为「unmaintained/unsound」信息类，非可利用漏洞。
+# 每条编号均已逐个核对 RustSec advisory-db。待 Tauri 升级到 gtk4 栈后整体移除。
+
+[advisories]
+ignore = [
+    "RUSTSEC-2024-0370", # proc-macro-error —— unmaintained，被 gtk3-macros 间接依赖
+    "RUSTSEC-2024-0411", # gdkwayland-sys —— gtk3-rs unmaintained
+    "RUSTSEC-2024-0412", # gdk          —— gtk3-rs unmaintained
+    "RUSTSEC-2024-0413", # atk          —— gtk3-rs unmaintained
+    "RUSTSEC-2024-0414", # gdkx11-sys   —— gtk3-rs unmaintained
+    "RUSTSEC-2024-0415", # gtk          —— gtk3-rs unmaintained
+    "RUSTSEC-2024-0416", # atk-sys      —— gtk3-rs unmaintained
+    "RUSTSEC-2024-0417", # gdkx11       —— gtk3-rs unmaintained
+    "RUSTSEC-2024-0418", # gdk-sys      —— gtk3-rs unmaintained
+    "RUSTSEC-2024-0419", # gtk3-macros  —— gtk3-rs unmaintained
+    "RUSTSEC-2024-0420", # gtk-sys      —— gtk3-rs unmaintained
+    "RUSTSEC-2024-0429", # glib         —— unsound（gtk3 栈）
+    "RUSTSEC-2025-0098", # unic-ucd-version —— unmaintained，经 unic-ucd-ident 间接引入，上游无维护、无补丁
+]

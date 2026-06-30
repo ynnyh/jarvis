@@ -2,6 +2,14 @@
 
 use tauri::Manager;
 
+/// `cursor_pos_in_window` 的返回元组：(css_x, css_y, cursor_x, cursor_y, win_x, win_y, scale)。
+///
+/// 刻意用 `type` 别名而非 struct：该值跨 Tauri command 边界序列化给前端，目前以
+/// JSON 数组（按位）传递，前端按下标读取。换成 struct 会变成对象、字段名上线，
+/// 前端解析逻辑全部得改，线格式也不再兼容。别名只为消 `clippy::type_complexity`，
+/// 不改变任何运行时/序列化行为。
+type CursorPosResult = (f64, f64, f64, f64, i32, i32, f64);
+
 #[tauri::command]
 pub async fn drag_window(window: tauri::WebviewWindow) -> Result<(), String> {
     window.start_dragging().map_err(|e| e.to_string())
@@ -21,7 +29,7 @@ pub async fn drag_window(window: tauri::WebviewWindow) -> Result<(), String> {
 pub fn cursor_pos_in_window(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
-) -> Result<(f64, f64, f64, f64, i32, i32, f64), String> {
+) -> Result<CursorPosResult, String> {
     let cursor = app.cursor_position().map_err(|e| e.to_string())?;
     let win_pos = window.outer_position().map_err(|e| e.to_string())?;
     let scale = window.scale_factor().map_err(|e| e.to_string())?;
