@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useConfigStore } from '../../stores/config'
 import FineReportResults from './FineReportResults.vue'
@@ -148,14 +148,38 @@ function dateRange(key: RangeKey): { begin: string; end: string } {
   return { begin: fmtDate(begin), end: fmtDate(end) }
 }
 
+// 记录相对档「上次按哪天算的」。settings 窗口复用 webview（隐藏而非销毁），
+// 重开时组件不重新挂载，相对档日期会卡在首次打开那天。用这个 + settings-page-changed
+// 监听，仅在「相对档」且「确实跨天」时重算，当日内重开与自定义区间都保持不动。
+let presetComputedDay = ''
+
 function applyPreset(key: RangeKey) {
   const { begin, end } = dateRange(key)
   beginDate.value = begin
   endDate.value = end
   activePreset.value = key
+  presetComputedDay = fmtDate(new Date())
 }
 
 applyPreset('today')
+
+/** 窗口重开时调用：仅当选中的是相对档且日期已跨天，按当前日期重算。 */
+function refreshPresetIfDayChanged() {
+  // 自定义区间（activePreset 为 null）是用户手选的，绝不覆盖
+  if (!activePreset.value) return
+  // 当日内多次重开保持上次选择，只有真跨天才刷新
+  if (presetComputedDay === fmtDate(new Date())) return
+  applyPreset(activePreset.value)
+}
+
+onMounted(() => {
+  // settings_open 每次重开都会 dispatch 此事件（即便复用已显示的窗口）
+  window.addEventListener('settings-page-changed', refreshPresetIfDayChanged)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('settings-page-changed', refreshPresetIfDayChanged)
+})
 
 const hasRealName = computed(() => !!store.config.fineReport.realName.trim())
 
