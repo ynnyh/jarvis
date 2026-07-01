@@ -23,19 +23,6 @@ fn cursor_logical(app: &tauri::AppHandle) -> Result<(f64, f64), String> {
     Ok((cursor.x / primary_scale, cursor.y / primary_scale))
 }
 
-/// 返回鼠标的全局逻辑坐标（top-left 原点，CSS px），供 avatar 拖拽使用。
-///
-/// 为什么不在前端用 MouseEvent.screenX/screenY：那是 avatar 唯一吃浏览器屏幕坐标的
-/// 交互，WKWebView 在透明/无边框/非 key 窗口上 screenY 的原点与量纲跟 tao 的 top-left
-/// 逻辑屏不一致，增量被压缩，Mac 上表现为「上半屏够不到、只能停在中线以下」。
-///
-/// 走 cursor_logical（主屏 scale 还原），拖拽时 mousedown 记一次窗口逻辑位与鼠标逻辑位的
-/// 差（抓取偏移），move 时用 cursorLogical - grabOffset 反推窗位，全程不碰浏览器坐标。
-#[tauri::command]
-pub fn cursor_abs_logical(app: tauri::AppHandle) -> Result<(f64, f64), String> {
-    cursor_logical(&app)
-}
-
 /// 返回鼠标相对窗口左上角的逻辑坐标（CSS px）。
 ///
 /// 为什么不靠 WebView 的 mousemove + :hover：windowed 透明窗口启用 ignoreCursorEvents

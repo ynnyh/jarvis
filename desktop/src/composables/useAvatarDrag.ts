@@ -1,19 +1,8 @@
 import { type Ref } from 'vue'
 import { getCurrentWindow, LogicalPosition, currentMonitor } from '@tauri-apps/api/window'
-import { invoke } from '@tauri-apps/api/core'
+import type { UnlistenFn } from '@tauri-apps/api/event'
 import type { AvatarAnchor, DockEdge } from './useAvatarDock'
 import { ANCHOR_AVATAR_CENTER } from './useAvatarDock'
-
-/** 读 OS 全局逻辑鼠标坐标（top-left 原点，CSS px）。avatar 全部坐标交互的唯一真值源，
- *  retina 真机已验证。拖拽不再用 MouseEvent.screenX/screenY（WKWebView 上量纲不一致）。 */
-async function cursorAbs(): Promise<{ x: number; y: number } | null> {
-  try {
-    const [x, y] = await invoke<[number, number]>('cursor_abs_logical')
-    return { x, y }
-  } catch {
-    return null
-  }
-}
 
 /** 获取当前窗口所在屏幕的逻辑像素全局边界（支持多屏幕） */
 async function getMonitorBounds(): Promise<{ x: number; y: number; w: number; h: number }> {
@@ -38,63 +27,28 @@ export interface UseAvatarDragOptions {
   onClick: () => void
 }
 
+// 拖拽结束判定：原生拖拽期间 onMoved 持续触发，停手后这段时间没有新移动即视为松手。
+const DRAG_END_DEBOUNCE_MS = 200
+// 单击判定阈值
+const CLICK_MAX_MS = 300
+const MOVE_THRESHOLD_PX = 5
+
 export function useAvatarDrag(options: UseAvatarDragOptions) {
   const { avatarAnchor, dockEdge, onDragStart, onDragEnd, onClick } = options
 
   // ===== Drag state =====
   let mouseDownTime = 0
-  // mousedown 时的鼠标全局逻辑坐标，用于「是否真拖动」阈值与单击判定
-  let downCursorX = 0
-  let downCursorY = 0
-  // 抓取偏移：mousedown 时鼠标逻辑位 - 窗口逻辑位，拖拽全程保持不变
-  let grabOffsetX = 0
-  let grabOffsetY = 0
-  // 最近一次读到的鼠标逻辑坐标（RAF 循环更新），mouseup 时算位移用
-  let lastCursorX = 0
-  let lastCursorY = 0
-  let isDragging = false
-  let dragActive = false
-  let dragRafId: number | null = null
+  // mousedown 时的鼠标屏幕坐标，仅用于「是否越过阈值 = 真拖动」判定（差值，不做坐标换算）
+  let downScreenX = 0
+  let downScreenY = 0
+  let started = false        // 原生拖拽是否已启动
+  let sessionActive = false  // 一次 mousedown→mouseup 生命周期是否进行中
 
-  // ===== Cursor-driven RAF loop =====
-  // 每帧读一次 OS 鼠标逻辑坐标，窗位 = cursor - grabOffset。await 自带节流：
-  // 上一帧的 invoke 没回来就不排下一帧，天然不会叠加调用。
-
-  function startDragLoop() {
-    dragActive = true
-    const loop = async () => {
-      if (!dragActive) return
-      const c = await cursorAbs()
-      if (c) {
-        lastCursorX = c.x
-        lastCursorY = c.y
-        if (!isDragging) {
-          if (Math.abs(c.x - downCursorX) > 5 || Math.abs(c.y - downCursorY) > 5) {
-            isDragging = true
-            if (dockEdge.value) onDragStart()
-          }
-        }
-        if (isDragging) {
-          getCurrentWindow()
-            .setPosition(new LogicalPosition(Math.round(c.x - grabOffsetX), Math.round(c.y - grabOffsetY)))
-            .catch(() => {})
-        }
-      }
-      if (dragActive) dragRafId = requestAnimationFrame(loop)
-    }
-    dragRafId = requestAnimationFrame(loop)
-  }
-
-  function stopDragLoop() {
-    dragActive = false
-    if (dragRafId !== null) {
-      cancelAnimationFrame(dragRafId)
-      dragRafId = null
-    }
-  }
+  let moveUnlisten: UnlistenFn | null = null
+  let dragEndTimer: number | null = null
 
   // ===== Anchor computation =====
-
+  // 拖拽结束后按 avatar 落点重算贴哪个角，必要时平移窗口让 avatar 中心不动、只换锚点。
   async function recomputeAnchor() {
     const win = getCurrentWindow()
     let winLogicalX: number
@@ -127,56 +81,118 @@ export function useAvatarDrag(options: UseAvatarDragOptions) {
     avatarAnchor.value = newAnchor
   }
 
-  // ===== Mouse handlers =====
+  // ===== Drag lifecycle =====
 
-  async function onMouseDown(e: MouseEvent) {
-    if (e.button !== 0) return
-    isDragging = false
-    mouseDownTime = Date.now()
-    // 抓取偏移 = 当前鼠标逻辑位 - 当前窗口逻辑位；二者都走已验证的 OS 坐标，不碰 screenX/Y
-    const c = await cursorAbs()
-    if (!c) return
+  function clearDragEndTimer() {
+    if (dragEndTimer !== null) {
+      clearTimeout(dragEndTimer)
+      dragEndTimer = null
+    }
+  }
+
+  function scheduleDragEnd() {
+    clearDragEndTimer()
+    dragEndTimer = window.setTimeout(finishDrag, DRAG_END_DEBOUNCE_MS)
+  }
+
+  /** 收尾：拆 onMoved 监听、重算锚点、触发 auto-dock。幂等。 */
+  async function finishDrag() {
+    if (!sessionActive) return
+    sessionActive = false
+    clearDragEndTimer()
+    if (moveUnlisten) {
+      moveUnlisten()
+      moveUnlisten = null
+    }
+    if (started) {
+      started = false
+      await recomputeAnchor()
+      onDragEnd()
+    }
+  }
+
+  /** 越过阈值：交给 OS 原生拖拽接管（丝滑、全屏、不经任何坐标换算）。 */
+  async function beginNativeDrag() {
+    if (started) return
+    started = true
+    // 原生拖拽接管手势后，OS 会吞掉 mouseup（尤其 macOS），浏览器侧这两个监听
+    // 既收不到事件、又不会被 onWindowMouseUp 摘除 → 先在这里主动拆，杜绝重复叠加。
+    detachMouseListeners()
+    if (dockEdge.value) onDragStart()  // 从收纳态挣脱
+    const win = getCurrentWindow()
+    // onMoved 在原生拖拽期间持续触发；每次刷新防抖计时，停手后 DEBOUNCE 内无移动即收尾
     try {
-      const win = getCurrentWindow()
-      const pos = await win.outerPosition()
-      const scale = await win.scaleFactor()
-      grabOffsetX = c.x - pos.x / scale
-      grabOffsetY = c.y - pos.y / scale
+      moveUnlisten = await win.onMoved(() => {
+        if (sessionActive) scheduleDragEnd()
+      })
     } catch {
+      moveUnlisten = null
+    }
+    try {
+      await win.startDragging()
+    } catch {
+      // 启动失败：直接收尾，避免卡死在 sessionActive
+      await finishDrag()
       return
     }
-    downCursorX = c.x
-    downCursorY = c.y
-    lastCursorX = c.x
-    lastCursorY = c.y
-    window.addEventListener('mousemove', onWindowMouseMove)
-    window.addEventListener('mouseup', onWindowMouseUp)
-    startDragLoop()
+    // startDragging 的 Promise 通常在拖拽结束后 resolve；作为 onMoved 之外的兜底收尾。
+    scheduleDragEnd()
   }
 
-  // mousemove 只作安全网：浏览器侧发现左键已松开就收尾（防 mouseup 丢失）。
-  // 真正的位置跟踪在 startDragLoop 的 RAF 循环里读 OS 鼠标位完成。
-  function onWindowMouseMove(e: MouseEvent) {
-    if (!(e.buttons & 1)) {
-      onWindowMouseUp()
-    }
-  }
+  // ===== Mouse handlers =====
 
-  function onWindowMouseUp() {
+  function detachMouseListeners() {
     window.removeEventListener('mousemove', onWindowMouseMove)
     window.removeEventListener('mouseup', onWindowMouseUp)
-    stopDragLoop()
+  }
+
+  function onMouseDown(e: MouseEvent) {
+    if (e.button !== 0) return
+    mouseDownTime = Date.now()
+    downScreenX = e.screenX
+    downScreenY = e.screenY
+    started = false
+    sessionActive = true
+    detachMouseListeners()  // 防御：上一手势若异常残留，先摘再挂，避免重复
+    window.addEventListener('mousemove', onWindowMouseMove)
+    window.addEventListener('mouseup', onWindowMouseUp)
+  }
+
+  // 只用位移差判断「是否越过阈值」——差值消掉了原点，不碰 macOS 上 screenY 的量纲问题。
+  // 越阈值即把控制权交给原生拖拽，之后浏览器 mousemove 停发也无所谓。
+  function onWindowMouseMove(e: MouseEvent) {
+    if (!sessionActive) return
+    if (!(e.buttons & 1)) {
+      onWindowMouseUp(e)
+      return
+    }
+    if (started) return
+    if (
+      Math.abs(e.screenX - downScreenX) > MOVE_THRESHOLD_PX ||
+      Math.abs(e.screenY - downScreenY) > MOVE_THRESHOLD_PX
+    ) {
+      void beginNativeDrag()
+    }
+  }
+
+  function onWindowMouseUp(e: MouseEvent) {
+    detachMouseListeners()
 
     const duration = Date.now() - mouseDownTime
-    const dx = Math.abs(lastCursorX - downCursorX)
-    const dy = Math.abs(lastCursorY - downCursorY)
-    if (!isDragging && duration < 300 && dx < 5 && dy < 5) {
+    const dx = Math.abs(e.screenX - downScreenX)
+    const dy = Math.abs(e.screenY - downScreenY)
+    // 没启动原生拖拽 + 短按 + 几乎没动 = 单击
+    if (!started && duration < CLICK_MAX_MS && dx < MOVE_THRESHOLD_PX && dy < MOVE_THRESHOLD_PX) {
+      sessionActive = false
       onClick()
+      return
     }
-    const wasDragging = isDragging
-    isDragging = false
-    if (wasDragging) {
-      recomputeAnchor().then(() => onDragEnd())
+    // 拖过：交给 onMoved 防抖 / startDragging resolve 去收尾；这里补一次兜底。
+    if (started) {
+      scheduleDragEnd()
+    } else {
+      // 越过阈值但原生拖拽还没起来（极短窗口），直接收尾
+      sessionActive = false
     }
   }
 
