@@ -36,7 +36,9 @@ export default defineConfig({
     __CHANGELOG_MD__: JSON.stringify(CHANGELOG_MD),
   },
   server: {
-    port: 5174,
+    // 高位端口,避开 vite 默认段(517x),防止与本机其他项目 dev server 撞车
+    // (曾被 Jarvis-EDU/spark-web 占用 5174 wildcard,WebView 加载成别人的页面)
+    port: 15174,
     strictPort: true,
   },
   clearScreen: false,

@@ -69,7 +69,7 @@
 npm ci
 npm run check:text         # 主代码路径编码审计（CI 同步执行）
 npm run check:text:full    # 仓库深扫（排除资产 / 抓包样本）
-npm run desktop:dev        # 启动开发模式（端口 5174）
+npm run desktop:dev        # 启动开发模式（端口 15174）
 ```
 
 后端测试 / lint：

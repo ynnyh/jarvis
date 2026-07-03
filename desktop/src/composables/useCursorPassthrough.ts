@@ -17,6 +17,22 @@ import { invoke } from '@tauri-apps/api/core'
 const POLL_INTERVAL = 120
 const SELECTOR = '.pointer-target'
 
+// ===== 模块级拖拽锁 =====
+// 拖拽期间由 useAvatarDrag 置 true：窗口高速移动时，鼠标与窗口位置两次读取存在
+// 时间差，换算出的窗口内坐标误差可达几十像素 → 轮询误判「鼠标不在 UI 上」→
+// 中途给窗口切穿透：原生移动循环突然收不到鼠标（窗口卡住→下个 tick 判定翻回→
+// 瞬移追赶），ignoreCursorEvents 反复翻转还引发窗口反复重合成闪烁，手动路径下
+// 更会吃掉浏览器 mouseup。拖拽时鼠标必然按在小人上，无需判定，直接锁定窗口接收事件。
+let dragHold = false
+// 当前窗口实例的 setIgnore：composable 初始化时注册，供模块级 API 立即下发
+let activeSetIgnore: ((value: boolean) => Promise<void>) | null = null
+
+export function setPassthroughDragHold(hold: boolean) {
+  dragHold = hold
+  // 上锁时立即锁定接收事件，不等下一 tick；解锁后由下一 tick 恢复正常判定
+  if (hold) void activeSetIgnore?.(false)
+}
+
 export function useCursorPassthrough() {
   const win = getCurrentWindow()
   // 起始 null：本地 tracker 不知道 OS 真实状态，首次 setIgnore 必下发
@@ -25,6 +41,8 @@ export function useCursorPassthrough() {
   let polling = false
 
   async function setIgnore(value: boolean) {
+    // 拖拽锁定期禁止切穿透：防止上锁前已在途的 tick 完成后覆盖锁定
+    if (dragHold && value) return
     if (value === isIgnoring) return
     try {
       await win.setIgnoreCursorEvents(value)
@@ -35,6 +53,8 @@ export function useCursorPassthrough() {
   }
 
   async function tick() {
+    // 拖拽中：跳过判定，保持窗口锁定接收事件（见 setPassthroughDragHold）
+    if (dragHold) return
     if (polling) return
     polling = true
     try {
@@ -74,6 +94,8 @@ export function useCursorPassthrough() {
   let visCleanup: (() => void) | null = null
 
   onMounted(() => {
+    // 把本窗口实例的 setIgnore 注册到模块级，供 setPassthroughDragHold 立即锁定
+    activeSetIgnore = setIgnore
     setIgnore(false)
     if (!document.hidden) startPolling()
 
@@ -86,6 +108,7 @@ export function useCursorPassthrough() {
   })
 
   onUnmounted(() => {
+    activeSetIgnore = null
     stopPolling()
     visCleanup?.()
     setIgnore(false)

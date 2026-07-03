@@ -302,8 +302,8 @@ function prev() {
   display: flex;
   align-items: center;
   justify-content: center;
+  /* 透明窗上 backdrop-filter 只会产生 artifact，不做 blur；0.85 深色底已足够压住桌面内容 */
   background: rgba(8, 14, 28, 0.85);
-  backdrop-filter: blur(6px);
   z-index: 200;
   padding: 20px;
 }

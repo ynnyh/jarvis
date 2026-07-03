@@ -13,6 +13,7 @@ pub async fn drag_window(window: tauri::WebviewWindow) -> Result<(), String> {
 /// 用的是「主屏」scale，**不是光标当前所在屏**的 scale。混合 DPI 多屏（retina 笔记本 scale=2
 /// + 外接 scale=1）下，光标在外接屏时这个物理值仍按主屏 scale 放大，量纲和窗口所在屏不一致。
 /// 必须用主屏 scale 把它还原成逻辑坐标，才能和窗口逻辑坐标（按窗口屏 scale 算）对齐。
+#[cfg(target_os = "macos")]
 fn cursor_logical(app: &tauri::AppHandle) -> Result<(f64, f64), String> {
     let cursor = app.cursor_position().map_err(|e| e.to_string())?;
     let primary_scale = app
@@ -41,18 +42,41 @@ fn cursor_logical(app: &tauri::AppHandle) -> Result<(f64, f64), String> {
 /// 等），但混合 DPI 多屏（retina 笔记本 + 外接普通屏）下两者量纲不一致 → 命中测算到窗外 →
 /// 小人收不到任何事件（既点不了也拖不动）。正解：cursor 按主屏 scale、win 按窗口屏 scale
 /// 各自还原成逻辑坐标再相减。单屏退化为原公式，不影响已验证场景。
+///
+/// v0.10.6 教训：上面这套「cursor 按主屏 scale 还原」公式仅对 macOS 成立——只有 tao 的
+/// macOS util::cursor_position() 末尾做了 .to_physical(主屏 scale)。Windows 的
+/// cursor_position() 是 GetCursorPos 纯物理像素，与 outer_position() 同处一个全局物理
+/// 坐标系，从未按主屏 scale 量化。在 Windows 上除以主屏 scale 属于凭空引入的错误：主屏上
+/// 因「主屏 scale == 窗口屏 scale」两处错误恰好抵消而正常，副屏缩放不同时换算错位 →
+/// elementFromPoint 永远打不中 → 小人永久穿透。故此处按平台分叉。
 #[tauri::command]
 pub fn cursor_pos_in_window(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
 ) -> Result<(f64, f64), String> {
-    let (cursor_lx, cursor_ly) = cursor_logical(&app)?;
     let win_pos = window.outer_position().map_err(|e| e.to_string())?;
     let win_scale = window.scale_factor().map_err(|e| e.to_string())?;
 
-    let x = cursor_lx - win_pos.x as f64 / win_scale;
-    let y = cursor_ly - win_pos.y as f64 / win_scale;
-    Ok((x, y))
+    // macOS: tao cursor_position() 按「主屏」scale 量化过 → 先还原全局逻辑再相减（v0.10.4 真机验证）
+    #[cfg(target_os = "macos")]
+    {
+        let (cursor_lx, cursor_ly) = cursor_logical(&app)?;
+        Ok((
+            cursor_lx - win_pos.x as f64 / win_scale,
+            cursor_ly - win_pos.y as f64 / win_scale,
+        ))
+    }
+    // Windows/Linux: GetCursorPos 与 outer_position 同一全局物理坐标系，
+    // 差值直接除以窗口屏 scale 即窗口内逻辑坐标；鼠标与窗口同屏时恒正确，
+    // 鼠标在别的屏时结果只用于「在窗外」判定，精度无关紧要。
+    #[cfg(not(target_os = "macos"))]
+    {
+        let cursor = app.cursor_position().map_err(|e| e.to_string())?;
+        Ok((
+            (cursor.x - win_pos.x as f64) / win_scale,
+            (cursor.y - win_pos.y as f64) / win_scale,
+        ))
+    }
 }
 
 // ===== 应用控制 =====

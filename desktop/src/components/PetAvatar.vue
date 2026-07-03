@@ -101,7 +101,7 @@ watch(() => props.petId, () => {
   <div class="pet-avatar" :class="{ active, flashing }">
     <div
       class="pet-glow"
-      :style="{ background: glowColor, boxShadow: `0 0 18px ${color}55, 0 0 36px ${color}33` }"
+      :style="{ background: glowColor, boxShadow: `0 0 10px ${color}40` }"
     />
     <div v-if="isLottie" ref="containerEl" class="pet-lottie" :style="lottieStyle" />
     <img
@@ -132,11 +132,9 @@ watch(() => props.petId, () => {
   inset: -2px;
   border-radius: 50%;
   z-index: 0;
-  animation: pet-glow-pulse 2.4s ease-in-out infinite;
-}
-@keyframes pet-glow-pulse {
-  0%, 100% { opacity: 0.4; }
-  50% { opacity: 0.85; }
+  /* 常态不脉动——大范围脉动光在透明窗上被边缘裁切，拖动时就是闪烁源；
+     状态色靠 pet-dot 与柔光圈本身表达。 */
+  opacity: 0.5;
 }
 
 .pet-lottie {
@@ -220,7 +218,7 @@ watch(() => props.petId, () => {
 
 /* 状态切换瞬间脉冲一次，给视觉信号 */
 .pet-avatar.flashing .pet-glow {
-  animation: pet-glow-pulse 2.4s ease-in-out infinite, pet-flash 0.4s ease-out 0s 2;
+  animation: pet-flash 0.4s ease-out 0s 2;
 }
 @keyframes pet-flash {
   0%   { transform: scale(1);    opacity: 1; }

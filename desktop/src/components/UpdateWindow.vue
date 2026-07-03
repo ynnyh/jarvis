@@ -159,9 +159,8 @@ function handleClose() {
   inset: var(--panel-top, 8px) var(--panel-right, 8px) var(--panel-bottom, 90px) var(--panel-left, 8px);
   display: flex;
   flex-direction: column;
+  /* 透明窗上 backdrop-filter 只会产生 artifact（白晕/竖边），底色直接给实色（--popup-bg 各主题均不透明） */
   background: var(--popup-bg);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
   border: var(--panel-border);
   border-radius: 14px;
   box-shadow: var(--panel-shadow);

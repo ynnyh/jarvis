@@ -1,13 +1,13 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Jarvis",
-  "version": "0.10.5",
+  "version": "0.10.6",
   "identifier": "com.jarvis.desktop",
   "build": {
     "frontendDist": "../dist/ui",
     "beforeBuildCommand": "npx vite build --config vite.config.ts",
     "beforeDevCommand": "npx vite --config vite.config.ts",
-    "devUrl": "http://localhost:5174"
+    "devUrl": "http://localhost:15174"
   },
   "app": {
     "macOSPrivateApi": true,

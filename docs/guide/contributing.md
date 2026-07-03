@@ -8,7 +8,7 @@
 
 ```bash
 npm ci
-npm run desktop:dev        # 开发模式，端口 5174
+npm run desktop:dev        # 开发模式，端口 15174
 ```
 
 ## 代码规范

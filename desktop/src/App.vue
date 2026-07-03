@@ -155,6 +155,10 @@ const {
   --panel-right: 8px;
   --panel-bottom: 90px;
   --panel-left: 8px;
+  /* 透明窗浮层直接悬在桌面上，主题里的彩色泛光段（如 cyber 的青色 glow）会形成脏晕，
+     这里覆写为纯黑投影（保留 cyber 原值的黑色段）；实底窗口不受影响。 */
+  --panel-shadow: 0 8px 28px rgba(0, 0, 0, 0.7);
+  --menu-shadow: 0 6px 24px rgba(0, 0, 0, 0.6);
 }
 .jarvis-container[data-anchor="rt"] {
   --avatar-top: 10px;
@@ -233,9 +237,8 @@ const {
   min-width: 160px;
   max-width: 320px;
   padding: 8px 28px 8px 12px;     /* 右侧留出关闭按钮空间 */
+  /* 透明窗上 backdrop-filter 只会产生 artifact（比元素大一圈的白晕/竖边），底色直接给实色（--popup-bg 各主题均不透明） */
   background: var(--popup-bg);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
   border: var(--panel-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--panel-shadow);
@@ -363,7 +366,8 @@ const {
 }
 .menu {
   position: fixed; bottom: 16px; right: 90px;
-  background: var(--popup-bg); backdrop-filter: none;
+  /* 全局 .menu 工具类自带 backdrop-filter: blur(20px)，透明窗上只会产生 artifact，这里显式关掉 */
+  background: var(--popup-bg); backdrop-filter: none; -webkit-backdrop-filter: none;
   border-radius: var(--radius-md); border: var(--menu-border);
   box-shadow: var(--menu-shadow);
   padding: 4px 0; z-index: 100; min-width: 130px;
