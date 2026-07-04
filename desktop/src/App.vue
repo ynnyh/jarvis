@@ -106,6 +106,7 @@ const {
 
       <div class="avatar pointer-target" :class="{ docked: dockEdge && !isPoked }"
         @mousedown="onMouseDown"
+        @dragstart.prevent
       >
         <PetAvatar
           :pet-id="configStore.config.petId"
@@ -149,10 +150,8 @@ const {
      anchor（data-anchor）不再移动小人/窗口，只翻转面板、气泡、菜单的
      「开向」——始终朝小人对侧（= 屏幕中心方向）展开，避免出屏。
 
-     定位基准一律用百分比（50% = 窗口中心）：拖拽期窗口会被原子缩成
-     100×100（useAvatarDrag 的 DRAG_WIN，规避 Windows 移动循环的顶边限制），
-     百分比让小人在任何窗口尺寸下自动居中，浏览器在窗口 resize 的同一帧
-     布局拍完，无跨管线间隙 → 缩/扩窗小人视觉零跳动。
+     定位基准一律用百分比（50% = 窗口中心）：百分比让小人在任何窗口
+     尺寸下自动居中，窗口 resize 时浏览器在同一帧布局完成，无跨管线间隙。
 
      推导（900 态下的等价像素）：
      - 小人盒：中心 50% ± 半径 36 → calc(50% - 36px)，900 下 = 414..486；

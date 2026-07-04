@@ -111,6 +111,7 @@ watch(() => props.petId, () => {
       :class="imageAnimationClass"
       :style="mediaStyle"
       :src="mediaSrc"
+      draggable="false"
       alt=""
     />
     <div class="pet-dot" :style="{ background: color }" />

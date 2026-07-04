@@ -2,6 +2,11 @@
 
 记录每个版本的新增、优化和修复。版本号遵循语义化版本（major.minor.patch）。
 
+## v0.10.8
+
+### 修复
+- **拖拽时出现方框 ghost image**：拖拽小人时，浏览器 HTML5 原生拖拽在 `startDragging` 接管前会触发 `dragstart`，导致屏幕上出现半透明选框/预览方块。在图片/GIF 宠物 `<img>` 加 `draggable="false"`，同时在 avatar 容器层加 `@dragstart.prevent` 双重拦截，彻底消除 ghost image。
+
 ## v0.10.7
 
 ### 新增
