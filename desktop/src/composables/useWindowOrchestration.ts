@@ -63,10 +63,11 @@ export function useWindowOrchestration() {
   const alertEmoji = ref('')
   const alertActions = ref<Array<{ label: string; action: () => void | Promise<void> }>>([])
 
-  // 小人在窗口的锚定角，根据拖拽后小人在屏幕上的位置自动选。
+  // 面板/气泡的开向锚点，根据拖拽后小人在屏幕上的位置自动选。
   // rb=右下(默认) / rt=右上 / lb=左下 / lt=左上。
-  // 由 data-anchor 驱动 CSS：面板 inset 翻转、avatar-group 角位翻转，
-  // 始终让面板向"小人朝向屏幕中心的那一侧"展开，避免面板飞出屏幕。
+  // 二期重构后小人恒居 900×900 窗口正中心，anchor 不再移动小人/窗口，只由
+  // data-anchor 驱动 CSS：面板 inset、气泡堆叠方向、菜单开向整体翻转，
+  // 始终朝"小人指向屏幕中心的那一侧"展开，避免面板飞出屏幕。
   const avatarAnchor = ref<AvatarAnchor>('rb')
 
   // ===== Menu helpers (forward-declared for composable consumers) =====

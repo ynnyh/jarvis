@@ -119,8 +119,11 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 // 用 Logical 尺寸：CSS 拿到的就是这个数，跟 Windows 缩放无关。
                 // 历史教训：之前用 Physical(300,400)，在 150% 缩放显示器（2K 笔记本默认）
                 // 上 CSS 只剩 200×267，所有 panel 全挤爆 / 标题换行。
-                let logical_w: f64 = 400.0;
-                let logical_h: f64 = 560.0;
+                // 二期重构(2026-07)：900×900 大窗、小人恒居中(窗口中心 +450,+450)，
+                // 换锚零窗口平移。必须与 tauri.conf.json 的 avatar 尺寸和前端
+                // useAvatarDock 的 WINDOW_LOGICAL_W/H 三处一致。
+                let logical_w: f64 = 900.0;
+                let logical_h: f64 = 900.0;
                 let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize {
                     width: logical_w,
                     height: logical_h,
@@ -158,12 +161,11 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                     let m_w = monitor.size().width as f64 / scale;
                     let m_h = monitor.size().height as f64 / scale;
 
-                    let margin: f64 = 20.0;
-                    // 底部留 80：涵盖 Windows 任务栏 (~40) 和 macOS Dock (~80)，宁多勿少
-                    let bottom_pad: f64 = 80.0;
-
-                    let x = m_x + m_w - logical_w - margin;
-                    let y = m_y + m_h - logical_h - bottom_pad;
+                    // 小人恒居窗口中心(窗位 + 450)。让「小人」落在屏幕右下——
+                    // 距右缘 66 / 距底 126(旧版 margin+avatar 半径+任务栏 pad 的合成位,
+                    // 视觉与历史版本一致)。窗口本体大半出屏没关系,透明的。
+                    let x = m_x + m_w - 66.0 - logical_w / 2.0;
+                    let y = m_y + m_h - 126.0 - logical_h / 2.0;
 
                     let _ = window
                         .set_position(tauri::Position::Logical(tauri::LogicalPosition { x, y }));
@@ -178,6 +180,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 // 优化，若 OS 实际是 true，前端永远叫不动它，整个窗口被穿透，用户看到的就是
                 // 无法拖动、无法点击、左右键都不行。在这里钉死避免该不变量被破坏。
                 let _ = window.set_ignore_cursor_events(false);
+
             }
 
             // 对非 avatar 子窗口挂 CloseRequested：prevent_close + hide + show avatar，

@@ -79,6 +79,19 @@ pub fn cursor_pos_in_window(
     }
 }
 
+// ===== Windows 专用：解除原生移动循环对 avatar 窗口顶边的钳制 =====
+//
+// Windows 原生移动循环（startDragging）会把窗口顶边钳在屏幕上沿，小人（居
+// 900 窗中心，头顶 450px 窗体）最高只能拖到屏幕中线。此为 Windows 窗口系统
+// 硬性限制。
+//
+// 2026-07 多轮尝试绕过的记录（防后人重复试错）：
+// ① WM_MOVING 子类钩子改写系统建议位置 → 系统在改写之上再钳制，无效。
+// ② WM_WINDOWPOSCHANGING 子类钩子改写实际落地位置 → 干扰跨屏 DPI 变更。
+// ③ 前端 onMoved 里 setPosition(cursor-offset) 校正 → 频率不够打不过 60fps
+// 移动循环，跨屏偏移因 DPI 缩放不同而错位。
+// 终判：保持原生拖拽的稳定跟手，接受此限制。
+
 // ===== 应用控制 =====
 
 #[tauri::command]

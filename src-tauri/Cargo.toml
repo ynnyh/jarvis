@@ -1,6 +1,6 @@
 [package]
 name = "jarvis"
-version = "0.10.6"
+version = "0.10.7"
 description = "Jarvis Desktop AI Assistant"
 authors = ["you"]
 license = ""
@@ -56,6 +56,9 @@ rmcp = { version = "1.7.0", features = ["client", "transport-child-process"] }
 # Windows 走 tasklist，不需要 libc
 [target.'cfg(not(windows))'.dependencies]
 libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell"] }
 
 [profile.release]
 strip = true

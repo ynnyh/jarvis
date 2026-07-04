@@ -144,54 +144,78 @@ const {
   user-select: none;
   overflow: visible;
   background: transparent;
-  /* 默认 anchor=rb 的 CSS variable，data-anchor 切换时被同名规则覆盖。
-     --avatar-* 控制 .avatar-group 在窗口的 4 个角；--panel-* 控制各面板的
-     inset 翻转，让面板始终在小人对侧 → 远离屏幕边界。 */
+  /* ============================================================
+     二期居中布局（窗口 900×900，小人 72×72 恒居窗口正中心）：
+     anchor（data-anchor）不再移动小人/窗口，只翻转面板、气泡、菜单的
+     「开向」——始终朝小人对侧（= 屏幕中心方向）展开，避免出屏。
+
+     定位基准一律用百分比（50% = 窗口中心）：拖拽期窗口会被原子缩成
+     100×100（useAvatarDrag 的 DRAG_WIN，规避 Windows 移动循环的顶边限制），
+     百分比让小人在任何窗口尺寸下自动居中，浏览器在窗口 resize 的同一帧
+     布局拍完，无跨管线间隙 → 缩/扩窗小人视觉零跳动。
+
+     推导（900 态下的等价像素）：
+     - 小人盒：中心 50% ± 半径 36 → calc(50% - 36px)，900 下 = 414..486；
+     - 面板保持旧视觉尺寸 384×462（旧 400×560 窗减 inset 8/8/90/8）：
+       面板只在 900 态出现（拖拽期菜单/面板不可见），inset 保持固定 px：
+       水平贴小人对侧：内缘 = 小人内缘 414 - 8(间距) = 406
+         → 近侧 inset = 900-406 = 494px，远侧 = 406-384 = 22px；
+       垂直与小人同侧边缘对齐（b 锚底对齐 486、t 锚顶对齐 414）：
+         → 同侧 inset = 900-486 = 414px，对侧 = 900-414-462 = 24px。
+     默认 anchor=rb，data-anchor 切换时被同名规则覆盖。 */
   --avatar-top: auto;
-  --avatar-right: 10px;
-  --avatar-bottom: 10px;
+  --avatar-right: calc(50% - 36px);
+  --avatar-bottom: calc(50% - 36px);
   --avatar-left: auto;
-  --panel-top: 8px;
-  --panel-right: 8px;
-  --panel-bottom: 90px;
-  --panel-left: 8px;
+  --panel-top: 24px;
+  --panel-right: 494px;
+  --panel-bottom: 414px;
+  --panel-left: 22px;
   /* 透明窗浮层直接悬在桌面上，主题里的彩色泛光段（如 cyber 的青色 glow）会形成脏晕，
      这里覆写为纯黑投影（保留 cyber 原值的黑色段）；实底窗口不受影响。 */
   --panel-shadow: 0 8px 28px rgba(0, 0, 0, 0.7);
   --menu-shadow: 0 6px 24px rgba(0, 0, 0, 0.6);
 }
 .jarvis-container[data-anchor="rt"] {
-  --avatar-top: 10px;
-  --avatar-right: 10px;
+  --avatar-top: calc(50% - 36px);
+  --avatar-right: calc(50% - 36px);
   --avatar-bottom: auto;
   --avatar-left: auto;
-  --panel-top: 90px;
-  --panel-bottom: 8px;
+  --panel-top: 414px;
+  --panel-bottom: 24px;
 }
 .jarvis-container[data-anchor="lb"] {
   --avatar-top: auto;
   --avatar-right: auto;
-  --avatar-bottom: 10px;
-  --avatar-left: 10px;
+  --avatar-bottom: calc(50% - 36px);
+  --avatar-left: calc(50% - 36px);
+  --panel-right: 22px;
+  --panel-left: 494px;
 }
 .jarvis-container[data-anchor="lt"] {
-  --avatar-top: 10px;
+  --avatar-top: calc(50% - 36px);
   --avatar-right: auto;
   --avatar-bottom: auto;
-  --avatar-left: 10px;
-  --panel-top: 90px;
-  --panel-bottom: 8px;
+  --avatar-left: calc(50% - 36px);
+  --panel-top: 414px;
+  --panel-bottom: 24px;
+  --panel-right: 22px;
+  --panel-left: 494px;
 }
 
 .avatar-group {
   position: absolute;
+  /* --avatar-* 四向 inset 均 calc(50% - 36px)：锚定角贴着「小人盒」的对应角
+     （小人恒居窗口中心，900 下占 414..486，拖拽期 100 小窗下占 14..86），
+     气泡/状态条从固定角向屏幕中心方向堆叠生长，无论气泡多高、窗口多大，
+     小人像素位置永远在窗口正中。 */
   top: var(--avatar-top);
   right: var(--avatar-right);
   bottom: var(--avatar-bottom);
   left: var(--avatar-left);
   display: flex;
-  /* anchor 在窗口顶时反转子元素顺序：avatar 放最上、状态条/气泡在下方
-     堆叠，避免 avatar 远离 group 锚点导致整体跑到屏幕外。 */
+  /* anchor 在屏幕上半时反转子元素顺序：avatar 放最上、状态条/气泡在下方
+     堆叠，让 group 的固定锚点始终落在 avatar 一端。 */
   flex-direction: column;
   align-items: flex-end;   /* 子元素全部贴右边对齐 */
   gap: 6px;
@@ -346,7 +370,11 @@ const {
    .avatar 只做 72×72 事件钩子，事件挂在它上面（mousedown）。 */
 
 .menu-btn {
-  position: fixed; bottom: 86px; right: 16px;
+  /* 贴小人角落，跟随百分比基准（小人恒居窗口中心，拖拽期缩窗也不跑位）：
+     竖向在小人上/下 4px 外：底边 = 小人顶 (50%-36) - 4 → inset = 50%+40；
+     横向缩进小人内 6px：右边 = 小人右 (50%+36) - 6 → inset = 50%-30。
+     900 态等价旧值 490px/420px。 */
+  position: fixed; bottom: calc(50% + 40px); right: calc(50% - 30px);
   width: 22px; height: 22px;
   display: flex; align-items: center; justify-content: center;
   font-size: 14px; color: var(--text-faint);
@@ -355,9 +383,9 @@ const {
 }
 .menu-btn:hover { color: var(--text-ghost); background: var(--surface-item-active); }
 /* menu-btn 跟随 anchor 翻转：用 CSS 变量跟 avatar-group 同步 */
-.jarvis-container[data-anchor="rt"] .menu-btn { top: 86px; bottom: auto; }
-.jarvis-container[data-anchor="lb"] .menu-btn { left: 16px; right: auto; }
-.jarvis-container[data-anchor="lt"] .menu-btn { top: 86px; left: 16px; bottom: auto; right: auto; }
+.jarvis-container[data-anchor="rt"] .menu-btn { top: calc(50% + 40px); bottom: auto; }
+.jarvis-container[data-anchor="lb"] .menu-btn { left: calc(50% - 30px); right: auto; }
+.jarvis-container[data-anchor="lt"] .menu-btn { top: calc(50% + 40px); left: calc(50% - 30px); bottom: auto; right: auto; }
 
 .menu-backdrop {
   position: fixed;
@@ -365,7 +393,11 @@ const {
   z-index: 90;
 }
 .menu {
-  position: fixed; bottom: 16px; right: 90px;
+  /* 展开在小人对侧，跟随百分比基准：
+     横向贴小人外 8px：右边 = 小人左 (50%-36) - 8 → inset = 50%+44；
+     竖向缩进小人内 6px：底边 = 小人底 (50%+36) - 6 → inset = 50%-30。
+     900 态等价旧值 420px/494px。 */
+  position: fixed; bottom: calc(50% - 30px); right: calc(50% + 44px);
   /* 全局 .menu 工具类自带 backdrop-filter: blur(20px)，透明窗上只会产生 artifact，这里显式关掉 */
   background: var(--popup-bg); backdrop-filter: none; -webkit-backdrop-filter: none;
   border-radius: var(--radius-md); border: var(--menu-border);
@@ -373,10 +405,10 @@ const {
   padding: 4px 0; z-index: 100; min-width: 130px;
   overflow: hidden;
 }
-/* 菜单跟随 anchor 翻转：始终在 menu-btn 左侧 */
-.jarvis-container[data-anchor="rt"] .menu { top: 16px; bottom: auto; }
-.jarvis-container[data-anchor="lb"] .menu { left: 90px; right: auto; }
-.jarvis-container[data-anchor="lt"] .menu { top: 16px; left: 90px; bottom: auto; right: auto; }
+/* 菜单跟随 anchor 翻转：始终在 menu-btn 靠屏幕中心的一侧 */
+.jarvis-container[data-anchor="rt"] .menu { top: calc(50% - 30px); bottom: auto; }
+.jarvis-container[data-anchor="lb"] .menu { left: calc(50% + 44px); right: auto; }
+.jarvis-container[data-anchor="lt"] .menu { top: calc(50% - 30px); left: calc(50% + 44px); bottom: auto; right: auto; }
 .menu-item {
   width: 100%; padding: 8px 14px;
   display: flex; align-items: center; gap: 8px;

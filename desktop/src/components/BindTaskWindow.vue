@@ -16,7 +16,6 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { useAppStore } from '../stores/app'
 import { useConfigStore } from '../stores/config'
-import { useExpandedAvatarWindow } from '../composables/useExpandedAvatarWindow'
 
 interface RepoRecommendation {
   repoRoot: string
@@ -221,9 +220,9 @@ watch([currentTask, () => store.showBindTaskWindow], ([t, showing]) => {
   }
 }, { immediate: false })
 
-// 绑定窗打开期间把 avatar 窗口撑大到 640×720，关闭恢复 400×560，
-// 不直接看到 avatar 容器的小尺寸把字挤得难以辨认。
-useExpandedAvatarWindow(computed(() => store.showBindTaskWindow))
+// 历史上绑定窗打开期间要把 avatar 窗口从 400×560 临时撑大到 640×720（useExpandedAvatarWindow）。
+// 二期居中重构后窗口固定 900×900 且小人必须恒居中心（dock/换锚几何依赖该不变量），
+// 撑窗机制随之废弃删除，绑定面板与其他面板一样走共享的 --panel-* 布局。
 
 onMounted(() => {
   const t = currentTask.value

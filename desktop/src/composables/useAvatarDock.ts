@@ -18,15 +18,21 @@ export type AvatarAnchor = 'rb' | 'rt' | 'lb' | 'lt'
 
 export type DockEdge = 'top' | 'right' | 'bottom' | 'left'
 
-const WINDOW_LOGICAL_W = 400
-const WINDOW_LOGICAL_H = 560
+// 必须与 lib.rs 的 logical_w/h、tauri.conf.json 的 avatar 窗口尺寸三处一致。
+// 导出给 useAvatarDrag：拖拽期缩窗松手后要原子扩回这个尺寸。
+export const WINDOW_LOGICAL_W = 900
+const WINDOW_LOGICAL_H = 900
 const AVATAR_HALF = 36
-const AVATAR_MARGIN = 10
 export const ANCHOR_AVATAR_CENTER: Record<AvatarAnchor, { x: number; y: number }> = {
-  rb: { x: WINDOW_LOGICAL_W - AVATAR_MARGIN - AVATAR_HALF, y: WINDOW_LOGICAL_H - AVATAR_MARGIN - AVATAR_HALF },
-  rt: { x: WINDOW_LOGICAL_W - AVATAR_MARGIN - AVATAR_HALF, y: AVATAR_MARGIN + AVATAR_HALF },
-  lb: { x: AVATAR_MARGIN + AVATAR_HALF, y: WINDOW_LOGICAL_H - AVATAR_MARGIN - AVATAR_HALF },
-  lt: { x: AVATAR_MARGIN + AVATAR_HALF, y: AVATAR_MARGIN + AVATAR_HALF },
+  // 二期重构：小人恒居窗口正中心（900/2 = 450），anchor 只决定面板/气泡的开向
+  // （纯 CSS，见 App.vue 的 data-anchor 规则），换锚不再平移窗口——窗口平移
+  // （IPC 管线）与 DOM 翻角（渲染管线）永不同帧，是松手闪跳的物理根源。
+  // 保留四键映射是为了「avatar 屏幕中心 = 窗位 + 常量」的既有算式（dock 几何、
+  // recomputeAnchor、ensureBubbleVisible 调用方）全部无感自动成立。
+  rb: { x: WINDOW_LOGICAL_W / 2, y: WINDOW_LOGICAL_H / 2 },
+  rt: { x: WINDOW_LOGICAL_W / 2, y: WINDOW_LOGICAL_H / 2 },
+  lb: { x: WINDOW_LOGICAL_W / 2, y: WINDOW_LOGICAL_H / 2 },
+  lt: { x: WINDOW_LOGICAL_W / 2, y: WINDOW_LOGICAL_H / 2 },
 }
 
 const DOCK_AUTO_THRESHOLD = 30
