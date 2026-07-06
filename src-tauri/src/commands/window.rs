@@ -82,15 +82,17 @@ pub fn cursor_pos_in_window(
 // ===== Windows 专用：解除原生移动循环对 avatar 窗口顶边的钳制 =====
 //
 // Windows 原生移动循环（startDragging）会把窗口顶边钳在屏幕上沿，小人（居
-// 900 窗中心，头顶 450px 窗体）最高只能拖到屏幕中线。此为 Windows 窗口系统
-// 硬性限制。
+// 900 窗中心，头顶 450px 窗体）最高只能拖到屏幕中线。
 //
-// 2026-07 多轮尝试绕过的记录（防后人重复试错）：
+// 2026-07 多轮尝试绕过记录（防后人重复试错）：
 // ① WM_MOVING 子类钩子改写系统建议位置 → 系统在改写之上再钳制，无效。
 // ② WM_WINDOWPOSCHANGING 子类钩子改写实际落地位置 → 干扰跨屏 DPI 变更。
 // ③ 前端 onMoved 里 setPosition(cursor-offset) 校正 → 频率不够打不过 60fps
 // 移动循环，跨屏偏移因 DPI 缩放不同而错位。
-// 终判：保持原生拖拽的稳定跟手，接受此限制。
+//
+// 最终解法（2026-07-06）：放弃 startDragging，Rust 线程每帧 SetWindowPos 自驱
+// 移窗（见 manual_drag.rs），不进 NC move loop → 无内核钳制 → 小人可拖到任意屏幕位置。
+// 跨多屏 DPI 按窗口当前物理半宽重算窗口中心对齐光标。macOS 仍走原生 startDragging。
 
 // ===== 应用控制 =====
 

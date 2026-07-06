@@ -285,6 +285,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         .invoke_handler(tauri::generate_handler![
             commands::drag_window,
             commands::cursor_pos_in_window,
+            commands::manual_drag_start,
+            commands::manual_drag_stop,
             commands::tool_execute,
             commands::chat_send_stream,
             commands::summarize_work_content,

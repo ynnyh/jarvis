@@ -104,9 +104,11 @@ const {
       <!-- 状态条已删：状态用宠物外圈颜色 + 气泡传达，「待命中」常驻条只是视觉噪音，
            dock 时还会被屏幕边切掉。如果以后想加回来，把这一行删了把原 div 还原即可。 -->
 
+      <!-- dragDropEnabled:false（tauri.conf.json）从 WebView2 层根治拖拽 ghost image 方框：
+           startDragging 触发 OS 原生窗口移动，不再走 HTML5 drag-drop 路径生成 ghost。
+           前端无需 @dragstart.prevent / draggable=false 任何花瓣拦截。 -->
       <div class="avatar pointer-target" :class="{ docked: dockEdge && !isPoked }"
         @mousedown="onMouseDown"
-        @dragstart.prevent
       >
         <PetAvatar
           :pet-id="configStore.config.petId"

@@ -2,10 +2,20 @@
 
 记录每个版本的新增、优化和修复。版本号遵循语义化版本（major.minor.patch）。
 
-## v0.10.8
+## v0.10.9
 
 ### 修复
-- **拖拽时出现方框 ghost image**：拖拽小人时，浏览器 HTML5 原生拖拽在 `startDragging` 接管前会触发 `dragstart`，导致屏幕上出现半透明选框/预览方块。在图片/GIF 宠物 `<img>` 加 `draggable="false"`，同时在 avatar 容器层加 `@dragstart.prevent` 双重拦截，彻底消除 ghost image。
+- **彻底根治 Windows 拖拽 ghost image 方框**：v0.10.8 用 `img draggable=false` + `@dragstart.prevent` 只覆盖了 img 宠物类型，未覆盖默认的 lottie 宠物（渲染为 `<svg>`）。现直接关闭 WebView2 HTML5 drag-drop（avatar 窗 `dragDropEnabled: false`），`startDragging` 不再触发 `dragstart` → ghost image 从源头消除，所有宠物类型一劳永逸修复。
+
+### 优化
+- **拖拽全屏可达（Windows）**：`startDragging` 走 DefWindowProc NC move loop，内核把窗口顶边钳到工作区顶（rcWork.top），小人（居 900 窗中心、头顶 450px 空窗）最高只能拖到屏幕中线。现 Windows 放弃原生拖拽路径，改由 Rust 线程轮询 GetCursorPos + SetWindowPos 自驱移窗，不进 NC move loop → 无顶边钳制 → 小人可拖到屏幕任意位置（含上半屏顶）。跨多屏 DPI 时每帧按窗口当前物理半宽重算、窗口中心对齐光标，跨屏不飞。macOS 仍走原生 startDragging。
+- **消除跨屏拖拽指针偏移**：跨屏瞬间 DWM 重设窗口物理尺寸，若 base 恒定于起始屏坐标系则 SetWindowPos 算错目标。改用"窗口中心永远对齐光标" + 每帧读窗口当前物理尺寸算半宽，跨屏自动重对齐。
+- **修复自驱移窗死锁**：Rust 线程自我检测松手（GetAsyncKeyState 下降沿），避免防抖无限刷新致 finishDrag 永不执行。
+
+## v0.10.8
+
+### 修复（已废弃）
+- v0.10.8 的拖拽 ghost image 修复仅覆盖了 img 类型宠物，对默认 lottie 宠物无效。请升级至 v0.10.9。
 
 ## v0.10.7
 
