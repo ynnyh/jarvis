@@ -95,7 +95,7 @@ const {
               </button>
             </span>
           </span>
-          <button class="alert-bubble__close" @click.stop="dismissAlert" aria-label="关闭">×</button>
+          <button class="alert-bubble__close" @mousedown.stop @click.stop="dismissAlert" aria-label="关闭">×</button>
         </div>
       </transition>
 

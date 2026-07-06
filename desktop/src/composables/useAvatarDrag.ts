@@ -115,8 +115,26 @@ export function useAvatarDrag(options: UseAvatarDragOptions) {
 
   let moveUnlisten: UnlistenFn | null = null
   let dragEndTimer: number | null = null
+  let dockDelayTimer: number | null = null  // 自驱拖拽松手后延迟贴边（防拖上半屏后弹回中线）
 
   const recomputeAnchor = makeRecomputeAnchor(avatarAnchor)
+
+  function clearDockDelayTimer() {
+    if (dockDelayTimer !== null) {
+      clearTimeout(dockDelayTimer)
+      dockDelayTimer = null
+    }
+  }
+
+  function scheduleDockDelay() {
+    clearDockDelayTimer()
+    // 自驱拖拽下，松手后不立即贴边（否则拖动到屏顶会被 dock 弹回中线）。
+    // 延迟 4 秒后用户若还在屏幕边缘才触发 auto-dock，期间如果再开始拖拽则取消。
+    dockDelayTimer = window.setTimeout(() => {
+      dockDelayTimer = null
+      onDragEnd()
+    }, 4000)
+  }
 
   function clearDragEndTimer() {
     if (dragEndTimer !== null) {
@@ -147,10 +165,14 @@ export function useAvatarDrag(options: UseAvatarDragOptions) {
     if (started) {
       started = false
       await recomputeAnchor()
-      // 自驱路径下"停哪是哪"：跳过 maybeAutoDock——它会因小人离屏边 < 阈值而把窗口
-      // 推到 dock 收纳位（如拖到屏顶被 dockTo('top') 弹回屏幕中线），正是用户反馈
-      // "拖到上半屏顶、松手被弹回中"的根因。原生拖拽路径保留 auto-dock 不变。
-      if (!wasManual) onDragEnd()
+      if (!wasManual) {
+        // 原生拖拽（macOS）：立即贴边，无顶边钳制问题
+        onDragEnd()
+      } else {
+        // 自驱拖拽（Windows）：延迟 4 秒再触发 dock，避免拖到上半屏后
+        // 松手瞬间被 dockTo('top') 弹回屏幕中线
+        scheduleDockDelay()
+      }
       setPassthroughDragHold(false)
     }
   }
@@ -163,6 +185,7 @@ export function useAvatarDrag(options: UseAvatarDragOptions) {
   async function beginNativeDrag() {
     if (started) return
     started = true
+    clearDockDelayTimer()  // 正在拖拽，取消上一轮待执行的延迟贴边
     // 拖拽中窗口被高速移动，穿透轮询两次 IPC 读取带时间差会误判「鼠标不在
     // UI 上」→ 中途切穿透打断移动循环；拖拽期整体挂起轮询
     setPassthroughDragHold(true)
@@ -211,6 +234,7 @@ export function useAvatarDrag(options: UseAvatarDragOptions) {
 
   function onMouseDown(e: MouseEvent) {
     if (e.button !== 0) return
+    clearDockDelayTimer()  // 用户点击了小人，取消待执行的延迟贴边
     mouseDownTime = Date.now()
     downScreenX = e.screenX
     downScreenY = e.screenY
