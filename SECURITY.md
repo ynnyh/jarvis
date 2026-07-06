@@ -32,6 +32,20 @@ Jarvis 是**本地优先**（local-first）的桌面应用，设计上最小化�
 - **不向第三方服务器上传数据**：除用户主动配置的禅道 / 帆软 / LLM 服务外，应用不向任何服务器发送数据。
 - **本地通信**：MCP 工具、LLM 请求均在本地发起，请求目标完全由用户配置决定。
 
+## 已知受控漏洞
+
+以下漏洞经评估为**低实际风险**，在 CI（`.github/workflows/audit.yml`）中以 `--ignore` 临时豁免，待上游修复后移除：
+
+### quick-xml（RUSTSEC-2026-0194 / RUSTSEC-2026-0195）
+
+- **类型**：DoS（重复属性二次时间消耗 / `NsReader` 命名空间声明无界内存分配），CVSS 7.5 (high)。
+- **触发版本**：`quick-xml 0.39.4`。
+- **引入路径**：`wayland-scanner 0.31.x` → `wayland-*` → `ashpd` → `rfd`（Linux 文件对话框），仅 Linux 平台。
+- **为何豁免**：漏洞需向应用喂入恶意构造的 XML 才能触发；Jarvis 不解析任何不可信的外部 XML。`wayland-scanner 0.31.x` 锁死 `quick-xml ^0.39.2`，需 wayland 发 0.32+ 才能升级，强行升级会破坏 Linux 文件对话框（`rfd`/`ashpd`）构建。
+- **解除条件**：`wayland-scanner` 发布支持 `quick-xml >=0.41.0` 的版本后，移除 `audit.yml` 中对应的 `--ignore` 并确认 `cargo audit` 通过。
+
+> 其余 `cargo audit` 报告的 unmaintained 类告警（gtk3/atk 等 Linux GUI 绑定）为 Tauri 在 Linux 上的传递依赖，属生态共性，非漏洞，不会阻断 CI。
+
 ## 贡献者安全准则
 
 提交 PR 时请遵守：

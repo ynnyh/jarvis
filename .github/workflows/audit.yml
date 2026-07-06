@@ -55,5 +55,11 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
 
+      # —— cargo 依赖审计（阻断） ——
+      # quick-xml 0.39.4 由 wayland-scanner 0.31.x 锁定（→ ashpd/rfd，Linux 文件对话框链），
+      # wayland 0.31 系列不会升 quick-xml，需等 wayland 0.32+ 才能彻底解。
+      # 触发的两条 advisory 为 DoS 类（内存耗尽 / 二次时间，需喂入恶意 XML），
+      # 桌面应用不解析不可信外部 XML，实际攻击面极小，故临时豁免。
+      # 待 wayland-scanner 升级后移除 --ignore。详见 SECURITY.md「已知受控漏洞」。
       - name: cargo audit
-        run: cargo audit --file src-tauri/Cargo.lock
+        run: cargo audit --file src-tauri/Cargo.lock --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195
