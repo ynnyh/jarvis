@@ -296,6 +296,11 @@ export function useWindowOrchestration() {
     duration = 5000,
     actions: Array<{ label: string; action: () => void | Promise<void> }> = [],
   ) {
+    // 任意独立窗口（聊天/设置/大窗）打开时小人已被后端隐藏，此时弹气泡用户
+    // 看不到，还会卡住 state 直到窗口关闭。临时提示（duration>0）直接跳过；
+    // 持久气泡（duration=0，带操作按钮）是用户必须响应的，仍照常弹出——
+    // 关窗后 avatar 恢复，气泡才真正可见，不会造成信息丢失。
+    if (store.isAnyToolWindowOpen && duration > 0) return
     state.value = s
     alertText.value = text
     alertEmoji.value = emoji
@@ -530,6 +535,9 @@ export function useWindowOrchestration() {
   // 首次启动 snapshot 不存在时返回空 diff，老用户升级时不会被存量任务轰炸。
   let unlistenNewTasks: UnlistenFn | null = null
   let unlistenSettingsClosed: UnlistenFn | null = null
+  let unlistenChatState: UnlistenFn | null = null
+  let unlistenSettingsState: UnlistenFn | null = null
+  let unlistenBigWindowState: UnlistenFn | null = null
   onMounted(async () => {
     unlistenNewTasks = await listen<Array<{ id: string; title: string; priority: string; deadline: string }>>(
       'new-tasks-detected',
@@ -549,6 +557,18 @@ export function useWindowOrchestration() {
     unlistenSettingsClosed = await listen('settings-detail-closed', () => {
       closeAllPanels()
       configStore.showSettingsWindow = true
+    })
+    // 后端独立窗口开关同步：chat/settings/大窗 open/close 时 emit 布尔状态，
+    // 前端写入 store 供气泡抑制、状态点同步等联动使用。avatar 窗口隐藏期间
+    // 这些事件不会丢失（事件在 hide 前后都 emit）。
+    unlistenChatState = await listen<boolean>('chat-window-state', (e) => {
+      store.isChatOpen = e.payload
+    })
+    unlistenSettingsState = await listen<boolean>('settings-window-state', (e) => {
+      store.isSettingsOpen = e.payload
+    })
+    unlistenBigWindowState = await listen<boolean>('big-window-state', (e) => {
+      store.isBigWindowOpen = e.payload
     })
   })
 
@@ -573,6 +593,9 @@ export function useWindowOrchestration() {
     if (greetingTimer) clearTimeout(greetingTimer)
     unlistenNewTasks?.()
     unlistenSettingsClosed?.()
+    unlistenChatState?.()
+    unlistenSettingsState?.()
+    unlistenBigWindowState?.()
     unlistenFocus?.()
   })
 

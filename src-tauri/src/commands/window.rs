@@ -114,10 +114,34 @@ pub fn toggle_avatar_window(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// 统一显隐 avatar 小人窗口，并收敛焦点行为。
+///
+/// 所有独立工具窗（chat/settings/todayPlan/writeHours/batchWrite/cost/manualHours）
+/// 打开时隐藏小人、关闭时恢复，集中在此避免每条命令重复写 hide/show/focus 三件套，
+/// 也避免日后新增窗口漏掉显隐逻辑。avatar 窗口不存在时静默跳过（不报错）。
+fn set_avatar_visible(app: &tauri::AppHandle, visible: bool) -> Result<(), String> {
+    let Some(avatar) = app.get_webview_window("avatar") else {
+        return Ok(());
+    };
+    if visible {
+        let _ = avatar.unminimize();
+        avatar
+            .show()
+            .map_err(|e| format!("show avatar 失败: {}", e))?;
+        let _ = avatar.set_focus();
+    } else {
+        avatar
+            .hide()
+            .map_err(|e| format!("hide avatar 失败: {}", e))?;
+    }
+    Ok(())
+}
+
 // ===== Chat 窗口切换 =====
 
 #[tauri::command]
 pub async fn chat_open(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Emitter;
     if let Some(chat) = app.get_webview_window("chat") {
         chat.show().map_err(|e| format!("show chat 失败: {}", e))?;
         chat.set_focus()
@@ -125,23 +149,26 @@ pub async fn chat_open(app: tauri::AppHandle) -> Result<(), String> {
     } else {
         return Err("chat 窗口未注册".into());
     }
-    // 故意不隐藏 avatar：聊天大窗是常驻可对话窗口，用户希望小人「不消失、保持可见」，
-    // 跟其它一开就独占的工具窗（settings/todayPlan/writeHours/...）不同。小人 alwaysOnTop +
-    // skipTaskbar，与聊天窗共存不抢任务栏、也不挡操作。其它工具窗仍维持各自的 hide avatar 行为。
+    // 聊天大窗打开时隐藏 avatar 小人：大窗打开期间小人无法拖动，且独立常驻窗口
+    // 与小人共存容易引发奇奇怪怪的层级/焦点问题。统一与 settings/todayPlan 等工具窗
+    // 行为——打开即隐藏、关闭（chat_close）再恢复显示。avatar 是菜单唯一入口，隐藏后
+    // 用户无法再触发其它窗口，故不存在「关了 chat 但 settings 还在、小人却冒出」的情况。
+    set_avatar_visible(&app, false)?;
+    // 同步前端大窗状态：聊天窗打开 → isChatOpen=true，用于"聊天窗打开期间不弹气泡"等联动。
+    app.emit_to("avatar", "chat-window-state", true)
+        .map_err(|e| format!("emit chat-window-state 失败: {}", e))?;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn chat_close(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Emitter;
     if let Some(chat) = app.get_webview_window("chat") {
         chat.hide().map_err(|e| format!("hide chat 失败: {}", e))?;
     }
-    if let Some(avatar) = app.get_webview_window("avatar") {
-        avatar
-            .show()
-            .map_err(|e| format!("show avatar 失败: {}", e))?;
-        avatar.set_focus().ok();
-    }
+    set_avatar_visible(&app, true)?;
+    app.emit_to("avatar", "chat-window-state", false)
+        .map_err(|e| format!("emit chat-window-state 失败: {}", e))?;
     Ok(())
 }
 
@@ -149,6 +176,7 @@ pub async fn chat_close(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn settings_open(app: tauri::AppHandle, page: Option<String>) -> Result<(), String> {
+    use tauri::Emitter;
     if let Some(settings) = app.get_webview_window("settings") {
         let page = page.unwrap_or_else(|| "channels".to_string());
         let safe_page: String = page
@@ -171,6 +199,12 @@ pub async fn settings_open(app: tauri::AppHandle, page: Option<String>) -> Resul
             settings
                 .show()
                 .map_err(|e| format!("show settings 失败: {}", e))?;
+            // 首次打开设置窗口时隐藏 avatar 小人（与 chat 等工具窗行为统一），
+            // 关闭（settings_close）时再恢复显示。
+            set_avatar_visible(&app, false)?;
+            // 同步前端：设置窗口从「未开」变「开」→ isSettingsOpen=true。
+            app.emit_to("avatar", "settings-window-state", true)
+                .map_err(|e| format!("emit settings-window-state 失败: {}", e))?;
         }
         settings
             .set_focus()
@@ -189,12 +223,12 @@ pub async fn settings_close(app: tauri::AppHandle) -> Result<(), String> {
             .hide()
             .map_err(|e| format!("hide settings 失败: {}", e))?;
     }
-    if let Some(avatar) = app.get_webview_window("avatar") {
-        avatar.show().ok();
-        avatar.set_focus().ok();
-    }
+    set_avatar_visible(&app, true).ok();
     app.emit_to("avatar", "settings-detail-closed", ())
         .map_err(|e| format!("emit settings-detail-closed 失败: {}", e))?;
+    // 同步前端：设置窗口已关闭 → isSettingsOpen=false。
+    app.emit_to("avatar", "settings-window-state", false)
+        .map_err(|e| format!("emit settings-window-state 失败: {}", e))?;
     Ok(())
 }
 
@@ -202,6 +236,7 @@ pub async fn settings_close(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn today_plan_open(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Emitter;
     if let Some(w) = app.get_webview_window("todayPlan") {
         w.unminimize().ok();
         w.show()
@@ -211,11 +246,9 @@ pub async fn today_plan_open(app: tauri::AppHandle) -> Result<(), String> {
     } else {
         return Err("todayPlan 窗口未注册".into());
     }
-    if let Some(avatar) = app.get_webview_window("avatar") {
-        avatar
-            .hide()
-            .map_err(|e| format!("hide avatar 失败: {}", e))?;
-    }
+    set_avatar_visible(&app, false)?;
+    app.emit_to("avatar", "big-window-state", true)
+        .map_err(|e| format!("emit big-window-state 失败: {}", e))?;
     Ok(())
 }
 
@@ -226,14 +259,10 @@ pub async fn today_plan_close(app: tauri::AppHandle) -> Result<(), String> {
         w.hide()
             .map_err(|e| format!("hide todayPlan 失败: {}", e))?;
     }
-    if let Some(avatar) = app.get_webview_window("avatar") {
-        avatar.unminimize().ok();
-        avatar
-            .show()
-            .map_err(|e| format!("show avatar 失败: {}", e))?;
-        avatar.set_focus().ok();
-    }
+    set_avatar_visible(&app, true)?;
     let _ = app.emit_to("avatar", "today-plan-window-closed", ());
+    app.emit_to("avatar", "big-window-state", false)
+        .map_err(|e| format!("emit big-window-state 失败: {}", e))?;
     Ok(())
 }
 
@@ -245,6 +274,7 @@ pub async fn write_hours_open(
     payload: serde_json::Value,
 ) -> Result<(), String> {
     use crate::commands::WriteHoursState;
+    use tauri::Emitter;
     {
         let state = app.state::<WriteHoursState>();
         let mut slot = state
@@ -262,17 +292,16 @@ pub async fn write_hours_open(
     } else {
         return Err("writeHours 窗口未注册".into());
     }
-    if let Some(avatar) = app.get_webview_window("avatar") {
-        avatar
-            .hide()
-            .map_err(|e| format!("hide avatar 失败: {}", e))?;
-    }
+    set_avatar_visible(&app, false)?;
+    app.emit_to("avatar", "big-window-state", true)
+        .map_err(|e| format!("emit big-window-state 失败: {}", e))?;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn write_hours_close(app: tauri::AppHandle) -> Result<(), String> {
     use crate::commands::WriteHoursState;
+    use tauri::Emitter;
     if let Some(w) = app.get_webview_window("writeHours") {
         w.hide()
             .map_err(|e| format!("hide writeHours 失败: {}", e))?;
@@ -284,25 +313,15 @@ pub async fn write_hours_close(app: tauri::AppHandle) -> Result<(), String> {
             *slot = None;
         }
     }
-    if let Some(avatar) = app.get_webview_window("avatar") {
-        avatar.unminimize().ok();
-        avatar
-            .show()
-            .map_err(|e| format!("show avatar 失败: {}", e))?;
-        avatar.set_focus().ok();
-    }
+    set_avatar_visible(&app, true)?;
+    app.emit_to("avatar", "big-window-state", false)
+        .map_err(|e| format!("emit big-window-state 失败: {}", e))?;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn avatar_show_fallback(app: tauri::AppHandle) -> Result<(), String> {
-    if let Some(avatar) = app.get_webview_window("avatar") {
-        avatar.unminimize().ok();
-        avatar
-            .show()
-            .map_err(|e| format!("show avatar 失败: {}", e))?;
-        avatar.set_focus().ok();
-    }
+    set_avatar_visible(&app, true)?;
     Ok(())
 }
 
@@ -323,6 +342,7 @@ pub async fn write_hours_take_payload(
 
 #[tauri::command]
 pub async fn batch_write_open(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Emitter;
     if let Some(w) = app.get_webview_window("batchWrite") {
         w.unminimize().ok();
         w.show()
@@ -332,22 +352,21 @@ pub async fn batch_write_open(app: tauri::AppHandle) -> Result<(), String> {
     } else {
         return Err("batchWrite 窗口未注册".into());
     }
-    if let Some(avatar) = app.get_webview_window("avatar") {
-        avatar.hide().map_err(|e| format!("hide avatar 失败: {}", e))?;
-    }
+    set_avatar_visible(&app, false)?;
+    app.emit_to("avatar", "big-window-state", true)
+        .map_err(|e| format!("emit big-window-state 失败: {}", e))?;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn batch_write_close(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Emitter;
     if let Some(w) = app.get_webview_window("batchWrite") {
         w.hide().map_err(|e| format!("hide batchWrite 失败: {}", e))?;
     }
-    if let Some(avatar) = app.get_webview_window("avatar") {
-        avatar.unminimize().ok();
-        avatar.show().map_err(|e| format!("show avatar 失败: {}", e))?;
-        avatar.set_focus().ok();
-    }
+    set_avatar_visible(&app, true)?;
+    app.emit_to("avatar", "big-window-state", false)
+        .map_err(|e| format!("emit big-window-state 失败: {}", e))?;
     Ok(())
 }
 
@@ -355,6 +374,7 @@ pub async fn batch_write_close(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn cost_open(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Emitter;
     if let Some(cost) = app.get_webview_window("cost") {
         cost.show()
             .map_err(|e| format!("show cost 失败: {}", e))?;
@@ -363,24 +383,22 @@ pub async fn cost_open(app: tauri::AppHandle) -> Result<(), String> {
     } else {
         return Err("cost 窗口未注册".into());
     }
-    if let Some(avatar) = app.get_webview_window("avatar") {
-        avatar
-            .hide()
-            .map_err(|e| format!("hide avatar 失败: {}", e))?;
-    }
+    set_avatar_visible(&app, false)?;
+    app.emit_to("avatar", "big-window-state", true)
+        .map_err(|e| format!("emit big-window-state 失败: {}", e))?;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn cost_close(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Emitter;
     if let Some(cost) = app.get_webview_window("cost") {
         cost.hide()
             .map_err(|e| format!("hide cost 失败: {}", e))?;
     }
-    if let Some(avatar) = app.get_webview_window("avatar") {
-        avatar.show().ok();
-        avatar.set_focus().ok();
-    }
+    set_avatar_visible(&app, true).ok();
+    app.emit_to("avatar", "big-window-state", false)
+        .map_err(|e| format!("emit big-window-state 失败: {}", e))?;
     Ok(())
 }
 
@@ -388,6 +406,7 @@ pub async fn cost_close(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn manual_hours_open(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Emitter;
     if let Some(w) = app.get_webview_window("manualHours") {
         w.unminimize().ok();
         w.show()
@@ -397,26 +416,21 @@ pub async fn manual_hours_open(app: tauri::AppHandle) -> Result<(), String> {
     } else {
         return Err("manualHours 窗口未注册".into());
     }
-    if let Some(avatar) = app.get_webview_window("avatar") {
-        avatar
-            .hide()
-            .map_err(|e| format!("hide avatar 失败: {}", e))?;
-    }
+    set_avatar_visible(&app, false)?;
+    app.emit_to("avatar", "big-window-state", true)
+        .map_err(|e| format!("emit big-window-state 失败: {}", e))?;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn manual_hours_close(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Emitter;
     if let Some(w) = app.get_webview_window("manualHours") {
         w.hide()
             .map_err(|e| format!("hide manualHours 失败: {}", e))?;
     }
-    if let Some(avatar) = app.get_webview_window("avatar") {
-        avatar.unminimize().ok();
-        avatar
-            .show()
-            .map_err(|e| format!("show avatar 失败: {}", e))?;
-        avatar.set_focus().ok();
-    }
+    set_avatar_visible(&app, true)?;
+    app.emit_to("avatar", "big-window-state", false)
+        .map_err(|e| format!("emit big-window-state 失败: {}", e))?;
     Ok(())
 }

@@ -60,6 +60,19 @@ export const useAppStore = defineStore('app', () => {
   const showAnalyzeWindow = ref(false)
   const toasts = ref<Array<{ id: number; title: string; message: string }>>([])
 
+  // ===== 独立窗口（Rust 侧控制）的开关状态 =====
+  // 这些值由后端在 open/close 命令里 emit 事件同步过来，前端只读取、不直接改。
+  // 用途：聊天窗/设置窗/大窗打开期间小人被隐藏，前端据此抑制气泡弹出、
+  // 调整状态点颜色等，避免与隐藏态冲突。
+  const isChatOpen = ref(false)
+  const isSettingsOpen = ref(false)
+  /** todayPlan/writeHours/batchWrite/cost/manualHours 任一打开即为 true */
+  const isBigWindowOpen = ref(false)
+  /** 任一独立窗口打开（聊天/设置/大窗）即为 true，等价于小人被隐藏 */
+  const isAnyToolWindowOpen = computed(
+    () => isChatOpen.value || isSettingsOpen.value || isBigWindowOpen.value,
+  )
+
   // 任务提醒
   const taskAlerts = ref<TaskAlert[]>([])
   const alertsLoaded = ref(false)
@@ -351,6 +364,10 @@ export const useAppStore = defineStore('app', () => {
     showTaskWindow,
     showAnalyzeWindow,
     toasts,
+    isChatOpen,
+    isSettingsOpen,
+    isBigWindowOpen,
+    isAnyToolWindowOpen,
     addToast,
     removeToast,
     taskAlerts,
