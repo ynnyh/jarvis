@@ -1,17 +1,6 @@
 import { useConfigStore } from '../stores/config'
 import { useSharedTick } from './useSharedTick'
-
-function todayKey(suffix: string): string {
-  const d = new Date()
-  const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  return `jarvis.greet.${ymd}.${suffix}`
-}
-function hasFired(suffix: string): boolean {
-  try { return localStorage.getItem(todayKey(suffix)) === '1' } catch { return false }
-}
-function markFired(suffix: string) {
-  try { localStorage.setItem(todayKey(suffix), '1') } catch { /* localStorage 满了忽略 */ }
-}
+import { hasFired, markFired } from './dailyFired'
 
 export type GreetingState = 'morning' | 'coffee' | 'late'
 
@@ -51,8 +40,8 @@ export function useTimeGreetings(options: Options) {
     const u = configStore.config.userTitle
     for (const s of SLOTS) {
       if (minutes < s.startMin || minutes >= s.endMin) continue
-      if (hasFired(s.id)) continue
-      markFired(s.id)
+      if (hasFired('greet', s.id)) continue
+      markFired('greet', s.id)
       const built = s.build(u)
       options.onTrigger(built.text, built.emoji, built.state)
       return

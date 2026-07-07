@@ -3,11 +3,7 @@ import { useAppStore } from '../stores/app'
 import { useConfigStore } from '../stores/config'
 import { useDailyReview } from './useDailyReview'
 import { useSharedTick } from './useSharedTick'
-
-function todayStr(): string {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
+import { todayStr } from './dailyFired'
 
 interface Options {
   onTrigger: () => void

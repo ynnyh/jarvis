@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { useConfigStore } from '../stores/config'
 import { useSharedTick } from './useSharedTick'
+import { getFlag, setFlag } from './dailyFired'
 
 interface ToolResult {
   success: boolean
@@ -13,21 +14,7 @@ interface Options {
   onError?: (text: string, emoji: string) => void
 }
 
-function todayStr(): string {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
-function todayKey(suffix: string): string {
-  return `jarvis.effortClosing.${todayStr()}.${suffix}`
-}
-function getFlag(suffix: string): string | null {
-  try { return localStorage.getItem(todayKey(suffix)) } catch { return null }
-}
-function setFlag(suffix: string, value: string) {
-  try { localStorage.setItem(todayKey(suffix), value) } catch { /* ignore storage quota */ }
-}
-
-export function ignoreTodayEffortClosing() { setFlag('ignored', '1') }
+export function ignoreTodayEffortClosing() { setFlag('effortClosing', 'ignored', '1') }
 
 function parseHm(hm: string): number | null {
   const match = /^(\d{1,2}):(\d{2})$/.exec((hm || '').trim())
@@ -51,7 +38,7 @@ function shouldSkipDay(configStore: ReturnType<typeof useConfigStore>): boolean 
 function shouldRepeat(configStore: ReturnType<typeof useConfigStore>, nowMinutes: number): boolean {
   const repeat = Number(configStore.config.notifications.effortClosingRepeatMinutes || 0)
   if (repeat < 15) return false
-  const last = Number(getFlag('lastReminderAt') || 0)
+  const last = Number(getFlag('effortClosing', 'lastReminderAt') || 0)
   if (!last) return true
   return Date.now() - last >= repeat * 60 * 1000 && nowMinutes <= latestReminderMinutes(configStore)
 }
@@ -75,16 +62,16 @@ export function useEffortClosingCheck(options: Options) {
     if (!n.effortClosingCheck) return
     if (shouldSkipDay(configStore)) return
     if (!configStore.config.fineReport.realName?.trim()) return
-    if (getFlag('ignored') === '1') return
+    if (getFlag('effortClosing', 'ignored') === '1') return
     const lastEnd = endOfWorkdayMinutes(configStore)
     if (lastEnd === null) return
     const now = currentMinutes()
     const firstCheckAt = lastEnd + Number(n.effortClosingMinutesAfterWork || 10)
     if (now < firstCheckAt) return
     if (now > latestReminderMinutes(configStore)) return
-    const alreadyMet = getFlag('met') === '1'
+    const alreadyMet = getFlag('effortClosing', 'met') === '1'
     if (alreadyMet) return
-    const reminded = getFlag('reminded') === '1'
+    const reminded = getFlag('effortClosing', 'reminded') === '1'
     if (reminded && !shouldRepeat(configStore, now)) return
     checking = true
     try {
@@ -93,18 +80,18 @@ export function useEffortClosingCheck(options: Options) {
       })
       if (!result.success) {
         if (!reminded) {
-          setFlag('reminded', '1')
-          setFlag('lastReminderAt', String(Date.now()))
+          setFlag('effortClosing', 'reminded', '1')
+          setFlag('effortClosing', 'lastReminderAt', String(Date.now()))
           options.onError?.(`工时查询失败：${result.error || '未知错误'}`, '⚠️')
         }
         return
       }
       const total = Number(result.data?.totalHours || 0)
       const target = Number(n.effortClosingTargetHours || 8)
-      if (total >= target) { setFlag('met', '1'); return }
+      if (total >= target) { setFlag('effortClosing', 'met', '1'); return }
       const missing = Math.max(0, target - total)
-      setFlag('reminded', '1')
-      setFlag('lastReminderAt', String(Date.now()))
+      setFlag('effortClosing', 'reminded', '1')
+      setFlag('effortClosing', 'lastReminderAt', String(Date.now()))
       const text = `${configStore.config.userTitle}，今天已登记 ${total.toFixed(1)}h，还差 ${missing.toFixed(1)}h，要不要补一下工时？`
       options.onReminder(text, '⏱️')
       await notifyChannels(text)

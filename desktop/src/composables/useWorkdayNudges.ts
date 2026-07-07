@@ -1,17 +1,7 @@
 import { useConfigStore } from '../stores/config'
 import { useSharedTick } from './useSharedTick'
+import { hasFired, markFired } from './dailyFired'
 
-function todayKey(suffix: string): string {
-  const d = new Date()
-  const yyyymmdd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  return `jarvis.nudge.${yyyymmdd}.${suffix}`
-}
-function hasFired(suffix: string): boolean {
-  try { return localStorage.getItem(todayKey(suffix)) === '1' } catch { return false }
-}
-function markFired(suffix: string) {
-  try { localStorage.setItem(todayKey(suffix), '1') } catch { /* localStorage 满了忽略 */ }
-}
 function parseHm(hm: string): number {
   const [h, m] = hm.split(':').map(Number)
   return h * 60 + m
@@ -40,16 +30,16 @@ export function useWorkdayNudges(options: NudgeOptions) {
     const u = configStore.config.userTitle
     if (periods.length >= 2) {
       const lunchAt = periods[0].end
-      if (minutes >= lunchAt - 10 && minutes < lunchAt && !hasFired('lunch')) {
-        markFired('lunch')
+      if (minutes >= lunchAt - 10 && minutes < lunchAt && !hasFired('nudge', 'lunch')) {
+        markFired('nudge', 'lunch')
         options.onTrigger(`${u}，快到午饭点了，准备休息一下`, '🍱')
         return
       }
     }
 
     const lastEnd = periods[periods.length - 1].end
-    if (minutes >= lastEnd - 10 && minutes < lastEnd && !hasFired('leave')) {
-      markFired('leave')
+    if (minutes >= lastEnd - 10 && minutes < lastEnd && !hasFired('nudge', 'leave')) {
+      markFired('nudge', 'leave')
       options.onTrigger(`${u}，快下班了，今天辛苦了 💼`, '🌆')
       return
     }
@@ -61,8 +51,8 @@ export function useWorkdayNudges(options: NudgeOptions) {
     if (elapsed < intervalMin) return
     const slot = Math.floor(elapsed / intervalMin)
     const slotKey = `slot-${intervalMin}-${slot}`
-    if (hasFired(slotKey)) return
-    markFired(slotKey)
+    if (hasFired('nudge', slotKey)) return
+    markFired('nudge', slotKey)
     const r = slot % 3
     if (r === 1) options.onTrigger(`${u}，喝点水歇会儿吧`, '💧')
     else if (r === 2) options.onTrigger(`${u}，起身活动一下，转转脖子`, '🧘')
