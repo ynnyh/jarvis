@@ -18,10 +18,12 @@ export type AvatarAnchor = 'rb' | 'rt' | 'lb' | 'lt'
 
 export type DockEdge = 'top' | 'right' | 'bottom' | 'left'
 
-// 必须与 lib.rs 的 logical_w/h、tauri.conf.json 的 avatar 窗口尺寸三处一致。
-// 导出给 useAvatarDrag：拖拽期缩窗松手后要原子扩回这个尺寸。
+// ===== avatar 窗口逻辑尺寸：单一真源 =====
+// 必须与该 Rust 侧保持一致：src-tauri/src/lib.rs 的 AVATAR_WINDOW_LOGICAL_SIZE
+// （两处，无 tauri.conf.json 第三处——avatar 尺寸完全由运行时 set_size 决定）。
+// 小人恒居窗口正中心（尺寸 / 2 = 450），窗口大半出屏但透明不可见。
 export const WINDOW_LOGICAL_W = 900
-const WINDOW_LOGICAL_H = 900
+export const WINDOW_LOGICAL_H = WINDOW_LOGICAL_W
 const AVATAR_HALF = 36
 export const ANCHOR_AVATAR_CENTER: Record<AvatarAnchor, { x: number; y: number }> = {
   // 二期重构：小人恒居窗口正中心（900/2 = 450），anchor 只决定面板/气泡的开向

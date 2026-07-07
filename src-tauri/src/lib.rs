@@ -120,10 +120,12 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 // 历史教训：之前用 Physical(300,400)，在 150% 缩放显示器（2K 笔记本默认）
                 // 上 CSS 只剩 200×267，所有 panel 全挤爆 / 标题换行。
                 // 二期重构(2026-07)：900×900 大窗、小人恒居中(窗口中心 +450,+450)，
-                // 换锚零窗口平移。必须与 tauri.conf.json 的 avatar 尺寸和前端
-                // useAvatarDock 的 WINDOW_LOGICAL_W/H 三处一致。
-                let logical_w: f64 = 900.0;
-                let logical_h: f64 = 900.0;
+                // 换锚零窗口平移。窗口尺寸单一真源：Rust 此处 AVATAR_WINDOW_LOGICAL_SIZE
+                // 必须与前端 desktop/src/composables/useAvatarDock.ts 的 WINDOW_LOGICAL_W/H
+                // 保持一致（两处，无 tauri.conf.json 第三处——avatar 尺寸完全由运行时 set_size 决定）。
+                const AVATAR_WINDOW_LOGICAL_SIZE: f64 = 900.0;
+                let logical_w: f64 = AVATAR_WINDOW_LOGICAL_SIZE;
+                let logical_h: f64 = AVATAR_WINDOW_LOGICAL_SIZE;
                 let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize {
                     width: logical_w,
                     height: logical_h,
