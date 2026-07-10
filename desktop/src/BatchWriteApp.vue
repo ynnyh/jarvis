@@ -78,6 +78,7 @@ interface WriteEntry {
   key: string
   taskId: string
   taskName: string
+  origTaskName?: string  // 手选任务前的原始名称，清除选择后还原；非 undefined 即表示该条目手选过（× 按钮的显示依据）
   hours: number
   workContent: string
   commits: CommitLink[]
@@ -130,12 +131,21 @@ function loadTaskSearch(entry: WriteEntry) {
 }
 
 function assignTask(entry: WriteEntry, task: ReviewAllTask) {
+  // 首次手选时记录原始名称，便于清除选择后还原；kind 不变异，orphan/plan-only 身份保留
+  if (entry.origTaskName === undefined) entry.origTaskName = entry.taskName
   entry.taskId = task.id
   entry.taskName = task.name
-  entry.kind = 'task'
   // check if plan has estimated hours for this task
   const planHours = planData.value?.estimatedHours?.[task.id]
   if (planHours) entry.hours = planHours
+  taskSearch.value[entry.key] = ''
+}
+
+// 清除手选的任务，恢复搜索框以便重选（已写入条目不可清除）
+function clearAssignedTask(entry: WriteEntry) {
+  if (entry.written) return
+  entry.taskId = ''
+  entry.taskName = entry.origTaskName ?? ''
   taskSearch.value[entry.key] = ''
 }
 
@@ -405,10 +415,10 @@ onUnmounted(() => {
 
             <div class="bw-card-top">
               <div class="bw-task-label">
-                <template v-if="entry.kind === 'orphan'">
+                <template v-if="entry.kind === 'orphan' && !entry.taskId">
                   <span class="bw-orphan-label">未关联 · {{ entry.commits.length }} commits</span>
                 </template>
-                <template v-if="entry.kind === 'orphan' || (entry.kind === 'plan-only' && !entry.taskId)">
+                <template v-if="(entry.kind === 'orphan' || entry.kind === 'plan-only') && !entry.taskId">
                   <div class="bw-task-search">
                     <input
                       class="bw-search-input"
@@ -432,6 +442,12 @@ onUnmounted(() => {
                 <template v-else-if="entry.taskId">
                   <span class="bw-task-id">#{{ entry.taskId }}</span>
                   <span class="bw-task-name">{{ entry.taskName }}</span>
+                  <button
+                    v-if="entry.origTaskName !== undefined && !entry.written"
+                    class="bw-task-clear"
+                    title="重新选择"
+                    @click="clearAssignedTask(entry)"
+                  >×</button>
                 </template>
               </div>
 
@@ -529,6 +545,8 @@ onUnmounted(() => {
 .bw-task-label { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; }
 .bw-task-id { font-size: 11px; color: var(--accent-text); font-weight: 600; white-space: nowrap; }
 .bw-task-name { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bw-task-clear { flex-shrink: 0; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; background: var(--surface-item-hover); border: none; border-radius: 50%; color: var(--text-dim); font-size: 14px; cursor: pointer; padding: 0; line-height: 1; }
+.bw-task-clear:hover { color: var(--text); }
 .bw-orphan-label { font-size: 11px; color: var(--yellow-text); white-space: nowrap; }
 .bw-task-input { flex: 1; padding: 3px 6px; font-size: 12px; color: var(--text); background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 4px; }
 .bw-hours { width: 60px; padding: 3px 6px; font-size: 12px; color: var(--text); background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 4px; text-align: center; }

@@ -235,11 +235,11 @@ pub async fn summarize_work_content(text: String) -> Result<String, String> {
     let prompt = format!(
         "你是一个工时记录精简助手。请将以下 commit 工作记录压缩为简洁的工时描述。\n\n\
          要求：\n\
-         - 保留关键工作内容和成果\n\
-         - 去除重复、冗余信息\n\
-         - 合并同类项\n\
-         - 控制在 200 字以内\n\
-         - 输出纯文本，不要 markdown 格式\n\n\
+         - 若包含多项不同工作：用「1、」「2、」「3、」编号分点，每点一行（用换行分隔），每点一句话概括一项工作\n\
+         - 若只有一项工作：直接输出一句话描述，不加编号\n\
+         - 保留关键工作内容和成果，去除重复冗余，合并同类项\n\
+         - 总长度控制在 200 字以内\n\
+         - 输出纯文本，编号只用「1、」这种中文格式，禁止 markdown 符号（-、*、#）\n\n\
          原始记录：\n{}",
         trimmed
     );
@@ -247,7 +247,7 @@ pub async fn summarize_work_content(text: String) -> Result<String, String> {
     let req = crate::llm::ChatRequest::new(vec![
         crate::llm::ChatMessage {
             role: crate::llm::Role::System,
-            content: "你是一个工时记录精简助手，只输出精简后的工时描述文本，不加任何前缀或解释。".to_string(),
+            content: "你是一个工时记录精简助手，只输出精简后的工时描述文本，不加任何前缀或解释。多项工作用「1、」「2、」编号分点，单项工作直接一句话。".to_string(),
             tool_calls: None,
             tool_call_id: None,
             name: None,
