@@ -23,8 +23,15 @@ export function useEveningReminder(options: Options) {
     if (store.reviewTriggeredOn === today) return
     const before = configStore.config.notifications.eveningSummaryMinutesBefore
     const mUntilEnd = configStore.minutesUntilEndOfDay
-    if (mUntilEnd <= 0) return
-    if (mUntilEnd > before) return
+    // 统一的触发窗口语义：
+    //   before > 0 → 下班前 before 分钟内触发（窗口大小 = before，即 0 < mUntilEnd <= before）
+    //   before <= 0 → 下班时间点或下班后 |before| 分钟，以 2 分钟窗口触发以保证可靠性
+    //     例：before = 0   → 下班时间点附近触发  (mUntilEnd ∈ (-2, 0])
+    //     例：before = -10 → 下班后 10 分钟触发 (mUntilEnd ∈ (-12, -10])
+    const windowSize = before >= 1 ? before : 2
+    const hasPassedTarget = mUntilEnd <= before
+    const stillWithinWindow = mUntilEnd > before - windowSize
+    if (!hasPassedTarget || !stillWithinWindow) return
     store.reviewTriggeredOn = today
     fetchReview('today').then(() => {
       options.onTrigger()
