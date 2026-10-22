@@ -5,7 +5,7 @@ export interface MenuItemDef {
   emoji: string
 }
 
-/** 一个完整主题：7 个菜单项的标签+emoji */
+/** 一个完整主题：9 个菜单项的标签+emoji */
 export interface MenuTheme {
   id: string
   name: string
@@ -13,8 +13,13 @@ export interface MenuTheme {
   items: MenuItemDef[]
 }
 
-/** 菜单项 key 列表，顺序决定菜单展示顺序 */
-export const MENU_KEYS = ['tasks', 'review', 'plan', 'cost', 'chat', 'settings', 'update', 'quit'] as const
+/**
+ * 菜单项 key 列表，顺序决定菜单展示顺序。
+ * petChat（贴身迷你对话）必须紧随 chat（大窗）之后：
+ *  - useWindowOrchestration 的 systemMenuItems 从 chat 下标开始切，插在后面不影响该逻辑；
+ *  - 每个主题的 items 必须含全部 key，否则 menuItems computed 的非空断言运行时炸。
+ */
+export const MENU_KEYS = ['tasks', 'review', 'plan', 'cost', 'chat', 'petChat', 'settings', 'update', 'quit'] as const
 export type MenuKey = (typeof MENU_KEYS)[number]
 
 /** 内置主题集合 */
@@ -29,6 +34,7 @@ export const MENU_THEMES: MenuTheme[] = [
       { key: 'plan', label: '今日计划', emoji: '📝' },
       { key: 'cost', label: '项目成本', emoji: '💰' },
       { key: 'chat', label: '聊天（大窗）', emoji: '💬' },
+      { key: 'petChat', label: '对话', emoji: '🗨️' },
       { key: 'settings', label: '设置', emoji: '⚙️' },
       { key: 'update', label: '检查更新', emoji: '✨' },
       { key: 'quit', label: '退出', emoji: '🚪' },
@@ -44,6 +50,7 @@ export const MENU_THEMES: MenuTheme[] = [
       { key: 'plan', label: '画饼', emoji: '📝' },
       { key: 'cost', label: '算账', emoji: '💰' },
       { key: 'chat', label: '摸鱼唠嗑', emoji: '💬' },
+      { key: 'petChat', label: '贴身唠', emoji: '🗨️' },
       { key: 'settings', label: '设置', emoji: '⚙️' },
       { key: 'update', label: '检查更新', emoji: '✨' },
       { key: 'quit', label: '跑路', emoji: '🚪' },
@@ -59,6 +66,7 @@ export const MENU_THEMES: MenuTheme[] = [
       { key: 'plan', label: '计划', emoji: '📝' },
       { key: 'cost', label: '成本', emoji: '💰' },
       { key: 'chat', label: '聊天', emoji: '💬' },
+      { key: 'petChat', label: '聊', emoji: '🗨️' },
       { key: 'settings', label: '设置', emoji: '⚙️' },
       { key: 'update', label: '更新', emoji: '✨' },
       { key: 'quit', label: '退出', emoji: '🚪' },
@@ -74,6 +82,7 @@ export const MENU_THEMES: MenuTheme[] = [
       { key: 'plan', label: '作战部署', emoji: '📝' },
       { key: 'cost', label: '军费核算', emoji: '💰' },
       { key: 'chat', label: '通讯台', emoji: '💬' },
+      { key: 'petChat', label: '凭依对话', emoji: '🗨️' },
       { key: 'settings', label: '设置', emoji: '⚙️' },
       { key: 'update', label: '版本检视', emoji: '✨' },
       { key: 'quit', label: '登出', emoji: '🚪' },

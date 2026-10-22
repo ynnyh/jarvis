@@ -3,7 +3,7 @@ import { ref, computed, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { STYLE_THEMES, DEFAULT_STYLE_THEME } from '../style-themes'
-import { loadCustomPets } from '../petManifest'
+import { loadCustomPets, loadPackPets, clearPackClipCache } from '../petManifest'
 
 export interface WorkPeriod {
   start: string   // HH:MM
@@ -18,6 +18,28 @@ export type CommitsRange =
 /** 左键单击小人时弹出的内容。默认任务列表；可改成今日复盘等 */
 export type LeftClickAction = 'tasks' | 'review'
 export type WorkStyle = 'focused' | 'multi' | 'transactional' | 'balanced'
+
+/** 老三档尺寸字段（'small'|'medium'|'large'）。已被 petSizePx 取代，仅保留
+ *  类型做兼容：加载时折算成 petSizePx，字段本身原样保留不删 */
+export type PetSize = 'small' | 'medium' | 'large'
+
+/** 小人渲染盒连续尺寸（px）。值经 CSS 变量 --pet-size 注入 avatar 窗，
+ *  容器内元素全是相对尺寸，dock/心心等几何派生值也从这里推导。
+ *  边界依据（PRD 定死）：下限 48 保证状态点 12px 与摸头命中可用，
+ *  上限 176 防挡屏；UI（滑杆）不暴露越界输入，这里只做加载兜底钳制 */
+export const PET_SIZE_MIN = 48
+export const PET_SIZE_MAX = 176
+export const PET_SIZE_DEFAULT = 96
+
+/** 老三档 → px 的一次性迁移映射（small=88 / medium=128 / large=176）。
+ *  刻意不导出：它只是迁移用历史数据，渲染侧唯一尺寸来源是 petSizePx */
+const PET_SIZE_LEGACY_PX: Record<PetSize, number> = { small: 88, medium: 128, large: 176 }
+
+/** 尺寸钳制：手改 settings.json、老配置折算等任何来源都收进 [48,176]。
+ *  取整保证 px 恒为整数（CSS 变量与 dock 几何都按整数 px 推导） */
+function clampPetSizePx(px: number): number {
+  return Math.min(PET_SIZE_MAX, Math.max(PET_SIZE_MIN, Math.round(px)))
+}
 
 export interface TodayPlan {
   date: string
@@ -110,6 +132,20 @@ export interface JarvisConfig {
   leftClickAction: LeftClickAction
   /** 选用的宠物形象 id（见 petManifest.ts）；默认 'robo'。形象不在列表时回退到默认 */
   petId: string
+  /** 老三档尺寸字段（见 PetSize）。已被 petSizePx 取代，仅兼容保留：加载时
+   *  折算成 petSizePx 后不再读取，写回时原样保留（老配置迁移不丢字段） */
+  petSize: PetSize
+  /** 小人渲染盒尺寸（px，48–176 连续可调，默认 96）。只改 CSS 变量即生效，无重载 */
+  petSizePx: number
+  /** 宠物主动搭话（方案 B2）：提醒节点用 LLM 生成一句人话，默认开。
+   *  关闭 = 完全走固定文案，零网络请求 */
+  petProactiveChat: boolean
+  /** 桌面漫步（E2 漫游行为引擎）：pack 宠物在桌面上随机散步/小动作/睡觉，默认开。
+   *  关闭 = 引擎完全不启动，行为与无漫游版本一致；仅宠物包形象生效 */
+  petRoaming: boolean
+  /** 已禁用的插件 id 列表（方案 C′ 插件基座）。内置/用户插件的 enabled
+   *  状态都存这里，manifest 本身只读；缺失视为全部启用 */
+  disabledPlugins: string[]
   /** 开机自启 */
   autoStartOnBoot: boolean
   /** 定时提醒列表 */
@@ -198,6 +234,11 @@ const defaultConfig = (): JarvisConfig => ({
   commitsRange: 'thisWeek',
   leftClickAction: 'tasks',
   petId: 'robo',
+  petSize: 'medium',
+  petSizePx: PET_SIZE_DEFAULT,
+  petProactiveChat: true,
+  petRoaming: true,
+  disabledPlugins: [],
   autoStartOnBoot: true,
   reminders: [],
   llmProfiles: [],
@@ -281,6 +322,24 @@ export const useConfigStore = defineStore('config', () => {
         commitsRange: remote.commitsRange ?? defaults.commitsRange,
         leftClickAction: remote.leftClickAction === 'review' ? 'review' : defaults.leftClickAction,
         petId: (remote.petId ?? '').trim() || defaults.petId,
+        // 老配置无 petSize（或脏值）回退 medium，同 workStyle 的白名单先例
+        petSize: ['small', 'medium', 'large'].includes(remote.petSize)
+          ? remote.petSize
+          : defaults.petSize,
+        // 尺寸迁移（petSizePx 优先）：① petSizePx 是合法数字 → 钳进 [48,176]；
+        // ② 否则从老三档 petSize 折算（88/128/176，字段本身原样保留）；
+        // ③ 两者都无效 → 默认 96。脏值/越界经 clampPetSizePx 兜底
+        petSizePx: clampPetSizePx(
+          typeof remote.petSizePx === 'number' && Number.isFinite(remote.petSizePx)
+            ? remote.petSizePx
+            : (PET_SIZE_LEGACY_PX[remote.petSize] ?? PET_SIZE_DEFAULT),
+        ),
+        petProactiveChat: remote.petProactiveChat ?? defaults.petProactiveChat,
+        // 老配置无 petRoaming → 默认开（用户升级后直接获得漫游，PRD E2-5）
+        petRoaming: remote.petRoaming ?? defaults.petRoaming,
+        disabledPlugins: Array.isArray(remote.disabledPlugins)
+          ? remote.disabledPlugins.filter((x): x is string => typeof x === 'string')
+          : defaults.disabledPlugins,
         autoStartOnBoot: remote.autoStartOnBoot ?? defaults.autoStartOnBoot,
         reminders: Array.isArray(remote.reminders) ? remote.reminders : defaults.reminders,
         llmProfiles: Array.isArray(remote.llmProfiles) ? remote.llmProfiles : defaults.llmProfiles,
@@ -369,11 +428,11 @@ export const useConfigStore = defineStore('config', () => {
   listen('reminders-changed', () => { refreshReminders() }).catch(() => {})
 
   // 其他窗口（设置窗口等）修改配置后，Rust 端 emit 此事件，主窗口需要刷新。
-  // 关键：同时刷新自定义宠物缓存 —— settings 窗口上传/切换的自定义宠物，
+  // 关键：同时刷新自定义宠物/宠物包缓存 —— settings 窗口上传/切换后，
   // 主窗口缓存里可能还没有，不刷新会导致 getPetById 回退到默认机器人。
-  // 先 loadCustomPets（缓存就绪）再 load（petId 变化触发 computed 重算时缓存已有）。
+  // 先 load*Pets（缓存就绪）再 load（petId 变化触发 computed 重算时缓存已有）。
   listen('config-changed', async () => {
-    await loadCustomPets()
+    await Promise.all([loadCustomPets(), loadPackPets()])
     await load()
   }).catch(() => {})
 
@@ -381,6 +440,14 @@ export const useConfigStore = defineStore('config', () => {
   // petId 不变不会触发 config-changed，必须有独立事件让各窗口刷新缓存，
   // 否则改了动画/data 主窗口也不更新。
   listen('custom-pets-changed', () => { loadCustomPets() }).catch(() => {})
+
+  // 宠物包落盘后（导入/删除）Rust 端 emit 此事件，各窗口刷新包缓存（同上先例）。
+  // 同 id 整包覆盖重导是常规操作：素材 data URL 缓存必须一并作废，否则导入发生在
+  // 设置窗，avatar 窗的 getPackClipSrc 缓存无人清，会继续用旧素材渲染
+  listen('pet-packs-changed', () => {
+    clearPackClipCache()
+    loadPackPets()
+  }).catch(() => {})
 
   // 临时覆盖：今晚加班 / 今天休假
   function setTodayMode(mode: JarvisConfig['override']['todayMode']) {

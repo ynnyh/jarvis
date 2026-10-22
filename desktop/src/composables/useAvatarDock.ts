@@ -1,5 +1,6 @@
-import { ref, type Ref } from 'vue'
+import { ref, computed, type Ref } from 'vue'
 import { getCurrentWindow, LogicalPosition, currentMonitor } from '@tauri-apps/api/window'
+import { useConfigStore } from '../stores/config'
 
 /** 获取当前窗口所在屏幕的逻辑像素全局边界（支持多屏幕） */
 async function getMonitorBounds(): Promise<{ x: number; y: number; w: number; h: number }> {
@@ -24,7 +25,6 @@ export type DockEdge = 'top' | 'right' | 'bottom' | 'left'
 // 小人恒居窗口正中心（尺寸 / 2 = 450），窗口大半出屏但透明不可见。
 export const WINDOW_LOGICAL_W = 900
 export const WINDOW_LOGICAL_H = WINDOW_LOGICAL_W
-const AVATAR_HALF = 36
 export const ANCHOR_AVATAR_CENTER: Record<AvatarAnchor, { x: number; y: number }> = {
   // 二期重构：小人恒居窗口正中心（900/2 = 450），anchor 只决定面板/气泡的开向
   // （纯 CSS，见 App.vue 的 data-anchor 规则），换锚不再平移窗口——窗口平移
@@ -38,8 +38,6 @@ export const ANCHOR_AVATAR_CENTER: Record<AvatarAnchor, { x: number; y: number }
 }
 
 const DOCK_AUTO_THRESHOLD = 30
-const DOCK_SHOW_PX = 18
-const DOCK_PEEK_PX = AVATAR_HALF + DOCK_SHOW_PX
 const DOCK_RECOIL_MS = 5000
 const DOCK_ANIM_MS = 200
 
@@ -52,6 +50,15 @@ export interface UseAvatarDockOptions {
 
 export function useAvatarDock(options: UseAvatarDockOptions) {
   const { avatarAnchor, showMenu } = options
+  const configStore = useConfigStore()
+
+  // 小人渲染盒半径随 petSizePx 连续变化（与 App.vue 的 --pet-half 同源：petSizePx/2，
+  // 加载时已钳进 [48,176]，直读即可）。dock 几何全部以「小人半径」为基准推导：
+  // 收纳贴边只露 dockShowPx 边条、pokeOut 滑入 half+dockShowPx 露出完整小人——
+  // 72px 时代（half=36、露 18px）逐值不变，尺寸变化按比例放大，否则 pokeOut
+  // 「露完整小人」的契约会破（露不全）。
+  const avatarHalf = computed(() => configStore.config.petSizePx / 2)
+  const dockShowPx = computed(() => Math.round(avatarHalf.value / 2))
 
   // ===== State =====
   const dockEdge = ref<DockEdge | null>(null)
@@ -117,16 +124,16 @@ export function useAvatarDock(options: UseAvatarDockOptions) {
     const relY = avatarScreenY - mon.y
     if (edge === 'right') {
       newAnchor = relY >= mon.h / 2 ? 'rb' : 'rt'
-      targetCenterX = mon.x + mon.w - DOCK_SHOW_PX + AVATAR_HALF
+      targetCenterX = mon.x + mon.w - dockShowPx.value + avatarHalf.value
     } else if (edge === 'left') {
       newAnchor = relY >= mon.h / 2 ? 'lb' : 'lt'
-      targetCenterX = mon.x + DOCK_SHOW_PX - AVATAR_HALF
+      targetCenterX = mon.x + dockShowPx.value - avatarHalf.value
     } else if (edge === 'top') {
       newAnchor = relX >= mon.w / 2 ? 'rt' : 'lt'
-      targetCenterY = mon.y + DOCK_SHOW_PX - AVATAR_HALF
+      targetCenterY = mon.y + dockShowPx.value - avatarHalf.value
     } else {
       newAnchor = relX >= mon.w / 2 ? 'rb' : 'lb'
-      targetCenterY = mon.y + mon.h - DOCK_SHOW_PX + AVATAR_HALF
+      targetCenterY = mon.y + mon.h - dockShowPx.value + avatarHalf.value
     }
     const offset = ANCHOR_AVATAR_CENTER[newAnchor]
     return { winX: targetCenterX - offset.x, winY: targetCenterY - offset.y, newAnchor }
@@ -150,10 +157,11 @@ export function useAvatarDock(options: UseAvatarDockOptions) {
     const c = await currentAvatarScreenCenter()
     if (!c) return
     const mon = await getMonitorBounds()
-    const dTop = c.y - mon.y - AVATAR_HALF
-    const dBottom = mon.y + mon.h - (c.y + AVATAR_HALF)
-    const dLeft = c.x - mon.x - AVATAR_HALF
-    const dRight = mon.x + mon.w - (c.x + AVATAR_HALF)
+    const half = avatarHalf.value
+    const dTop = c.y - mon.y - half
+    const dBottom = mon.y + mon.h - (c.y + half)
+    const dLeft = c.x - mon.x - half
+    const dRight = mon.x + mon.w - (c.x + half)
     const min = Math.min(dTop, dBottom, dLeft, dRight)
     if (min > DOCK_AUTO_THRESHOLD) return
     let edge: DockEdge
@@ -186,8 +194,9 @@ export function useAvatarDock(options: UseAvatarDockOptions) {
     mon: { x: number; y: number; w: number; h: number },
   ): { winX: number; winY: number } | null {
     if (!dockedWinPos) return null
-    const maxPeek = WINDOW_LOGICAL_W - DOCK_SHOW_PX
-    const peek = Math.max(0, Math.min(DOCK_PEEK_PX, maxPeek))
+    const show = dockShowPx.value
+    const maxPeek = WINDOW_LOGICAL_W - show
+    const peek = Math.max(0, Math.min(avatarHalf.value + show, maxPeek))
     let winX = dockedWinPos.x
     let winY = dockedWinPos.y
     if (edge === 'right') {

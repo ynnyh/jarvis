@@ -15,6 +15,15 @@ import MarkdownRenderer from './components/MarkdownRenderer.vue'
 import MatrixRain from './components/MatrixRain.vue'
 import CyberParticles from './components/CyberParticles.vue'
 import { useTheme } from './composables/useTheme'
+import {
+  chatSendStream,
+  generateConversationId,
+  stripLocalFields,
+  type ChatMessage,
+  type Conversation,
+  type ConversationMeta,
+  type PendingWrite,
+} from './api/chat'
 
 // rename input 出现时自动 focus + select。Vue 3 <script setup> 里 v 前缀的常量
 // 自动被识别为模板里的 v-focus 指令
@@ -26,58 +35,8 @@ const configStore = useConfigStore()
 useTheme()
 
 // ===== 类型 =====
-interface ConversationMeta {
-  id: string
-  title: string
-  createdAt: number
-  updatedAt: number
-  messageCount: number
-}
-interface ChatMessage {
-  role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string
-  /** OpenAI 兼容字段：assistant 发起的工具调用 */
-  tool_calls?: Array<{
-    id: string
-    type: 'function'
-    function: { name: string; arguments: string }
-  }>
-  /** OpenAI 兼容字段：tool 消息对应的 call id */
-  tool_call_id?: string
-  /** OpenAI 兼容字段：tool 消息的工具名（可选） */
-  name?: string
-  /** 本地展示用 */
-  createdAt: number
-  /** 老格式兼容：占位 UI 阶段用过的 camelCase 字段，读老对话用 */
-  toolCalls?: any
-  toolCallId?: string
-  pendingWrite?: PendingWrite
-  writeStatus?: 'pending' | 'writing' | 'done' | 'cancelled' | 'failed'
-  writeError?: string
-  /** 成功后的补充说明（如发版触发的 queueId/buildNumber） */
-  writeNote?: string
-}
-interface Conversation {
-  id: string
-  title: string
-  createdAt: number
-  updatedAt: number
-  messages: ChatMessage[]
-}
-interface LogTaskEffortPayload {
-  taskId: string
-  hours: number
-  work: string
-  date?: string
-}
-interface McpDeployPayload {
-  server: string
-  tool: string
-  args: Record<string, any>
-}
-type PendingWrite =
-  | { kind: 'log-task-effort'; payload: LogTaskEffortPayload; summary: string }
-  | { kind: 'mcp-deploy'; payload: McpDeployPayload; summary: string }
+// ConversationMeta / ChatMessage / Conversation 已提取到 api/chat.ts
+// （B1-5，与迷你对话面板共享），此处直接 import。
 
 // ===== 状态 =====
 const conversations = ref<ConversationMeta[]>([])
@@ -125,7 +84,7 @@ async function selectConversation(id: string) {
 
 function newConversation() {
   // 不立刻落盘——等用户发第一条消息时再 save。空会话不污染侧栏。
-  const id = generateId()
+  const id = generateConversationId()
   const now = Date.now()
   currentId.value = id
   currentConversation.value = {
@@ -392,18 +351,11 @@ async function sendMessage() {
     streamUnlisten = unlisten
 
     try {
-      const r = await invoke<{
-        newMessages: any[]
-        tokensIn: number
-        tokensOut: number
-        truncated: boolean
-      }>('chat_send_stream', {
-        input: {
-          messages: llmMessages,
-          assistantName: configStore.config.assistantName,
-          userTitle: configStore.config.userTitle,
-          conversationId: conv.id,
-        },
+      const r = await chatSendStream({
+        messages: llmMessages,
+        assistantName: configStore.config.assistantName,
+        userTitle: configStore.config.userTitle,
+        conversationId: conv.id,
       })
 
       // 流式结束，清除视觉层
@@ -447,23 +399,7 @@ async function sendMessage() {
 }
 
 // ===== 工具 =====
-function generateId(): string {
-  const d = new Date()
-  const pad = (n: number) => String(n).padStart(2, '0')
-  const ts = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
-  const rand = Math.random().toString(36).slice(2, 6)
-  return `${ts}-${rand}`
-}
-
-/** 喂 LLM 的消息只保留协议字段，去掉本地 createdAt 等 */
-function stripLocalFields(m: ChatMessage): Record<string, any> {
-  const out: Record<string, any> = { role: m.role, content: m.content }
-  if (m.tool_calls) out.tool_calls = m.tool_calls
-  if (m.toolCallId) out.tool_call_id = m.toolCallId  // 兼容老格式
-  if ((m as any).tool_call_id) out.tool_call_id = (m as any).tool_call_id
-  if ((m as any).name) out.name = (m as any).name
-  return out
-}
+// generateId / stripLocalFields 已提取到 api/chat.ts（generateConversationId / stripLocalFields）
 
 function scrollToBottom() {
   if (messagesEl.value) messagesEl.value.scrollTop = messagesEl.value.scrollHeight

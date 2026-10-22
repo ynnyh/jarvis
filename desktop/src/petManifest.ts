@@ -18,8 +18,9 @@ import slothMeditateData from './assets/pets/Sloth meditate.json'
 import cowDrinkMilkData from './assets/pets/Cow Drink Milk.json'
 import dancingLlamaData from './assets/pets/Dancing llama.json'
 import { customPetList, type CustomPet, type ImageAnimation } from './api/customPet'
+import { petPackList, petPackReadFile, type PetPack } from './api/petPack'
 
-export type PetCategory = 'mecha' | 'pet' | 'character' | 'custom'
+export type PetCategory = 'mecha' | 'pet' | 'character' | 'custom' | 'pack'
 export interface PetRenderConfig {
   scale?: number
   offsetX?: number
@@ -32,13 +33,15 @@ export interface PetInfo {
   category: PetCategory
   /** 一句话描述，给设置 UI 提示文案用 */
   description: string
-  /** Lottie 动画 JSON 数据，或图片/GIF 的 Base64 数据 */
+  /** Lottie 动画 JSON 数据，或图片/GIF 的 Base64 数据；pack 类型无内联 data（素材按 clip 惰性加载） */
   data: unknown
   render?: PetRenderConfig
-  /** 自定义宠物类型：lottie | image | gif */
-  petType?: 'lottie' | 'image' | 'gif'
+  /** 自定义宠物类型：lottie | image | gif；宠物包为 pack */
+  petType?: 'lottie' | 'image' | 'gif' | 'pack'
   /** 仅图片类型：动画效果 */
   imageAnimation?: ImageAnimation
+  /** 仅 pack 类型：完整包清单（clips/scale/facing） */
+  pack?: PetPack
 }
 
 export const PETS: PetInfo[] = [
@@ -120,10 +123,15 @@ export const PET_CATEGORY_LABELS: Record<PetCategory, string> = {
   pet: '宠物',
   character: '人物',
   custom: '自定义',
+  pack: '宠物包',
 }
 
 export function isCustomPetId(id: string): boolean {
   return id.startsWith('custom-')
+}
+
+export function isPackPetId(id: string): boolean {
+  return id.startsWith('pack-')
 }
 
 // 自定义宠物缓存（响应式）。
@@ -162,15 +170,116 @@ function toPetInfo(pet: CustomPet): PetInfo {
   }
 }
 
-/** 获取所有宠物（内置 + 自定义） */
+// ===== 宠物包 v2（多动作素材包）=====
+// 与自定义宠物同款缓存模式：每个 webview 一份模块缓存，落盘后靠
+// pet-packs-changed / config-changed 广播刷新。素材不进缓存 —— data URL
+// 按 clip 惰性加载（getPackClipSrc），避免整包 60MB 一次性进内存。
+
+const packPetsCache = shallowRef<PetInfo[]>([])
+
+/** 从包清单推导设置列表里的一句话描述 */
+function packDescription(pack: PetPack): string {
+  const parts: string[] = []
+  if (pack.clips.walk) parts.push('可漫步')
+  if (pack.clips.held) parts.push('可拎起')
+  if (pack.clips.sleep) parts.push('可睡觉')
+  const actionCount = pack.clips.actions?.length ?? 0
+  if (actionCount > 0) parts.push(`${actionCount} 个小动作`)
+  return parts.length > 0 ? parts.join(' · ') : '单动作'
+}
+
+function toPackPetInfo(pack: PetPack): PetInfo {
+  return {
+    // pack- 前缀与内置/自定义 id 空间隔离，杜绝用户包 id 撞内置名
+    id: `pack-${pack.id}`,
+    name: pack.name,
+    category: 'pack',
+    description: packDescription(pack),
+    data: null,
+    petType: 'pack',
+    pack,
+  }
+}
+
+/** 加载宠物包列表（从后端读取，覆盖缓存） */
+export async function loadPackPets(): Promise<PetInfo[]> {
+  try {
+    const packs = await petPackList()
+    packPetsCache.value = packs.map(toPackPetInfo)
+  } catch (e) {
+    console.error('加载宠物包失败:', e)
+  }
+  return packPetsCache.value
+}
+
+/** 获取缓存的宠物包列表（同步，需先调用 loadPackPets） */
+export function getPackPets(): PetInfo[] {
+  return packPetsCache.value
+}
+
+/** pack 宠物是否拥有某片段（idle 恒真；walk/held/sleep 查对应槽；其余查 actions 名）。
+ *  纯函数读 shallowRef 缓存 —— E2 漫游引擎在 computed 里调用即可获得响应式。 */
+export function packHasClip(petId: string, name: string): boolean {
+  if (!isPackPetId(petId)) return false
+  const pack = getPackPets().find(p => p.id === petId)?.pack
+  if (!pack) return false
+  if (name === 'idle') return !!pack.clips.idle
+  if (name === 'walk' || name === 'held' || name === 'sleep') return !!pack.clips[name]
+  return (pack.clips.actions ?? []).some(a => a.name === name)
+}
+
+// 素材 data URL 缓存（模块级，跨组件重挂载复用）；pending 表去重并发请求
+const packClipSrcCache = new Map<string, string>()
+const packClipPending = new Map<string, Promise<string | null>>()
+
+/** 惰性加载包内素材 → data URL（带缓存）。失败返回 null，调用方走降级。 */
+export async function getPackClipSrc(packId: string, file: string): Promise<string | null> {
+  const key = `${packId}/${file}`
+  const hit = packClipSrcCache.get(key)
+  if (hit) return hit
+  const pending = packClipPending.get(key)
+  if (pending) return pending
+  const task = petPackReadFile(packId, file)
+    .then((url) => {
+      packClipSrcCache.set(key, url)
+      return url
+    })
+    .catch((e) => {
+      console.error('读取宠物包素材失败:', e)
+      return null
+    })
+    .finally(() => {
+      packClipPending.delete(key)
+    })
+  packClipPending.set(key, task)
+  return task
+}
+
+/** 清空素材缓存（包重新导入/删除后调用，防止旧 data URL 残留） */
+export function clearPackClipCache(packId?: string): void {
+  if (!packId) {
+    packClipSrcCache.clear()
+    return
+  }
+  const prefix = `${packId}/`
+  for (const key of packClipSrcCache.keys()) {
+    if (key.startsWith(prefix)) packClipSrcCache.delete(key)
+  }
+}
+
+/** 获取所有宠物（内置 + 自定义 + 宠物包），pack 与旧类型并存于同一选择列表 */
 export function getAllPets(): PetInfo[] {
-  return [...PETS, ...getCustomPets()]
+  return [...PETS, ...getCustomPets(), ...getPackPets()]
 }
 
 export function getPetById(id: string): PetInfo {
   if (isCustomPetId(id)) {
     const custom = getCustomPets().find(p => p.id === id)
     if (custom) return custom
+  }
+  if (isPackPetId(id)) {
+    const pack = getPackPets().find(p => p.id === id)
+    if (pack) return pack
   }
   return PETS.find(p => p.id === id) ?? PETS[0]
 }

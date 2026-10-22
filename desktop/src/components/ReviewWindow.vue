@@ -9,6 +9,7 @@ import { useConfigStore } from '../stores/config'
 import { useDailyReview, type ReviewRange } from '../composables/useDailyReview'
 import { cleanCommitTitle } from '../composables/cleanCommitTitle'
 import { useReviewWriteHours } from '../composables/useReviewWriteHours'
+import { appEvent } from '../api/plugins'
 
 interface InlineWriteState {
   taskId: string
@@ -166,6 +167,8 @@ async function submitInlineWrite() {
       inlineResult.value = 'ok'
       markWritten(tid)
       try { await emit('write-hours-done', { taskId: tid }) } catch (_e) {}
+      // 事件血管（方案 C′）：复盘窗里的工时保存成功，插件可订阅 review_saved
+      appEvent('review_saved', { taskId: tid })
       setTimeout(() => { cancelInlineWrite() }, 1200)
     } else {
       inlineResult.value = 'fail'

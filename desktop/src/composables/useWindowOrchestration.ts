@@ -1,4 +1,4 @@
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, shallowRef, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -11,15 +11,18 @@ import { useEveningReminder } from './useEveningReminder'
 import { useTodayPlanPrompt } from './useTodayPlanPrompt'
 import { ignoreTodayEffortClosing, useEffortClosingCheck } from './useEffortClosingCheck'
 import { useWorkdayNudges } from './useWorkdayNudges'
-import { useTimeGreetings } from './useTimeGreetings'
+import { usePluginHost } from './usePluginHost'
 import { useCursorPassthrough } from './useCursorPassthrough'
 import { useUpdater } from './useUpdater'
 import { useScheduledReminders } from './useScheduledReminders'
 import { useTheme } from './useTheme'
 import { useAvatarDock, type AvatarAnchor } from './useAvatarDock'
 import { useAvatarDrag } from './useAvatarDrag'
-import { loadCustomPets } from '../petManifest'
+import { usePetRoamer, type PetAvatarApi } from './usePetRoamer'
+import { loadCustomPets, loadPackPets } from '../petManifest'
 import { MENU_KEYS, getMenuTheme } from '../menu-themes'
+import { appEvent } from '../api/plugins'
+import type { ChatStreamEvent } from '../api/chat'
 
 export function useWindowOrchestration() {
   const store = useAppStore()
@@ -62,6 +65,9 @@ export function useWindowOrchestration() {
   const alertText = ref('')
   const alertEmoji = ref('')
   const alertActions = ref<Array<{ label: string; action: () => void | Promise<void> }>>([])
+  // 当前气泡是否为持久气泡（duration=0，带操作按钮、需用户响应）。
+  // 摸头台词会临时顶掉气泡，结束后要凭这个判断是否恢复原气泡。
+  const alertPersistent = ref(false)
 
   // 面板/气泡的开向锚点，根据拖拽后小人在屏幕上的位置自动选。
   // rb=右下(默认) / rt=右上 / lb=左下 / lt=左上。
@@ -69,6 +75,13 @@ export function useWindowOrchestration() {
   // data-anchor 驱动 CSS：面板 inset、气泡堆叠方向、菜单开向整体翻转，
   // 始终朝"小人指向屏幕中心的那一侧"展开，避免面板飞出屏幕。
   const avatarAnchor = ref<AvatarAnchor>('rb')
+
+  // PetAvatar 组件 ref：App.vue 模板绑定（ref="petAvatarEl"）。点播菜单（E1）与
+  // 漫游引擎（E2）共用同一个入口 —— playClip/stopClip/setFacing 都走它，避免
+  // 两处各自持有组件 ref 导致「一个在播、另一个不知道」的片段状态分裂。
+  // shallowRef：PetAvatarApi.currentClip 本身是 Ref，deep ref 的 UnwrapRef 会把
+  // 它解包成 string|null，与组件 expose 的真实类型对不上（类型层面假报错）。
+  const petAvatarEl = shallowRef<PetAvatarApi | null>(null)
 
   // ===== Menu helpers (forward-declared for composable consumers) =====
 
@@ -81,6 +94,8 @@ export function useWindowOrchestration() {
     store.showUpdateWindow = false
     store.showBindTaskWindow = false
     configStore.showSettingsWindow = false
+    // 迷你对话面板一并收起：与大窗/其它面板互斥（chat:stream 双消费者防重）
+    store.isPetChatOpen = false
   }
 
   function menuOpenTodayPlan() {
@@ -137,14 +152,134 @@ export function useWindowOrchestration() {
     }
   }
 
+  // ===== 摸头（按住小人 ≥700ms 不动）=====
+  // 纯本地反馈，不依赖 LLM：心心粒子 + 状态短暂 happy + 随机台词气泡。
+
+  /** 摸头台词语料池：{assistantName}/{userTitle} 为模板变量 */
+  const PAT_LINES = [
+    '嘿嘿，被{userTitle}摸头了～',
+    '{assistantName}最喜欢被摸头了！',
+    '再摸的话…{assistantName}就要蹭你了哦',
+    '呼噜呼噜…充电中，请继续',
+    '{userTitle}的手暖暖的',
+    '被摸头的{assistantName}战斗力 +10%',
+    '唔…头发要被揉乱啦',
+    '{userTitle}今天也辛苦了，摸摸',
+    '咕噜咕噜…这是开心引擎的声音',
+    '嘿嘿，被抓到害羞的一面了',
+    '摸头协议已执行：心情值充满',
+    '{assistantName}会一直陪着{userTitle}的',
+    '再摸下去，{assistantName}要融化掉了～',
+  ]
+
+  function pickPatLine(): string {
+    const line = PAT_LINES[Math.floor(Math.random() * PAT_LINES.length)]
+    return line
+      .replaceAll('{assistantName}', configStore.config.assistantName)
+      .replaceAll('{userTitle}', configStore.config.userTitle)
+  }
+
+  // ===== 心心粒子 =====
+  interface PetHeart {
+    id: number
+    emoji: string
+    x: number       // 头顶随机水平偏移（px）
+    size: number    // 字号（px）
+    duration: number // 漂浮时长（ms）
+    delay: number    // 出场延迟（ms）
+  }
+  const HEART_EMOJIS = ['♥', '💖']
+  const hearts = ref<PetHeart[]>([])
+  let heartSeq = 0
+  // 批量清理用：spawn 的自删定时器，unmount 时统一撤掉
+  const heartTimers: number[] = []
+
+  function spawnHearts() {
+    // 头顶水平散布随小人渲染盒宽按比例取（±25% 容器宽）：72px 时代 ±18px 逐值
+    // 不变；任何尺寸下心心都从实际头顶宽度范围内飘起，不会挤在一条竖线上。
+    const spread = configStore.config.petSizePx * 0.25
+    const count = 3 + Math.floor(Math.random() * 3) // 3–5 个
+    for (let i = 0; i < count; i++) {
+      const delay = Math.round(Math.random() * 260)
+      const duration = 1100 + Math.round(Math.random() * 300) // 单颗 ~1.1–1.4s，整体 ~1.4s
+      const heart: PetHeart = {
+        id: ++heartSeq,
+        emoji: HEART_EMOJIS[Math.floor(Math.random() * HEART_EMOJIS.length)],
+        x: Math.round(Math.random() * spread * 2 - spread),
+        size: 11 + Math.round(Math.random() * 5),
+        duration,
+        delay,
+      }
+      hearts.value.push(heart)
+      const timer = window.setTimeout(() => {
+        hearts.value = hearts.value.filter(h => h.id !== heart.id)
+      }, delay + duration + 60)
+      heartTimers.push(timer)
+    }
+  }
+
+  /** 持久气泡被摸头台词顶掉时的存根，台词结束后原样恢复（含状态色） */
+  let patDisplaced: {
+    text: string
+    emoji: string
+    actions: Array<{ label: string; action: () => void | Promise<void> }>
+    s: JarvisState
+  } | null = null
+  let patHappyTimer: number | null = null
+
+  // ===== agent 会话联动状态（chat:stream，定义在下方 applyChatStreamEvent）=====
+  // 一轮 agent 会话是否进行中。ref：漫游引擎（E2）按它门控「不发起走路」，
+  // 需要跨 composable 读取；语义与原布尔变量一致，只是可观察。
+  const agentRunActive = ref(false)
+  // 本轮最近的活动态（thinking/working）：摸头台词恢复气泡时若 agent 还在跑，
+  // 状态色要归还给它，而不是恢复气泡的旧状态（A3：agent 事件覆盖状态色）
+  let agentRunState: JarvisState = 'thinking'
+  let agentHappyTimer: number | null = null
+
+  function handleAvatarHold() {
+    spawnHearts()
+    // 摸头台词气泡顶掉当前气泡；若那是持久气泡（逾期提醒等必响应项），
+    // 存下来等台词结束后原样恢复，不让一条台词把它永久吞掉。
+    // 工具窗/迷你对话面板打开期间台词气泡会被 showAlert 抑制、气泡内容根本
+    // 不会换——此时不存在「顶掉」，不做存根：否则 1.5s 后会把没被顶掉的气泡
+    // 原样重弹一遍，若期间用户手动 × 掉还会复活僵尸气泡。
+    if (!patDisplaced && !store.isAnyToolWindowOpen && !store.isPetChatOpen && alertPersistent.value && alertText.value) {
+      patDisplaced = {
+        text: alertText.value,
+        emoji: alertEmoji.value,
+        actions: alertActions.value,
+        s: state.value,
+      }
+    }
+    showAlert(pickPatLine(), '💗', 'happy', 8000)
+    // 状态短暂切 happy：1.5s 后归位 idle（有持久气泡在场则随恢复一起还原状态）。
+    // 归位时避开 agent 会话：agent 跑动期间状态色归 agent（thinking/working），
+    // 恢复的持久气泡只还原文案与按钮、状态色不回写（A3：agent 事件覆盖状态色）。
+    state.value = 'happy'
+    if (patHappyTimer) clearTimeout(patHappyTimer)
+    patHappyTimer = window.setTimeout(() => {
+      patHappyTimer = null
+      if (patDisplaced) {
+        const d = patDisplaced
+        patDisplaced = null
+        showAlert(d.text, d.emoji, d.s, 0, d.actions)
+        if (agentRunActive.value) state.value = agentRunState
+      } else if (!agentRunActive.value) {
+        state.value = 'idle'
+      }
+    }, 1500)
+  }
+
   const {
     onMouseDown,
+    isDragging,
   } = useAvatarDrag({
     avatarAnchor,
     dockEdge,
     onDragStart: breakoutFromDock,
     onDragEnd: maybeAutoDock,
     onClick: handleAvatarLeftClick,
+    onHold: handleAvatarHold,
   })
 
   // ===== State map + UI helpers =====
@@ -153,7 +288,6 @@ export function useWindowOrchestration() {
     text: string
     emotion: string
     color: string
-    glowColor: string
     animation: string
     description: string
   }
@@ -163,7 +297,6 @@ export function useWindowOrchestration() {
       text: '待命中',
       emotion: '😌',
       color: '#00d4ff',
-      glowColor: 'rgba(0, 212, 255, 0.3)',
       animation: 'breathe',
       description: '随时为你服务',
     },
@@ -171,7 +304,6 @@ export function useWindowOrchestration() {
       text: '正在分析',
       emotion: '🧠',
       color: '#3b82f6',
-      glowColor: 'rgba(59, 130, 246, 0.3)',
       animation: 'think',
       description: '让我想想...',
     },
@@ -179,7 +311,6 @@ export function useWindowOrchestration() {
       text: '正在处理',
       emotion: '⚙️',
       color: '#10b981',
-      glowColor: 'rgba(16, 185, 129, 0.3)',
       animation: 'work',
       description: '全力以赴中',
     },
@@ -187,7 +318,6 @@ export function useWindowOrchestration() {
       text: '发现风险',
       emotion: '⚠️',
       color: '#f59e0b',
-      glowColor: 'rgba(245, 158, 11, 0.4)',
       animation: 'alert',
       description: '需要注意！',
     },
@@ -195,7 +325,6 @@ export function useWindowOrchestration() {
       text: '今天不错',
       emotion: '😊',
       color: '#ec4899',
-      glowColor: 'rgba(236, 72, 153, 0.3)',
       animation: 'happy',
       description: '任务完成很棒',
     },
@@ -203,7 +332,6 @@ export function useWindowOrchestration() {
       text: '早安',
       emotion: '🌅',
       color: '#fbbf24',
-      glowColor: 'rgba(251, 191, 36, 0.4)',
       animation: 'breathe',
       description: '新的一天开始了',
     },
@@ -211,7 +339,6 @@ export function useWindowOrchestration() {
       text: '咖啡时间',
       emotion: '☕',
       color: '#a16207',
-      glowColor: 'rgba(161, 98, 7, 0.35)',
       animation: 'breathe',
       description: '喝一杯放松下',
     },
@@ -219,13 +346,26 @@ export function useWindowOrchestration() {
       text: '该休息了',
       emotion: '🌙',
       color: '#a78bfa',
-      glowColor: 'rgba(167, 139, 250, 0.35)',
       animation: 'breathe',
       description: '别熬太晚了',
     },
   }
   const current = computed(() => stateMap[state.value])
   const hasAlert = computed(() => alertText.value !== '')
+
+  // ===== E2 漫游行为引擎 =====
+  // 依赖齐全后挂接（isDragging/hasAlert/dockEdge 都在上方）。引擎自带总闸
+  // （config loaded + petRoaming + pack 宠物），非 pack 宠物 / 关开关时零行为。
+  const { isMoving: petMoving, notifyInteraction: notifyPetInteraction } = usePetRoamer({
+    petAvatar: petAvatarEl,
+    isDragging,
+    hasAlert,
+    showMenu,
+    dockEdge,
+    isAgentActive: () => agentRunActive.value,
+    // 工具窗打开会藏小人（走动无意义且不可见）、迷你对话面板贴着小人 —— 都不发起
+    isPanelOpen: () => store.isAnyToolWindowOpen || store.isPetChatOpen,
+  })
 
   // 状态切换时短暂高亮，给用户一个明显的视觉反馈（CSS 用 .flashing class 触发脉冲）
   const stateFlashing = ref(false)
@@ -296,15 +436,18 @@ export function useWindowOrchestration() {
     duration = 5000,
     actions: Array<{ label: string; action: () => void | Promise<void> }> = [],
   ) {
-    // 任意独立窗口（聊天/设置/大窗）打开时小人已被后端隐藏，此时弹气泡用户
-    // 看不到，还会卡住 state 直到窗口关闭。临时提示（duration>0）直接跳过；
+    // 任意独立工具窗打开期间抑制临时气泡（duration>0）：settings/大窗开着时小人
+    // 被后端隐藏，弹了也看不见；chat 是例外——小人已改为与大窗共存，但对话内容
+    // 就在大窗里，再叠一条气泡只会互相遮挡（agent 联动只切状态色即可）。
+    // 迷你对话面板同理（B1-4）：面板就贴在小人身边，气泡会盖住对话流。
     // 持久气泡（duration=0，带操作按钮）是用户必须响应的，仍照常弹出——
-    // 关窗后 avatar 恢复，气泡才真正可见，不会造成信息丢失。
-    if (store.isAnyToolWindowOpen && duration > 0) return
+    // 关窗后 avatar 恢复（chat 场景本就可见），气泡才真正可见，不会造成信息丢失。
+    if ((store.isAnyToolWindowOpen || store.isPetChatOpen) && duration > 0) return
     state.value = s
     alertText.value = text
     alertEmoji.value = emoji
     alertActions.value = actions
+    alertPersistent.value = duration === 0
     if (alertTimer) clearTimeout(alertTimer)
     if (duration > 0) {
       alertTimer = window.setTimeout(() => {
@@ -342,22 +485,71 @@ export function useWindowOrchestration() {
     ignoreTodayEffortClosing()
   }
 
+  // ===== B2 主动搭话：提醒节点让宠物「说人话」=====
+  // 固定文案零延迟兜底（showAlert 先行），再异步调 pet_chatter 拿 LLM 一句话；
+  // ≤5s 返回且气泡还停在本触发点的固定文案上才覆盖重弹（重置计时器，接受）。
+  // LLM 未配置/失败/超时后端都返回 None → 静默放弃，固定文案已经在场。
+  // 已知 kind：morning_plan / evening_summary / greeting_morning / greeting_coffee /
+  // greeting_late / overdue；"custom" = 插件 llm_line 自带生成指令（context.instruction，
+  // 方案 C′）。kind 收宽成 string：插件清单里是自由字段，运行期透传给后端定语气。
+
+  function petChatter(
+    kind: string,
+    fallback: {
+      text: string
+      emoji: string
+      state: JarvisState
+      duration: number
+      actions?: Array<{ label: string; action: () => void | Promise<void> }>
+    },
+    context: Record<string, unknown> = {},
+  ) {
+    showAlert(fallback.text, fallback.emoji, fallback.state, fallback.duration, fallback.actions)
+    // 开关关闭 = 完全走固定文案，与现状一致，零网络请求
+    if (configStore.config.petProactiveChat === false) return
+    // 人设由前端附带（触发点手上就是最新配置，后端不用读配置快照）
+    const fullContext = {
+      ...context,
+      assistantName: configStore.config.assistantName,
+      userTitle: configStore.config.userTitle,
+    }
+    invoke<string | null>('pet_chatter', { kind, context: fullContext })
+      .then((line) => {
+        if (!line) return
+        // stale 检查：气泡已被别的提醒/摸头台词顶掉 → 不再替换，防止张冠李戴
+        if (alertText.value !== fallback.text || alertEmoji.value !== fallback.emoji) return
+        showAlert(line, fallback.emoji, fallback.state, fallback.duration, fallback.actions)
+      })
+      .catch(e => console.error('pet_chatter 失败:', e))
+  }
+
   // ===== Composable consumers (need showAlert defined above) =====
 
   useEveningReminder({
     onTrigger: () => {
       // 不传 duration=0 — 那会让气泡永久挂着、状态卡在 thinking 直到用户手动 ×。
       // 复盘窗口已经自动打开了，气泡只是个提示动作，15s 足够注意到。
-      showAlert(`${configStore.config.userTitle}，今天的复盘看一下？`, '📋', 'thinking', 15000)
+      petChatter('evening_summary', {
+        text: `${configStore.config.userTitle}，今天的复盘看一下？`,
+        emoji: '📋', state: 'thinking', duration: 15000,
+      })
       store.showReviewWindow = true
     },
   })
   useTodayPlanPrompt({
     onTrigger: () => {
-      showAlert(`${configStore.config.userTitle}，先定个今日计划？`, '📝', 'thinking', 0, [
-        { label: '定今日计划', action: menuOpenTodayPlan },
-        { label: '待会儿', action: () => {} },
-      ])
+      petChatter('morning_plan', {
+        text: `${configStore.config.userTitle}，先定个今日计划？`,
+        emoji: '📝', state: 'thinking', duration: 0,
+        actions: [
+          { label: '定今日计划', action: menuOpenTodayPlan },
+          { label: '待会儿', action: () => {} },
+        ],
+      }, {
+        // 尽力附带任务面数据（轮询未就绪时为 0，后端缺字段就只报时间）
+        overdue: store.overdueCount,
+        todayDue: store.todayCount,
+      })
     },
   })
   useEffortClosingCheck({
@@ -377,10 +569,20 @@ export function useWindowOrchestration() {
       showAlert(text, emoji, 'happy', 12000)
     },
   })
-  useTimeGreetings({
-    onTrigger: (text, emoji, s) => {
-      // 早晨/咖啡/夜晚问候：15s，状态切到对应色调
-      showAlert(text, emoji, s, 15000)
+  // 插件引擎（方案 C′）：接管声明式插件的触发与执行。
+  // 时段问候已迁为内置插件 builtin-greetings（原 useTimeGreetings 已删），llm_line
+  // 走上面的 petChatter 链路，LLM 问候升级能力不回退。useWorkdayNudges 保持硬编码：
+  // 其触发时间由用户作息配置动态推导（午休/下班锚点、间隔轮转、phase/静音门控），
+  // 静态 plugin.json 表达不了，按「有条件逻辑不迁移」口径暂不迁移。
+  usePluginHost({
+    showAlert,
+    petChatter,
+    menu: {
+      openTodayPlan: menuOpenTodayPlan,
+      openManualHours: menuOpenManualHours,
+      openReview: menuShowReview,
+      openTasks: menuShowAlerts,
+      dismiss: dismissAlert,
     },
   })
   // passthrough：让小人窗口的空白区域穿透到桌面，详见 composable 内部说明
@@ -452,10 +654,33 @@ export function useWindowOrchestration() {
   }
 
   function menuOpenChat() {
-    // 打开大窗对话：小人保持可见（不隐藏），聊天窗与小人共存
+    // 打开大窗对话：小人保持可见（不隐藏），聊天窗与小人共存。
+    // closeAllPanels 已收起迷你对话面板（互斥：chat:stream 的消息流渲染
+    // 前台只留大窗一个消费者），大窗打开期间迷你面板不再弹回。
     closeAllPanels()
     showMenu.value = false
     invoke('chat_open').catch(e => console.error('chat_open 失败:', e))
+  }
+
+  async function menuOpenPetChat() {
+    // 打开贴身迷你对话（avatar 窗内 DOM 面板，不经后端窗口体系）。
+    // 与聊天大窗互斥：先 chat_close 再开面板——保证 chat:stream
+    // 前台只有一个消费者渲染消息流（avatar 自己的状态色联动不受影响）。
+    // 不判 store.isChatOpen 直接关：该标记靠 chat-window-state 事件异步回填，
+    // 「点开大窗后立刻点对话」时本地标记可能还没翻 true，按标记判断会漏关；
+    // chat_close 幂等（窗不在就跳过 hide，事件照发 false），直发无害。
+    closeAllPanels()
+    showMenu.value = false
+    try {
+      await invoke('chat_close')
+    } catch (e) {
+      console.error('chat_close 失败:', e)
+    }
+    store.isPetChatOpen = true
+  }
+
+  function closePetChat() {
+    store.isPetChatOpen = false
   }
 
   function menuCheckUpdate() {
@@ -470,10 +695,18 @@ export function useWindowOrchestration() {
     const u = configStore.config.userTitle
     if (store.overdueCount > 0) {
       const maxDays = Math.max(...store.overdueTasks.map(t => -t.daysUntilDue))
-      showAlert(
-        `${u}，你有 ${store.overdueCount} 个任务已逾期，最久 ${maxDays} 天`,
-        '🔥', 'warning', 0,
-      )
+      // 逾期最久的任务标题给 LLM 当话头（daysUntilDue 最小 = 逾期最久）
+      const worst = store.overdueTasks.reduce((a, b) => (a.daysUntilDue <= b.daysUntilDue ? a : b))
+      // 事件血管（方案 C′）：插件可订阅 task_overdue（payload 供 {payload.*} 插值）
+      appEvent('task_overdue', { count: store.overdueCount, worstTitle: worst.title })
+      petChatter('overdue', {
+        text: `${u}，你有 ${store.overdueCount} 个任务已逾期，最久 ${maxDays} 天`,
+        emoji: '🔥', state: 'warning', duration: 0,
+      }, {
+        overdue: store.overdueCount,
+        overdueTitle: worst.title,
+        overdueDays: maxDays,
+      })
     } else if (store.todayCount > 0) {
       showAlert(`${u}，今天有 ${store.todayCount} 个任务到期`, '⏰', 'warning', 10000)
     } else if (store.stackedDays.length > 0) {
@@ -500,7 +733,7 @@ export function useWindowOrchestration() {
     // 值（robo），会把合法的自定义 petId 误判为无效而回退。
     await configStore.load()
     store.refreshTaskBindings()
-    await loadCustomPets()
+    await Promise.all([loadCustomPets(), loadPackPets()])
 
     // 加载完自定义宠物后，验证当前 petId 是否有效，无效则回退到默认
     const { getPetById } = await import('../petManifest')
@@ -538,6 +771,63 @@ export function useWindowOrchestration() {
   let unlistenChatState: UnlistenFn | null = null
   let unlistenSettingsState: UnlistenFn | null = null
   let unlistenBigWindowState: UnlistenFn | null = null
+  let unlistenChatStream: UnlistenFn | null = null
+
+  // ===== Agent 实况联动（chat:stream → 小人状态色）=====
+  // 后端 chat.rs 用 app.emit 全窗口广播 StreamEvent（camelCase），avatar 的
+  // webview 即使被隐藏也照常收到事件（同 chat-window-state 先例）。这里只切
+  // 状态色、不碰气泡系统：isChatOpen 期间临时气泡已被 isAnyToolWindowOpen
+  // 抑制（对话内容在大窗里有），持久气泡的状态会被 agent 事件覆盖、文案不动。
+  // StreamEvent 的 TS interface（ChatStreamEvent）统一放 api/chat.ts（B1-5），
+  // 与聊天大窗/迷你面板共用一份。
+
+  function applyChatStreamEvent(ev: ChatStreamEvent) {
+    switch (ev.type) {
+      case 'delta':
+        // 仅空闲→活动跳变时切 thinking：首轮首个 delta 触发 flash，
+        // 同轮后续 delta 同值赋值不重复触发
+        if (!agentRunActive.value) {
+          agentRunActive.value = true
+          // 上一轮 done 的 happy 归位定时器若还挂着（连续两轮对话挨得近），
+          // 先撤掉：否则 3s 到点会把本轮刚切的 thinking 打回 idle
+          if (agentHappyTimer) { clearTimeout(agentHappyTimer); agentHappyTimer = null }
+          agentRunState = 'thinking'
+          state.value = 'thinking'
+        }
+        break
+      case 'assistant':
+        // assistant 收口且带工具调用 = 工具即将执行 → working
+        if (ev.hasToolCalls) {
+          agentRunState = 'working'
+          state.value = 'working'
+        }
+        break
+      case 'tool':
+        // tool 事件在工具执行完之后发，仍处于工作段
+        agentRunState = 'working'
+        state.value = 'working'
+        break
+      case 'done': {
+        agentRunActive.value = false
+        if (agentHappyTimer) { clearTimeout(agentHappyTimer); agentHappyTimer = null }
+        if (ev.truncated) {
+          // 被截断不算圆满收场，直接归位
+          state.value = 'idle'
+        } else {
+          state.value = 'happy'
+          // done 归位 idle：持久气泡下次 show 时自会重设状态。
+          // 摸头恢复流程进行中（patDisplaced 未消化）则不抢——恢复逻辑会按
+          // 气泡原状态（或 agent 活动态）归位，见 handleAvatarHold。
+          agentHappyTimer = window.setTimeout(() => {
+            agentHappyTimer = null
+            if (!patDisplaced) state.value = 'idle'
+          }, 3000)
+        }
+        break
+      }
+    }
+  }
+
   onMounted(async () => {
     unlistenNewTasks = await listen<Array<{ id: string; title: string; priority: string; deadline: string }>>(
       'new-tasks-detected',
@@ -570,6 +860,10 @@ export function useWindowOrchestration() {
     unlistenBigWindowState = await listen<boolean>('big-window-state', (e) => {
       store.isBigWindowOpen = e.payload
     })
+    // agent 实况联动：小人状态色跟随聊天 agent 生命周期（详见上方说明）
+    unlistenChatStream = await listen<ChatStreamEvent>('chat:stream', (e) => {
+      applyChatStreamEvent(e.payload)
+    })
   })
 
   // 首启引导：配置不完整（无禅道地址 OR 没添加代码文件夹）时展示
@@ -591,11 +885,15 @@ export function useWindowOrchestration() {
   onUnmounted(() => {
     if (alertTimer) clearTimeout(alertTimer)
     if (greetingTimer) clearTimeout(greetingTimer)
+    if (patHappyTimer) clearTimeout(patHappyTimer)
+    if (agentHappyTimer) clearTimeout(agentHappyTimer)
+    for (const t of heartTimers) clearTimeout(t)
     unlistenNewTasks?.()
     unlistenSettingsClosed?.()
     unlistenChatState?.()
     unlistenSettingsState?.()
     unlistenBigWindowState?.()
+    unlistenChatStream?.()
     unlistenFocus?.()
   })
 
@@ -604,9 +902,13 @@ export function useWindowOrchestration() {
     alertText, alertEmoji, alertActions,
     dailyMenuItems, systemMenuItems, costMenuItem,
     dockEdge, isPoked, updater, needsWizard,
-    configStore, store,
+    configStore, store, hearts, isDragging,
+    // 漫游引擎（E2）：petAvatarEl 由 App.vue 模板绑定；isMoving 给 squish/fidget
+    // 门控（模式照 isDragging）；notifyInteraction 点击小人时唤醒睡觉
+    petAvatarEl, petMoving, notifyPetInteraction,
     toggleMenu, menuShowAlerts, menuShowRisk, menuShowReview, menuOpenTodayPlan,
-    menuOpenCost, menuOpenChat, menuShowSettings, menuCheckUpdate, menuQuit,
+    menuOpenCost, menuOpenChat, menuOpenPetChat, closePetChat,
+    menuShowSettings, menuCheckUpdate, menuQuit,
     onAvatarHover, onAvatarLeave, onMouseDown,
     runAlertAction, dismissAlert, onWizardDone,
   }

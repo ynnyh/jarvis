@@ -116,9 +116,10 @@ pub fn toggle_avatar_window(app: tauri::AppHandle) -> Result<(), String> {
 
 /// 统一显隐 avatar 小人窗口，并收敛焦点行为。
 ///
-/// 所有独立工具窗（chat/settings/todayPlan/writeHours/batchWrite/cost/manualHours）
+/// 除 chat 外的独立工具窗（settings/todayPlan/writeHours/batchWrite/cost/manualHours）
 /// 打开时隐藏小人、关闭时恢复，集中在此避免每条命令重复写 hide/show/focus 三件套，
-/// 也避免日后新增窗口漏掉显隐逻辑。avatar 窗口不存在时静默跳过（不报错）。
+/// 也避免日后新增窗口漏掉显隐逻辑。chat 自 2026-10 起与小人共存（见 chat_open），
+/// 只在其它窗口 open/close 时经由本函数间接显隐。avatar 窗口不存在时静默跳过（不报错）。
 fn set_avatar_visible(app: &tauri::AppHandle, visible: bool) -> Result<(), String> {
     let Some(avatar) = app.get_webview_window("avatar") else {
         return Ok(());
@@ -139,6 +140,20 @@ fn set_avatar_visible(app: &tauri::AppHandle, visible: bool) -> Result<(), Strin
 
 // ===== Chat 窗口切换 =====
 
+/// 除 chat 外的独立工具窗（settings/todayPlan/writeHours/batchWrite/cost/manualHours）
+/// 是否有任一可见。这些窗开着期间小人应保持隐藏（v0.10.11 策略，见
+/// set_avatar_visible 注释），chat_close 恢复小人显示前必须先确认没有别的窗
+/// 仍在藏它——否则「settings 开着 → 开/关聊天」会把被 settings 藏住的小人点亮。
+fn any_tool_window_visible(app: &tauri::AppHandle) -> bool {
+    ["settings", "todayPlan", "writeHours", "batchWrite", "cost", "manualHours"]
+        .iter()
+        .any(|label| {
+            app.get_webview_window(label)
+                .map(|w| w.is_visible().unwrap_or(false))
+                .unwrap_or(false)
+        })
+}
+
 #[tauri::command]
 pub async fn chat_open(app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Emitter;
@@ -149,11 +164,12 @@ pub async fn chat_open(app: tauri::AppHandle) -> Result<(), String> {
     } else {
         return Err("chat 窗口未注册".into());
     }
-    // 聊天大窗打开时隐藏 avatar 小人：大窗打开期间小人无法拖动，且独立常驻窗口
-    // 与小人共存容易引发奇奇怪怪的层级/焦点问题。统一与 settings/todayPlan 等工具窗
-    // 行为——打开即隐藏、关闭（chat_close）再恢复显示。avatar 是菜单唯一入口，隐藏后
-    // 用户无法再触发其它窗口，故不存在「关了 chat 但 settings 还在、小人却冒出」的情况。
-    set_avatar_visible(&app, false)?;
+    // 聊天大窗与 avatar 小人共存（2026-10 活物感改造）：小人不再随 chat 打开而
+    // 隐藏，留在桌面上实时反映 agent 状态——前端监听 chat:stream 事件驱动动画
+    // 状态机（thinking/working/happy 状态色与 motion）。其余工具窗
+    // （settings/todayPlan 等）维持「打开即隐藏」策略不变。chat_close 恢复显示
+    // 前会先确认没有其它工具窗仍开着（any_tool_window_visible），不会把被
+    // settings 等窗藏着的小人点亮。
     // 同步前端大窗状态：聊天窗打开 → isChatOpen=true，用于"聊天窗打开期间不弹气泡"等联动。
     app.emit_to("avatar", "chat-window-state", true)
         .map_err(|e| format!("emit chat-window-state 失败: {}", e))?;
@@ -166,7 +182,9 @@ pub async fn chat_close(app: tauri::AppHandle) -> Result<(), String> {
     if let Some(chat) = app.get_webview_window("chat") {
         chat.hide().map_err(|e| format!("hide chat 失败: {}", e))?;
     }
-    set_avatar_visible(&app, true)?;
+    if !any_tool_window_visible(&app) {
+        set_avatar_visible(&app, true)?;
+    }
     app.emit_to("avatar", "chat-window-state", false)
         .map_err(|e| format!("emit chat-window-state 失败: {}", e))?;
     Ok(())

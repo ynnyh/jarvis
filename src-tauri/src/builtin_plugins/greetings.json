@@ -1,0 +1,57 @@
+{
+  "id": "builtin-greetings",
+  "name": "时段问候",
+  "description": "早安、午后咖啡、深夜劝休三个时段的问候；配置了 AI 模型时会升级成一句有上下文的人话",
+  "version": "1.0.0",
+  "author": "Jarvis",
+  "triggers": [
+    {
+      "type": "daily_window",
+      "startMin": 450,
+      "endMin": 540,
+      "key": "morning",
+      "actions": [
+        {
+          "type": "llm_line",
+          "kind": "greeting_morning",
+          "fallback": "{userTitle}，早安，新的一天加油 ✨",
+          "emoji": "🌅",
+          "state": "morning",
+          "durationSec": 15
+        }
+      ]
+    },
+    {
+      "type": "daily_window",
+      "startMin": 900,
+      "endMin": 960,
+      "key": "coffee",
+      "actions": [
+        {
+          "type": "llm_line",
+          "kind": "greeting_coffee",
+          "fallback": "{userTitle}，喝杯咖啡放松下",
+          "emoji": "☕",
+          "state": "coffee",
+          "durationSec": 15
+        }
+      ]
+    },
+    {
+      "type": "daily_window",
+      "startMin": 1320,
+      "endMin": 1410,
+      "key": "late",
+      "actions": [
+        {
+          "type": "llm_line",
+          "kind": "greeting_late",
+          "fallback": "{userTitle}，该休息了，别熬太晚",
+          "emoji": "🌙",
+          "state": "late",
+          "durationSec": 15
+        }
+      ]
+    }
+  ]
+}

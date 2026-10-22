@@ -15,6 +15,8 @@ import MenuThemeSection from './components/settings/MenuThemeSection.vue'
 import StyleThemeSection from './components/settings/StyleThemeSection.vue'
 import LlmSection from './components/settings/LlmSection.vue'
 import PetSection from './components/settings/PetSection.vue'
+import PetProactiveChatSection from './components/settings/PetProactiveChatSection.vue'
+import PluginsSection from './components/settings/PluginsSection.vue'
 import QuietRulesSection from './components/settings/QuietRulesSection.vue'
 import RepoRootsSection from './components/settings/RepoRootsSection.vue'
 import RitualsSection from './components/settings/RitualsSection.vue'
@@ -61,7 +63,7 @@ export const SETTINGS_PAGE_COMPONENTS: Record<SettingsPageKey, Component[]> = {
   code: [RepoRootsSection, ExcludedLinesSection],
   dailyNudges: [WorkDaysSection, WorkPeriodsSection, QuietRulesSection, RitualsSection, WorkdayNudgesSection, TodayOverrideSection, RemindersSection],
   effortClosing: [EffortClosingSection],
-  personalization: [AssistantNameSection, StyleThemeSection, MenuThemeSection, WorkStyleSection, PetSection, LeftClickActionSection],
+  personalization: [AssistantNameSection, StyleThemeSection, MenuThemeSection, WorkStyleSection, PetSection, LeftClickActionSection, PetProactiveChatSection, PluginsSection],
   about: [ChangelogSection],
 }
 

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useWindowOrchestration } from './composables/useWindowOrchestration'
 import TaskWindow from './components/TaskWindow.vue'
 import SettingsWindow from './components/SettingsWindow.vue'
@@ -8,24 +9,120 @@ import UpdateWindow from './components/UpdateWindow.vue'
 import BindTaskWindow from './components/BindTaskWindow.vue'
 import WelcomeWizard from './components/WelcomeWizard.vue'
 import PetAvatar from './components/PetAvatar.vue'
+import PetChat from './components/PetChat.vue'
 import ErrorBoundary from './components/ErrorBoundary.vue'
+import { getPetById } from './petManifest'
 
 const {
   avatarAnchor, showMenu, state, current, hasAlert, stateFlashing,
   alertText, alertEmoji, alertActions,
   dailyMenuItems, systemMenuItems, costMenuItem,
   dockEdge, isPoked, updater, needsWizard,
-  configStore, store,
-  toggleMenu, menuShowAlerts, menuShowReview, menuOpenTodayPlan,
-  menuOpenCost, menuOpenChat, menuShowSettings, menuCheckUpdate, menuQuit,
+  configStore, store, hearts, isDragging,
+  // 漫游引擎（E2）：petAvatarEl 在 orchestration 声明（点播菜单与漫游共用），
+  // 模板 ref="petAvatarEl" 绑定到这里
+  petAvatarEl, petMoving, notifyPetInteraction,
+  toggleMenu, menuShowAlerts, menuShowRisk, menuShowReview, menuOpenTodayPlan,
+  menuOpenCost, menuOpenChat, menuOpenPetChat, closePetChat,
+  menuShowSettings, menuCheckUpdate, menuQuit,
   onAvatarHover, onAvatarLeave, onMouseDown,
   runAlertAction, dismissAlert, onWizardDone,
 } = useWindowOrchestration()
+
+// ===== 点击 squish =====
+// mousedown 即播 320ms 弹回动画；一旦发展成真拖拽（isDragging，位移 >5px 时置位）
+// 立即撤掉，避免小人带着压扁形变被拖走。用 classList 直操作 + 强制 reflow，
+// 是为了让同名动画在连续快速点击时能从头重播（响应式 class 无法重触发）。
+// 作用在内层 .pet-squish-layer 而非 .avatar 本体：squish 关键帧 scale(1.12, 0.88)
+// 会把元素纵向压掉 ~8%，若直接变形 .avatar（穿透判定的 pointer-target），按下点
+// 靠近上下边缘时会瞬时落到变形后的盒子外 → 穿透轮询 elementFromPoint 判定
+// 「不在 UI 上」→ 按压中途开穿透、事件流断掉。内层变形不影响 .avatar 自身
+// 的命中边界（尺寸随 --pet-size 静态变化，动画期恒定），按压事件流永远稳定。
+const avatarEl = ref<HTMLDivElement | null>(null)
+const squishEl = ref<HTMLDivElement | null>(null)
+let squishTimer: number | null = null
+
+// ===== 小人尺寸 =====
+// 以 CSS 变量 --pet-size 注入 .jarvis-container：avatar 命中盒、气泡/菜单/面板
+// 的 calc 基准、PetAvatar 容器全部从它派生，改值只改变量、无重载。
+// petSizePx 在 config.load 里已钳制进 [48,176] 且保证是数字，直读即可。
+const petSizeStyle = computed(() => ({ '--pet-size': `${configStore.config.petSizePx}px` }))
+
+function playSquish() {
+  // 漫游移动中不启动新 squish（E2：模式照 isDragging 门控——移动窗口上的
+  // 形变动画没有锚点，视觉发飘）
+  if (petMoving.value) return
+  const el = squishEl.value
+  if (!el) return
+  el.classList.remove('pet-squish')
+  void el.offsetWidth  // 强制 reflow：重置动画起点
+  el.classList.add('pet-squish')
+  if (squishTimer) clearTimeout(squishTimer)
+  squishTimer = window.setTimeout(() => {
+    squishTimer = null
+    el.classList.remove('pet-squish')
+  }, 340)
+}
+
+function cancelSquish() {
+  if (squishTimer) { clearTimeout(squishTimer); squishTimer = null }
+  squishEl.value?.classList.remove('pet-squish')
+}
+
+watch(isDragging, (dragging) => {
+  if (dragging) cancelSquish()
+})
+
+// 漫游开始走动时撤掉在播的 squish（同拖拽置位先撤 squish 的模式）
+watch(petMoving, (moving) => {
+  if (moving) cancelSquish()
+})
+
+function onAvatarMouseDown(e: MouseEvent) {
+  playSquish()
+  // 点击小人 = 交互：漫游引擎据此唤醒睡觉、重置「连续 idle」时钟
+  notifyPetInteraction()
+  onMouseDown(e)
+}
+
+onBeforeUnmount(() => {
+  if (squishTimer) clearTimeout(squishTimer)
+})
+
+// ===== 点播菜单（pack 宠物专属，PRD E1-6，dsh-pet 同款「来一个」）=====
+// 每次开菜单把当前包的小动作洗牌取最多 6 个；点击经 PetAvatar 暴露的
+// playClip 播该片段（一次性，播完自动回 idle）。menu-themes 的固定 key
+// 体系不动，动态区块直接追加在菜单模板末尾。petAvatarEl 声明在
+// useWindowOrchestration（与 E2 漫游引擎共用同一个组件 ref）。
+const packMenuActions = ref<string[]>([])
+
+function reshufflePackActions() {
+  const pet = getPetById(configStore.config.petId)
+  const names = pet.petType === 'pack' ? (pet.pack?.clips.actions ?? []).map(a => a.name) : []
+  // Fisher-Yates 洗牌
+  for (let i = names.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[names[i], names[j]] = [names[j], names[i]]
+  }
+  packMenuActions.value = names.slice(0, 6)
+}
+
+watch(showMenu, (open) => {
+  if (open) reshufflePackActions()
+})
+
+/** name 缺省 = 「来一个」随机播一个 */
+function playPackAction(name?: string) {
+  const target = name ?? packMenuActions.value[Math.floor(Math.random() * packMenuActions.value.length)]
+  if (!target) return
+  showMenu.value = false
+  void petAvatarEl.value?.playClip(target)
+}
 </script>
 
 <template>
   <ErrorBoundary>
-  <div class="jarvis-container" :data-anchor="avatarAnchor" @contextmenu.prevent="toggleMenu">
+  <div class="jarvis-container" :data-anchor="avatarAnchor" :style="petSizeStyle" @contextmenu.prevent="toggleMenu">
     <!-- 菜单打开时铺满窗口的透明遮罩，点击任意位置关闭菜单 -->
     <div v-if="showMenu" class="menu-backdrop pointer-target" @click="showMenu = false" @contextmenu.prevent="showMenu = false" />
     <div v-if="showMenu" class="menu pointer-target">
@@ -52,16 +149,37 @@ const {
       <button class="menu-item" @click="menuOpenChat">
         <span>{{ systemMenuItems[0].emoji }}</span><span>{{ systemMenuItems[0].label }}</span>
       </button>
-      <button class="menu-item" @click="menuShowSettings">
+      <button class="menu-item" @click="menuOpenPetChat">
         <span>{{ systemMenuItems[1].emoji }}</span><span>{{ systemMenuItems[1].label }}</span>
       </button>
-      <button class="menu-item" @click="menuCheckUpdate">
+      <button class="menu-item" @click="menuShowSettings">
         <span>{{ systemMenuItems[2].emoji }}</span><span>{{ systemMenuItems[2].label }}</span>
+      </button>
+      <button class="menu-item" @click="menuCheckUpdate">
+        <span>{{ systemMenuItems[3].emoji }}</span><span>{{ systemMenuItems[3].label }}</span>
         <span v-if="updater.available.value" class="menu-badge badge-soon">新</span>
       </button>
       <button class="menu-item menu-item-danger" @click="menuQuit">
-        <span>{{ systemMenuItems[3].emoji }}</span><span>{{ systemMenuItems[3].label }}</span>
+        <span>{{ systemMenuItems[4].emoji }}</span><span>{{ systemMenuItems[4].label }}</span>
       </button>
+
+      <!-- 点播区块（仅 pack 宠物且有 actions 时出现，PRD 指定放菜单末尾）：
+           「来一个」播随机动作，下面是本次开菜单洗出的动作名（≤6 个）。
+           menu-themes 固定 key 体系不进这里。 -->
+      <template v-if="packMenuActions.length">
+        <div class="menu-divider" />
+        <button class="menu-item menu-item-pack-title" @click="playPackAction()">
+          <span>▶</span><span>来一个</span>
+        </button>
+        <button
+          v-for="name in packMenuActions"
+          :key="name"
+          class="menu-item"
+          @click="playPackAction(name)"
+        >
+          <span>🎬</span><span>{{ name }}</span>
+        </button>
+      </template>
     </div>
 
     <div class="menu-btn pointer-target" @click="toggleMenu">⋯</div>
@@ -107,16 +225,41 @@ const {
       <!-- dragDropEnabled:false（tauri.conf.json）从 WebView2 层根治拖拽 ghost image 方框：
            startDragging 触发 OS 原生窗口移动，不再走 HTML5 drag-drop 路径生成 ghost。
            前端无需 @dragstart.prevent / draggable=false 任何花瓣拦截。 -->
-      <div class="avatar pointer-target" :class="{ docked: dockEdge && !isPoked }"
-        @mousedown="onMouseDown"
+      <div
+        ref="avatarEl"
+        class="avatar pointer-target"
+        :class="{ docked: dockEdge && !isPoked }"
+        @mousedown="onAvatarMouseDown"
       >
-        <PetAvatar
-          :pet-id="configStore.config.petId"
-          :color="current.color"
-          :glow-color="current.glowColor"
-          :active="state === 'working'"
-          :flashing="stateFlashing"
-        />
+        <!-- squish 变形层：pointer-target 是外层 .avatar，这里变形不影响命中区 -->
+        <div ref="squishEl" class="pet-squish-layer">
+          <PetAvatar
+            ref="petAvatarEl"
+            :pet-id="configStore.config.petId"
+            :color="current.color"
+            :active="state === 'working'"
+            :flashing="stateFlashing"
+            :motion="current.animation"
+            :idle="state === 'idle'"
+            :dragging="isDragging"
+            :moving="petMoving"
+          />
+        </div>
+        <!-- 摸头心心：从头顶漂起淡出。容器 pointer-events:none——.avatar 是
+             拖拽/点击热区，粒子绝不能截住鼠标事件（穿透判定依赖热区精确） -->
+        <div v-if="hearts.length" class="pet-hearts">
+          <span
+            v-for="h in hearts"
+            :key="h.id"
+            class="pet-heart"
+            :style="{
+              left: `${h.x}px`,
+              fontSize: `${h.size}px`,
+              animationDuration: `${h.duration}ms`,
+              animationDelay: `${h.delay}ms`,
+            }"
+          >{{ h.emoji }}</span>
+        </div>
       </div>
     </div>
 
@@ -132,6 +275,12 @@ const {
     <UpdateWindow :updater="updater" />
     <!-- 任务↔项目绑定窗（新任务事件 / 任务卡未绑定图标都会拉起） -->
     <BindTaskWindow />
+    <!-- 贴身迷你对话面板：avatar 窗内 DOM 面板，与小人同窗（拖动天然跟随）。
+         不加入 onFocusChanged 的失焦收起清单——输入法/切窗会误关，只有
+         Esc / × / 打开其它面板才收起 -->
+    <Transition name="petchat">
+      <PetChat v-if="store.isPetChatOpen" @close="closePetChat" />
+    </Transition>
     <!-- 首启引导：配置不完整时全屏覆盖，写完后消失 -->
     <WelcomeWizard v-if="needsWizard" @done="onWizardDone" />
   </div>
@@ -148,68 +297,91 @@ const {
   overflow: visible;
   background: transparent;
   /* ============================================================
-     二期居中布局（窗口 900×900，小人 72×72 恒居窗口正中心）：
+     二期居中布局（窗口 900×900，小人渲染盒 --pet-size 恒居窗口正中心）：
      anchor（data-anchor）不再移动小人/窗口，只翻转面板、气泡、菜单的
      「开向」——始终朝小人对侧（= 屏幕中心方向）展开，避免出屏。
 
      定位基准一律用百分比（50% = 窗口中心）：百分比让小人在任何窗口
      尺寸下自动居中，窗口 resize 时浏览器在同一帧布局完成，无跨管线间隙。
 
-     推导（900 态下的等价像素）：
-     - 小人盒：中心 50% ± 半径 36 → calc(50% - 36px)，900 下 = 414..486；
-     - 面板保持旧视觉尺寸 384×462（旧 400×560 窗减 inset 8/8/90/8）：
-       面板只在 900 态出现（拖拽期菜单/面板不可见），inset 保持固定 px：
-       水平贴小人对侧：内缘 = 小人内缘 414 - 8(间距) = 406
-         → 近侧 inset = 900-406 = 494px，远侧 = 406-384 = 22px；
-       垂直与小人同侧边缘对齐（b 锚底对齐 486、t 锚顶对齐 414）：
-         → 同侧 inset = 900-486 = 414px，对侧 = 900-414-462 = 24px。
+     小人渲染盒尺寸可变（48–176px 连续，见 stores/config.ts petSizePx），
+     以 --pet-size（模板内联注入）派生 --pet-half = 尺寸一半。下面所有
+     calc 里的 36px 时代硬编码全部换成 var(--pet-half) 表达式，等价换算
+     以 72px（half=36）逐值对齐旧值：
+     - 小人盒：中心 50% ± half；
+     - 面板保持旧视觉尺寸 384×462：水平贴小人对侧、内缘留 8px 间距
+       → 近侧 inset = 50% + half + 8px（72px 时 494px），
+       远侧 = 50% - half - 8px - 384px（72px 时 22px）；
+       垂直与小人同侧边缘对齐（b 锚底对齐 50%+half、t 锚顶对齐 50%-half）
+       → 同侧 inset = 50% - half（72px 时 414px），
+       对侧 = 同侧对齐值 - 462px（72px 时 24px）。
      默认 anchor=rb，data-anchor 切换时被同名规则覆盖。 */
+  /* var() 回退值跟默认尺寸走（petSizePx 默认 96）；--pet-size 恒由模板注入，
+     回退只是防御，公式本身不动 */
+  --pet-half: calc(var(--pet-size, 96px) / 2);
   --avatar-top: auto;
-  --avatar-right: calc(50% - 36px);
-  --avatar-bottom: calc(50% - 36px);
+  --avatar-right: calc(50% - var(--pet-half));
+  --avatar-bottom: calc(50% - var(--pet-half));
   --avatar-left: auto;
-  --panel-top: 24px;
-  --panel-right: 494px;
-  --panel-bottom: 414px;
-  --panel-left: 22px;
+  --panel-top: calc(50% + var(--pet-half) - 462px);
+  --panel-right: calc(50% + var(--pet-half) + 8px);
+  --panel-bottom: calc(50% - var(--pet-half));
+  /* 远侧 inset 钳到 ≥8px：medium/large 下小人盒变宽，384 宽面板若按纯公式
+     排，远缘会越过窗口左界被 OS 裁掉（128px 时 -6px、176px 时 -30px）。
+     钳住后面板整体收窄十几~几十 px（内容区自带滚动），既不出窗也不盖小人。 */
+  --panel-left: max(calc(50% - var(--pet-half) - 392px), 8px);
+  /* 迷你对话面板（PetChat，320×440）：同一套 anchor 翻转体系，贴小人对侧
+     展开、竖向与任务面板同基准（b 锚底对齐 50%+half）。默认 anchor=rb。 */
+  --petchat-top: auto;
+  --petchat-right: calc(50% + var(--pet-half) + 8px);
+  --petchat-bottom: calc(50% - var(--pet-half));
+  --petchat-left: auto;
   /* 透明窗浮层直接悬在桌面上，主题里的彩色泛光段（如 cyber 的青色 glow）会形成脏晕，
      这里覆写为纯黑投影（保留 cyber 原值的黑色段）；实底窗口不受影响。 */
   --panel-shadow: 0 8px 28px rgba(0, 0, 0, 0.7);
   --menu-shadow: 0 6px 24px rgba(0, 0, 0, 0.6);
 }
 .jarvis-container[data-anchor="rt"] {
-  --avatar-top: calc(50% - 36px);
-  --avatar-right: calc(50% - 36px);
+  --avatar-top: calc(50% - var(--pet-half));
+  --avatar-right: calc(50% - var(--pet-half));
   --avatar-bottom: auto;
   --avatar-left: auto;
-  --panel-top: 414px;
-  --panel-bottom: 24px;
+  --panel-top: calc(50% - var(--pet-half));
+  --panel-bottom: calc(50% + var(--pet-half) - 462px);
+  --petchat-top: calc(50% - var(--pet-half));
+  --petchat-bottom: auto;
 }
 .jarvis-container[data-anchor="lb"] {
   --avatar-top: auto;
   --avatar-right: auto;
-  --avatar-bottom: calc(50% - 36px);
-  --avatar-left: calc(50% - 36px);
-  --panel-right: 22px;
-  --panel-left: 494px;
+  --avatar-bottom: calc(50% - var(--pet-half));
+  --avatar-left: calc(50% - var(--pet-half));
+  --panel-right: max(calc(50% - var(--pet-half) - 392px), 8px);
+  --panel-left: calc(50% + var(--pet-half) + 8px);
+  --petchat-left: calc(50% + var(--pet-half) + 8px);
+  --petchat-right: auto;
 }
 .jarvis-container[data-anchor="lt"] {
-  --avatar-top: calc(50% - 36px);
+  --avatar-top: calc(50% - var(--pet-half));
   --avatar-right: auto;
   --avatar-bottom: auto;
-  --avatar-left: calc(50% - 36px);
-  --panel-top: 414px;
-  --panel-bottom: 24px;
-  --panel-right: 22px;
-  --panel-left: 494px;
+  --avatar-left: calc(50% - var(--pet-half));
+  --panel-top: calc(50% - var(--pet-half));
+  --panel-bottom: calc(50% + var(--pet-half) - 462px);
+  --panel-right: max(calc(50% - var(--pet-half) - 392px), 8px);
+  --panel-left: calc(50% + var(--pet-half) + 8px);
+  --petchat-top: calc(50% - var(--pet-half));
+  --petchat-bottom: auto;
+  --petchat-left: calc(50% + var(--pet-half) + 8px);
+  --petchat-right: auto;
 }
 
 .avatar-group {
   position: absolute;
-  /* --avatar-* 四向 inset 均 calc(50% - 36px)：锚定角贴着「小人盒」的对应角
-     （小人恒居窗口中心，900 下占 414..486，拖拽期 100 小窗下占 14..86），
-     气泡/状态条从固定角向屏幕中心方向堆叠生长，无论气泡多高、窗口多大，
-     小人像素位置永远在窗口正中。 */
+  /* --avatar-* 四向 inset 均 calc(50% - half)：锚定角贴着「小人盒」的对应角
+     （小人恒居窗口中心，尺寸随 --pet-size 三档变化，900 下 medium 占 386..514，
+     拖拽期 100 小窗下占 14..86），气泡/状态条从固定角向屏幕中心方向堆叠生长，
+     无论气泡多高、窗口多大，小人像素位置永远在窗口正中。 */
   top: var(--avatar-top);
   right: var(--avatar-right);
   bottom: var(--avatar-bottom);
@@ -340,7 +512,7 @@ const {
 .alert-bubble::after {
   content: '';
   position: absolute;
-  right: 36px;                     /* 大致对准 avatar 中心 */
+  right: calc(var(--pet-half) - 5px);  /* 尾巴中心对准 avatar 中心（half 处） */
   bottom: -5px;
   width: 10px;
   height: 10px;
@@ -348,6 +520,25 @@ const {
   border-right: var(--panel-border);
   border-bottom: var(--panel-border);
   transform: rotate(45deg);
+}
+/* 尾巴跟随 anchor 翻转（四锚点双向齐全）：
+   - 左侧 anchor（lb/lt）：气泡贴小人左缘对齐（align-items: flex-start），
+     尾巴改从气泡左缘算 half，否则落在气泡右端、偏离小人中心；
+   - 上排 anchor（rt/lt）：气泡经 column-reverse 排在小人下方，
+     尾巴翻到气泡顶边朝上指（换 border-left+top 形成朝上尖角）。 */
+.jarvis-container[data-anchor="lb"] .alert-bubble::after,
+.jarvis-container[data-anchor="lt"] .alert-bubble::after {
+  right: auto;
+  left: calc(var(--pet-half) - 5px);
+}
+.jarvis-container[data-anchor="rt"] .alert-bubble::after,
+.jarvis-container[data-anchor="lt"] .alert-bubble::after {
+  bottom: auto;
+  top: -5px;
+  border-right: none;
+  border-bottom: none;
+  border-left: var(--panel-border);
+  border-top: var(--panel-border);
 }
 
 /* 进出动效 */
@@ -363,19 +554,82 @@ const {
 
 .avatar {
   position: relative;
-  width: 72px;
-  height: 72px;
+  /* 命中盒随 --pet-size 三档静态变化（穿透不变式允许静态放大，禁止动画期变形）；
+     内容（Lottie/图片、状态点、地面投影、hover 放大、flashing 脉冲）全在
+     PetAvatar.vue 里。.avatar 只做 size×size 事件钩子，事件挂在它上面（mousedown）。 */
+  width: var(--pet-size, 128px);
+  height: var(--pet-size, 128px);
   cursor: pointer;
 }
-/* 内容（包括发光、Lottie 动画、状态点、hover 放大、flashing 脉冲）全在 PetAvatar.vue 里。
-   .avatar 只做 72×72 事件钩子，事件挂在它上面（mousedown）。 */
+
+/* 点击 squish：mousedown 即播（JS 挂 class），发展成拖拽立即撤。
+   作用于内层 .pet-squish-layer（不含命中判定本体 .avatar），一次性 320ms 弹回，
+   内部 transform 链（--pet-scale/offset）不受影响。 */
+.pet-squish-layer {
+  position: absolute;
+  inset: 0;
+}
+.pet-squish-layer.pet-squish {
+  animation: pet-squish 0.32s ease-out both;
+}
+@keyframes pet-squish {
+  0%  { transform: scale(1.12, 0.88); }
+  55% { transform: scale(0.97, 1.02); }
+  100% { transform: scale(1, 1); }
+}
+
+/* ===== 摸头心心粒子 =====
+   锚在 .avatar 顶部中点，从头顶漂起（bottom 锚到顶缘下 8px，尺寸无关）。
+   热区纪律：容器与粒子一律 pointer-events:none，穿透判定依赖 .avatar 的热区
+   边界精确，不容许粒子截事件。 */
+.pet-hearts {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% - 8px);
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+.pet-heart {
+  position: absolute;
+  bottom: 0;
+  transform: translateX(-50%);
+  opacity: 0;
+  animation-name: pet-heart-float;
+  animation-timing-function: ease-out;
+  animation-fill-mode: both;   /* delay 期间保持 0% 帧（隐形），播完停在 100%（淡出） */
+}
+@keyframes pet-heart-float {
+  0%   { transform: translateX(-50%) translateY(0) scale(0.6); opacity: 0; }
+  15%  { opacity: 0.95; }
+  70%  { opacity: 0.8; }
+  100% { transform: translateX(-50%) translateY(-52px) scale(1.15); opacity: 0; }
+}
+
+/* minimal 主题的设计定义是 no motion：新动效（squish + 心心）在此主题下全关 */
+html[data-theme="minimal"] .pet-squish-layer.pet-squish { animation: none; }
+html[data-theme="minimal"] .pet-heart { display: none; }
+
+/* 迷你对话面板进出：纯淡入淡出（面板本体样式在 PetChat.vue）。
+   minimal 主题 no motion，动画一并关掉（同 squish/心心先例） */
+.petchat-enter-active,
+.petchat-leave-active {
+  transition: opacity 0.18s ease;
+}
+.petchat-enter-from,
+.petchat-leave-to {
+  opacity: 0;
+}
+html[data-theme="minimal"] .petchat-enter-active,
+html[data-theme="minimal"] .petchat-leave-active { transition: none; }
+
 
 .menu-btn {
-  /* 贴小人角落，跟随百分比基准（小人恒居窗口中心，拖拽期缩窗也不跑位）：
-     竖向在小人上/下 4px 外：底边 = 小人顶 (50%-36) - 4 → inset = 50%+40；
-     横向缩进小人内 6px：右边 = 小人右 (50%+36) - 6 → inset = 50%-30。
-     900 态等价旧值 490px/420px。 */
-  position: fixed; bottom: calc(50% + 40px); right: calc(50% - 30px);
+  /* 贴小人角落，跟随百分比基准（小人恒居窗口中心，尺寸随 --pet-half 三档变化，
+     拖拽期缩窗也不跑位）：竖向在小人上/下 half+4px 外；横向缩进小人内 6px。
+     72px 时代等价旧值 490px/420px（half=36 → 50%+40 / 50%-30）。 */
+  position: fixed; bottom: calc(50% + var(--pet-half) + 4px); right: calc(50% - var(--pet-half) + 6px);
   width: 22px; height: 22px;
   display: flex; align-items: center; justify-content: center;
   font-size: 14px; color: var(--text-faint);
@@ -384,9 +638,9 @@ const {
 }
 .menu-btn:hover { color: var(--text-ghost); background: var(--surface-item-active); }
 /* menu-btn 跟随 anchor 翻转：用 CSS 变量跟 avatar-group 同步 */
-.jarvis-container[data-anchor="rt"] .menu-btn { top: calc(50% + 40px); bottom: auto; }
-.jarvis-container[data-anchor="lb"] .menu-btn { left: calc(50% - 30px); right: auto; }
-.jarvis-container[data-anchor="lt"] .menu-btn { top: calc(50% + 40px); left: calc(50% - 30px); bottom: auto; right: auto; }
+.jarvis-container[data-anchor="rt"] .menu-btn { top: calc(50% + var(--pet-half) + 4px); bottom: auto; }
+.jarvis-container[data-anchor="lb"] .menu-btn { left: calc(50% - var(--pet-half) + 6px); right: auto; }
+.jarvis-container[data-anchor="lt"] .menu-btn { top: calc(50% + var(--pet-half) + 4px); left: calc(50% - var(--pet-half) + 6px); bottom: auto; right: auto; }
 
 .menu-backdrop {
   position: fixed;
@@ -394,11 +648,11 @@ const {
   z-index: 90;
 }
 .menu {
-  /* 展开在小人对侧，跟随百分比基准：
-     横向贴小人外 8px：右边 = 小人左 (50%-36) - 8 → inset = 50%+44；
-     竖向缩进小人内 6px：底边 = 小人底 (50%+36) - 6 → inset = 50%-30。
-     900 态等价旧值 420px/494px。 */
-  position: fixed; bottom: calc(50% - 30px); right: calc(50% + 44px);
+  /* 展开在小人对侧，跟随百分比基准（half 随 --pet-size 三档变化）：
+     横向贴小人外 8px：inset = 50% + half + 8px；
+     竖向缩进小人内 6px：inset = 50% - half + 6px。
+     72px 时代等价旧值 420px/494px。 */
+  position: fixed; bottom: calc(50% - var(--pet-half) + 6px); right: calc(50% + var(--pet-half) + 8px);
   /* 全局 .menu 工具类自带 backdrop-filter: blur(20px)，透明窗上只会产生 artifact，这里显式关掉 */
   background: var(--popup-bg); backdrop-filter: none; -webkit-backdrop-filter: none;
   border-radius: var(--radius-md); border: var(--menu-border);
@@ -407,9 +661,9 @@ const {
   overflow: hidden;
 }
 /* 菜单跟随 anchor 翻转：始终在 menu-btn 靠屏幕中心的一侧 */
-.jarvis-container[data-anchor="rt"] .menu { top: calc(50% - 30px); bottom: auto; }
-.jarvis-container[data-anchor="lb"] .menu { left: calc(50% + 44px); right: auto; }
-.jarvis-container[data-anchor="lt"] .menu { top: calc(50% - 30px); left: calc(50% + 44px); bottom: auto; right: auto; }
+.jarvis-container[data-anchor="rt"] .menu { top: calc(50% - var(--pet-half) + 6px); bottom: auto; }
+.jarvis-container[data-anchor="lb"] .menu { left: calc(50% + var(--pet-half) + 8px); right: auto; }
+.jarvis-container[data-anchor="lt"] .menu { top: calc(50% - var(--pet-half) + 6px); left: calc(50% + var(--pet-half) + 8px); bottom: auto; right: auto; }
 .menu-item {
   width: 100%; padding: 8px 14px;
   display: flex; align-items: center; gap: 8px;
@@ -420,6 +674,9 @@ const {
 .menu-item:hover { background: var(--surface-item-hover); }
 .menu-item-danger { color: var(--red-text); }
 .menu-item-danger:hover { background: var(--red-bg); color: var(--red-text-light); }
+/* 点播区块标题「来一个」：强调色字，与普通动作项区分 */
+.menu-item-pack-title { color: var(--accent-text); }
+.menu-item-pack-title:hover { background: var(--surface-item-hover); color: var(--accent-text); }
 .menu-divider {
   height: 1px;
   margin: 4px 8px;

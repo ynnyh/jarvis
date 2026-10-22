@@ -1,7 +1,7 @@
 /**
  * 当日去重工具：统一的「今天 + category + suffix」localStorage 键，
- * 供各提醒 composable 复用，消除 useWorkdayNudges / useTimeGreetings /
- * useEffortClosingCheck / useEveningReminder 里各自复制的 todayKey/hasFired/markFired 样板。
+ * 供各提醒 composable 复用（useWorkdayNudges / useEffortClosingCheck /
+ * useEveningReminder / usePluginHost），消除各自复制的 todayKey/hasFired/markFired 样板。
  *
  * 语义：key 形如 `jarvis.{category}.{YYYY-MM-DD}.{suffix}`，按自然日自动失效
  * （次日拼出的 key 不同，旧 flag 自然读不到，无需主动清理）。

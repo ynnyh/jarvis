@@ -62,16 +62,23 @@ export const useAppStore = defineStore('app', () => {
 
   // ===== 独立窗口（Rust 侧控制）的开关状态 =====
   // 这些值由后端在 open/close 命令里 emit 事件同步过来，前端只读取、不直接改。
-  // 用途：聊天窗/设置窗/大窗打开期间小人被隐藏，前端据此抑制气泡弹出、
-  // 调整状态点颜色等，避免与隐藏态冲突。
+  // 用途：工具窗打开期间抑制临时气泡、同步状态色等联动。注意 chat 是例外
+  // （2026-10 起聊天大窗与小人共存，小人不再被隐藏）：isChatOpen 期间抑制
+  // 临时气泡的原因是「对话内容已在大窗里」，不是小人被藏。
   const isChatOpen = ref(false)
   const isSettingsOpen = ref(false)
   /** todayPlan/writeHours/batchWrite/cost/manualHours 任一打开即为 true */
   const isBigWindowOpen = ref(false)
-  /** 任一独立窗口打开（聊天/设置/大窗）即为 true，等价于小人被隐藏 */
+  /** 任一独立窗口打开（聊天/设置/大窗）。设置/大窗打开等价于小人被隐藏；
+   *  chat 例外：小人与大窗共存，仅用于抑制临时气泡与 agent 联动判定 */
   const isAnyToolWindowOpen = computed(
     () => isChatOpen.value || isSettingsOpen.value || isBigWindowOpen.value,
   )
+  /** 贴身迷你对话面板（PetChat）开合。avatar 窗内的 DOM 面板，不经后端窗口
+   *  体系，纯前端状态。用途：① 与聊天大窗互斥（chat:stream 双消费者防重——
+   *  互斥保证前台只有一个监听者在渲染消息流）；② 面板打开期间抑制临时气泡
+   *  （showAlert 里与 isAnyToolWindowOpen 并列判断），对话不被气泡打断 */
+  const isPetChatOpen = ref(false)
 
   // 任务提醒
   const taskAlerts = ref<TaskAlert[]>([])
@@ -368,6 +375,7 @@ export const useAppStore = defineStore('app', () => {
     isSettingsOpen,
     isBigWindowOpen,
     isAnyToolWindowOpen,
+    isPetChatOpen,
     addToast,
     removeToast,
     taskAlerts,

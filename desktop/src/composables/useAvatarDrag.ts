@@ -1,4 +1,4 @@
-import { type Ref } from 'vue'
+import { ref, type Ref } from 'vue'
 import { getCurrentWindow, currentMonitor } from '@tauri-apps/api/window'
 import { invoke } from '@tauri-apps/api/core'
 import type { UnlistenFn } from '@tauri-apps/api/event'
@@ -67,6 +67,8 @@ export interface UseAvatarDragOptions {
   onDragEnd: () => void
   /** Called on left-click (short press, no significant movement) */
   onClick: () => void
+  /** 摸头：按住 ≥700ms 且位移 <5px 触发一次。位移超限 / mouseup 即取消定时器 */
+  onHold?: () => void
 }
 
 // 拖拽结束判定：拖拽期间 onMoved 持续触发，停手后这段时间没有新移动即视为松手。
@@ -74,6 +76,8 @@ const DRAG_END_DEBOUNCE_MS = 200
 // 单击判定阈值
 const CLICK_MAX_MS = 300
 const MOVE_THRESHOLD_PX = 5
+// 摸头判定：按住时长阈值（与 CLICK_MAX_MS 独立——hold 走定时器，click 走 mouseup 回溯）
+const HOLD_TRIGGER_MS = 700
 
 /** 拖拽结束后按小人落点重算面板开向。纯状态赋值：小人恒居窗口中心，换锚
  *  只翻 CSS（面板/气泡开向），不平移窗口 → 闪跳发生条件被物理消灭。 */
@@ -102,7 +106,7 @@ function makeRecomputeAnchor(avatarAnchor: Ref<AvatarAnchor>) {
 }
 
 export function useAvatarDrag(options: UseAvatarDragOptions) {
-  const { avatarAnchor, dockEdge, onDragStart, onDragEnd, onClick } = options
+  const { avatarAnchor, dockEdge, onDragStart, onDragEnd, onClick, onHold } = options
 
   // ===== Drag state =====
   let mouseDownTime = 0
@@ -113,11 +117,24 @@ export function useAvatarDrag(options: UseAvatarDragOptions) {
   let sessionActive = false  // 一次 mousedown→mouseup 生命周期是否进行中
   let useManualDrag = false  // 本次拖拽是否走方案2 Rust 自驱路径
 
+  // 拖拽进行中的响应式标记：供 PetAvatar 门控 fidget（拖拽期不启动新微动作）、
+  // App.vue 撤销 squish（按住发展成拖拽时立即还原）。原生/自驱拖拽没有可靠的
+  // DOM 事件流，只能由 beginNativeDrag/finishDrag 显式翻转。
+  const isDragging = ref(false)
+
   let moveUnlisten: UnlistenFn | null = null
   let dragEndTimer: number | null = null
   let dockDelayTimer: number | null = null  // 自驱拖拽松手后延迟贴边（防拖上半屏后弹回中线）
+  let holdTimer: number | null = null       // 摸头定时器
 
   const recomputeAnchor = makeRecomputeAnchor(avatarAnchor)
+
+  function clearHoldTimer() {
+    if (holdTimer !== null) {
+      clearTimeout(holdTimer)
+      holdTimer = null
+    }
+  }
 
   function clearDockDelayTimer() {
     if (dockDelayTimer !== null) {
@@ -164,6 +181,7 @@ export function useAvatarDrag(options: UseAvatarDragOptions) {
     }
     if (started) {
       started = false
+      isDragging.value = false
       await recomputeAnchor()
       if (!wasManual) {
         // 原生拖拽（macOS）：立即贴边，无顶边钳制问题
@@ -185,6 +203,7 @@ export function useAvatarDrag(options: UseAvatarDragOptions) {
   async function beginNativeDrag() {
     if (started) return
     started = true
+    isDragging.value = true
     clearDockDelayTimer()  // 正在拖拽，取消上一轮待执行的延迟贴边
     // 拖拽中窗口被高速移动，穿透轮询两次 IPC 读取带时间差会误判「鼠标不在
     // UI 上」→ 中途切穿透打断移动循环；拖拽期整体挂起轮询
@@ -243,6 +262,14 @@ export function useAvatarDrag(options: UseAvatarDragOptions) {
     detachMouseListeners()  // 防御：上一手势若异常残留，先摘再挂，避免重复
     window.addEventListener('mousemove', onWindowMouseMove)
     window.addEventListener('mouseup', onWindowMouseUp)
+    // 摸头定时器：到点时若仍是同一次按住（未 mouseup、未越阈值拖走）才触发
+    clearHoldTimer()
+    if (onHold) {
+      holdTimer = window.setTimeout(() => {
+        holdTimer = null
+        if (sessionActive && !started) onHold()
+      }, HOLD_TRIGGER_MS)
+    }
   }
 
   // 只用位移差判断「是否越过阈值」——差值消掉了原点，不碰 macOS 上 screenY 的量纲问题。
@@ -258,12 +285,14 @@ export function useAvatarDrag(options: UseAvatarDragOptions) {
       Math.abs(e.screenX - downScreenX) > MOVE_THRESHOLD_PX ||
       Math.abs(e.screenY - downScreenY) > MOVE_THRESHOLD_PX
     ) {
+      clearHoldTimer()  // 位移超限 = 不是摸头，是拖拽，取消 hold 定时器
       void beginNativeDrag()
     }
   }
 
   function onWindowMouseUp(e: MouseEvent) {
     detachMouseListeners()
+    clearHoldTimer()  // 松手即取消摸头判定（无论是否已触发）
 
     const duration = Date.now() - mouseDownTime
     const dx = Math.abs(e.screenX - downScreenX)
@@ -286,5 +315,6 @@ export function useAvatarDrag(options: UseAvatarDragOptions) {
   return {
     onMouseDown,
     recomputeAnchor,
+    isDragging,
   }
 }

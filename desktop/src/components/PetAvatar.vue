@@ -1,23 +1,35 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, shallowRef, type CSSProperties } from 'vue'
 import lottie, { type AnimationItem } from 'lottie-web'
-import { getPetById } from '../petManifest'
+import { getPetById, getPackClipSrc } from '../petManifest'
+import type { PetPackAction, PetPackClip } from '../api/petPack'
 
-// 单一职责：把选中的宠物渲染到一个 72×72 透明容器里，
-// 外面套一圈跟当前 state 联动的发光环 + 右下角状态点。换 petId 时销毁旧
+// 单一职责：把选中的宠物渲染进一个尺寸可配（--pet-size，三档）的透明容器，
+// 自由轮廓显示（不裁圆、无发光环）+ 地面投影 + 右下角状态点。换 petId 时销毁旧
 // 动画再加载新动画，避免内存堆积。
 //
-// 支持三种宠物类型：
+// 支持四种宠物类型：
 // - lottie: 使用 lottie-web 渲染 Lottie JSON
 // - image: 使用 <img> 标签，可选 CSS 动画
 // - gif: 使用 <img> 标签，GIF 自带动画
+// - pack: 宠物包 v2，多动作片段（gif/webm/spritesheet），idle 为常态，其余
+//   片段经 playClip 点播（E2 漫游引擎 + 右键「来一个」菜单共用）
+//
+// 状态动效（motion）：stateMap.animation 驱动的 CSS overlay 动画，挂在
+// .pet-motion 包裹层上。动画只作用于小人本体——透明窗上不做任何大面积
+// 脉动发光（拖拽闪烁源，v0.10.6 事故，发光环已删），也不碰
+// .pet-lottie/.pet-media 自身的 translate+scale transform 链
+// （--pet-scale/offset 由 manifest 注入，必须原样生效）。
 
 const props = defineProps<{
   petId: string
-  color: string       // 当前 state 的主色
-  glowColor: string   // 当前 state 的发光色（半透明 rgba）
+  color: string       // 当前 state 的主色（状态点 + flash 前后的状态色表达）
   active: boolean     // working 态时高亮
   flashing: boolean   // 状态切换瞬间脉冲一次
+  motion: string      // stateMap.animation：breathe/think/work/alert/happy
+  idle: boolean       // 仅 idle 态允许 fidget 微动作
+  dragging: boolean   // 拖拽进行中：不启动新的 fidget（已在播的让其自然结束）
+  moving?: boolean    // E2 漫游移动中：不启动新的 fidget（模式照 dragging）
 }>()
 
 const containerEl = ref<HTMLDivElement | null>(null)
@@ -32,6 +44,217 @@ const isLottie = computed(() => !pet.value.petType || pet.value.petType === 'lot
 const isImage = computed(() => pet.value.petType === 'image')
 const isGif = computed(() => pet.value.petType === 'gif')
 const isMedia = computed(() => isImage.value || isGif.value)
+const isPack = computed(() => pet.value.petType === 'pack')
+
+// ===== 宠物包 v2（pack 类型）：多动作片段渲染与点播 =====
+// idle 是常态渲染；walk/held/sleep/actions 经 playClip 点播（一次性播完自动回
+// idle，loop 片段由外部 stopClip 收尾）。素材 data URL 按 clip 惰性加载并缓存。
+
+const pack = computed(() => pet.value.pack ?? null)
+
+/** 当前播放的片段名（null = 常态 idle）。E2 漫游引擎经 defineExpose 消费 */
+const currentClip = ref<string | null>(null)
+/** 素材当前朝向；翻转只挂素材容器（.pet-pack-flip），不碰 .avatar 命中盒 */
+const facingDir = ref<'left' | 'right'>('left')
+
+watch(pack, (p) => {
+  // 换包：朝向复位为素材默认朝向，并打断在播片段
+  stopClip()
+  facingDir.value = p?.facing === 'right' ? 'right' : 'left'
+})
+
+/** 片段名 → 片段定义（idle / walk / held / sleep 直查，其余查 actions） */
+function resolveClip(name: string): PetPackClip | PetPackAction | null {
+  const clips = pack.value?.clips
+  if (!clips) return null
+  if (name === 'walk' || name === 'held' || name === 'sleep') return clips[name] ?? null
+  const action = clips.actions?.find(a => a.name === name)
+  if (action) return action
+  if (name === 'idle') return clips.idle ?? null
+  return null
+}
+
+function hasClip(name: string): boolean {
+  const clips = pack.value?.clips
+  if (!clips) return false
+  if (name === 'idle') return !!clips.idle
+  if (name === 'walk' || name === 'held' || name === 'sleep') return !!clips[name]
+  return (clips.actions ?? []).some(a => a.name === name)
+}
+
+/** E2 漫游引擎用：按行进方向翻转素材（素材层 pointer-events:none，命中盒不动） */
+function setFacing(dir: 'left' | 'right') {
+  facingDir.value = dir
+}
+
+/** 实际渲染的片段：没在点播时就渲染 idle（pack 必有 idle） */
+const activePackClip = computed(() => resolveClip(currentClip.value ?? 'idle'))
+
+// —— 片段播完收尾：一次只挂一个 resolve，finishClip 幂等可重入 ——
+let clipEndTimer: number | null = null
+let clipResolve: (() => void) | null = null
+// loop 状态用 ref：模板里 <video :loop> 需要随点播参数响应式切换
+const clipLoop = ref(false)
+
+/** gif 一次性片段的兜底时长：GIF 没有播放结束事件，感知不了真实时长 */
+const PACK_GIF_ONESHOT_MS = 3500
+
+function finishClip() {
+  if (clipEndTimer !== null) { clearTimeout(clipEndTimer); clipEndTimer = null }
+  const resolve = clipResolve
+  clipResolve = null
+  clipLoop.value = false
+  currentClip.value = null
+  resolve?.()
+}
+
+/**
+ * 播放指定片段（E2 漫游引擎 + 右键点播菜单共用入口）。
+ * - 非 loop：播完自动回 idle 并 resolve（spritesheet 按 frames/fps 计时长，
+ *   webm 等视频 ended 事件，gif 无结束信号按常量兜底）；
+ * - loop：一直播，由外部 stopClip() 收尾（stopClip 会 resolve 挂起的 promise）。
+ * 片段不存在时直接 resolve（调用方应先用 hasClip 过滤）。
+ */
+function playClip(name: string, opts?: { loop?: boolean }): Promise<void> {
+  if (!isPack.value || !hasClip(name)) return Promise.resolve()
+  if (clipResolve) finishClip() // 打断上一个片段（清掉它的收尾定时器）
+  clipLoop.value = opts?.loop ?? false
+  currentClip.value = name
+  return new Promise<void>((resolve) => {
+    clipResolve = resolve
+    if (clipLoop.value) return
+    const clip = activePackClip.value
+    if (clip?.type === 'spritesheet') {
+      const durationMs = ((clip.frames ?? 1) / (clip.fps || 8)) * 1000
+      clipEndTimer = window.setTimeout(finishClip, durationMs + 60)
+    } else if (clip?.type === 'gif') {
+      clipEndTimer = window.setTimeout(finishClip, PACK_GIF_ONESHOT_MS)
+    }
+  })
+}
+
+function stopClip() {
+  if (clipResolve) finishClip()
+}
+
+/** 素材实际朝向与包默认朝向相反时才翻转 */
+const packFlipped = computed(() =>
+  isPack.value && facingDir.value !== (pack.value?.facing === 'right' ? 'right' : 'left'),
+)
+
+const packStyle = computed<CSSProperties>(() => ({
+  '--pack-scale': String(pack.value?.scale ?? 1),
+}))
+
+// —— 素材加载：切片段即触发惰性加载，过期响应（期间已切走）直接丢弃 ——
+
+const packClipSrc = ref('')
+const packClipFailed = ref(false)
+const packVideoEl = ref<HTMLVideoElement | null>(null)
+
+// —— spritesheet 渲染：多行雪碧图没法用单条 steps() 表达二维步进，
+//    只能逐帧生成 keyframes 注入 document 头部的 <style>（卸载时移除）。
+//    steps(1,end) 让相邻关键帧之间保持起始帧值 → 每段恰好定格一帧。
+
+let spriteStyleEl: HTMLStyleElement | null = null
+let spriteStyleSeq = 0
+const spriteAnimName = ref('')
+
+// 切片段/换包即重载素材；immediate 保证挂载时（缓存已就绪的场景）idle 立即开载。
+// immediate 同步执行回调：其引用的 ref/函数都声明在本 watch 之前，无 TDZ 问题。
+watch(activePackClip, async (clip) => {
+  packClipFailed.value = false
+  packClipSrc.value = ''
+  spriteAnimName.value = ''
+  const packData = pack.value
+  if (!clip || !packData) return
+  const src = await getPackClipSrc(packData.id, clip.file)
+  if (clip !== activePackClip.value) return // 加载期间已切到别的片段
+  if (src) {
+    packClipSrc.value = src
+    if (clip.type === 'spritesheet') injectSpriteKeyframes(clip)
+  } else {
+    // 素材读取失败：不白屏，隐藏该片段；在播的点播片段直接结束回 idle
+    packClipFailed.value = true
+    if (clipResolve) finishClip()
+  }
+}, { immediate: true })
+
+/** webm 加载失败降级：隐藏素材；在播片段结束回 idle。
+ *  注：webm alpha 是实验特性 —— WebView2 对 VP9-alpha 的支持未真机验证，
+ *  PRD 接受「不透明底」降级；加载失败则整段隐藏回 idle，不白屏。 */
+function onPackMediaError() {
+  packClipFailed.value = true
+  if (clipResolve) finishClip()
+}
+
+/** 一次性 webm 播完（ended 事件）收尾；loop 播放不会触发 */
+function onPackVideoEnded(e: Event) {
+  if (packVideoEl.value && e.target !== packVideoEl.value) return
+  if (clipResolve) finishClip()
+}
+
+function onPackSpriteEnded() {
+  if (clipResolve) finishClip()
+}
+
+function injectSpriteKeyframes(clip: PetPackClip) {
+  const frames = Math.max(1, Math.floor(clip.frames ?? 1))
+  const frameW = Math.max(1, clip.frameW ?? 64)
+  const frameH = Math.max(1, clip.frameH ?? 64)
+  const columns = Math.max(1, clip.columns ?? frames)
+  const animName = `pack-sprite-${++spriteStyleSeq}`
+  const parts: string[] = []
+  for (let i = 0; i < frames; i++) {
+    const x = -(i % columns) * frameW
+    const y = -Math.floor(i / columns) * frameH
+    parts.push(`${((i / frames) * 100).toFixed(4)}% { background-position: ${x}px ${y}px; }`)
+  }
+  const lastIdx = frames - 1
+  const lastX = -(lastIdx % columns) * frameW
+  const lastY = -Math.floor(lastIdx / columns) * frameH
+  parts.push(`100% { background-position: ${lastX}px ${lastY}px; }`)
+  if (!spriteStyleEl) {
+    spriteStyleEl = document.createElement('style')
+    document.head.appendChild(spriteStyleEl)
+  }
+  spriteStyleEl.textContent = `@keyframes ${animName} { ${parts.join(' ')} }`
+  spriteAnimName.value = animName
+}
+
+onBeforeUnmount(() => {
+  spriteStyleEl?.remove()
+  spriteStyleEl = null
+  // 定时器卫生：在播片段的收尾定时器随组件一起清，别留到卸载后触发
+  if (clipEndTimer !== null) { clearTimeout(clipEndTimer); clipEndTimer = null }
+  // 挂起的 playClip promise 一并 resolve（漫游引擎/点播菜单可能在 await，
+  // 不留悬挂句柄）；不动 currentClip/clipLoop —— 卸载期不再触发
+  // activePackClip watch 的重载链
+  clipResolve?.()
+  clipResolve = null
+})
+
+const spriteBoxStyle = computed<CSSProperties>(() => {
+  const clip = activePackClip.value
+  if (!clip || clip.type !== 'spritesheet') return {}
+  return {
+    '--sprite-fw': String(Math.max(1, Math.floor(clip.frameW ?? 64))),
+    '--sprite-fh': String(Math.max(1, Math.floor(clip.frameH ?? 64))),
+  }
+})
+
+const spriteStyle = computed<CSSProperties>(() => {
+  const clip = activePackClip.value
+  if (!clip || clip.type !== 'spritesheet' || !packClipSrc.value) return {}
+  return {
+    '--sprite-src': `url("${packClipSrc.value}")`,
+    '--sprite-anim': spriteAnimName.value,
+    '--sprite-frames': String(Math.max(1, Math.floor(clip.frames ?? 1))),
+    '--sprite-fps': String(clip.fps && clip.fps > 0 ? clip.fps : 8),
+    // 点播中的一次性片段只播一轮；常态 idle 无限循环
+    '--sprite-once': currentClip.value ? '1' : 'infinite',
+  }
+})
 
 const lottieStyle = computed<CSSProperties>(() => ({
   '--pet-scale': String(renderConfig.value.scale ?? 1),
@@ -79,6 +302,8 @@ function mountAnimation() {
     autoplay: true,
     animationData: pet.value.data,
   })
+  // 换 petId 重挂载后速度按当前 motion 恢复（autoplay 默认 1.0）
+  applyLottieSpeed()
 }
 
 onMounted(() => {
@@ -95,24 +320,132 @@ onBeforeUnmount(() => {
 watch(() => props.petId, () => {
   mountAnimation()
 })
+
+// ===== motion → CSS overlay 动画 + Lottie 变速 =====
+
+// 白名单：未知 motion 值直接不挂动画类，避免脏字符串进 DOM
+const MOTION_CLASSES = new Set(['breathe', 'think', 'work', 'alert', 'happy'])
+const motionClass = computed(() =>
+  MOTION_CLASSES.has(props.motion) ? `pet-motion-${props.motion}` : '',
+)
+
+// Lottie 变速让本体动画节奏跟状态匹配（image/gif 无法变速，接受原速）。
+// petId 重挂载后 mountAnimation 里会按当前 motion 恢复速度。
+const LOTTIE_SPEED: Record<string, number> = { work: 1.35, think: 0.8, alert: 1.5 }
+function applyLottieSpeed() {
+  if (!animation.value) return
+  animation.value.setSpeed(LOTTIE_SPEED[props.motion] ?? 1)
+}
+watch(() => props.motion, () => {
+  applyLottieSpeed()
+})
+
+// ===== idle fidget 微动作（歪头看左/右、伸懒腰）=====
+// 每 25–50s 随机播一次一次性微动作，1.5–2.5s 后自然结束（临时 class + 定时移除，
+// 不打断 Lottie 本体）。拖拽进行中到点则跳过本轮（不启动新的，已开播的让它放完）。
+const FIDGET_CLASSES = ['pet-fidget-tilt-left', 'pet-fidget-tilt-right', 'pet-fidget-stretch']
+const fidgetClass = ref('')
+let fidgetTimer: number | null = null
+let fidgetEndTimer: number | null = null
+
+function clearFidgetTimers() {
+  if (fidgetTimer !== null) { clearTimeout(fidgetTimer); fidgetTimer = null }
+  if (fidgetEndTimer !== null) { clearTimeout(fidgetEndTimer); fidgetEndTimer = null }
+}
+
+function scheduleFidget() {
+  fidgetTimer = window.setTimeout(() => {
+    fidgetTimer = null
+    // 到点再核对资格：不在 idle、正在拖拽、正在漫游移动或在播 pack 片段 → 本轮跳过，仅排下一轮
+    if (props.idle && !props.dragging && !props.moving && !currentClip.value) {
+      fidgetClass.value = FIDGET_CLASSES[Math.floor(Math.random() * FIDGET_CLASSES.length)]
+      fidgetEndTimer = window.setTimeout(() => {
+        fidgetClass.value = ''
+        fidgetEndTimer = null
+      }, 1500 + Math.random() * 1000) // 1.5–2.5s 自然归位
+    }
+    scheduleFidget()
+  }, 25000 + Math.random() * 25000) // 25–50s 随机间隔
+}
+
+onMounted(() => {
+  scheduleFidget()
+})
+
+onBeforeUnmount(() => {
+  clearFidgetTimers()
+})
+
+// 面板外的消费方（App.vue 点播菜单 / E2 漫游引擎）经组件 ref 调用这组接口
+defineExpose({
+  playClip,
+  stopClip,
+  hasClip,
+  setFacing,
+  currentClip,
+})
+
 </script>
 
 <template>
-  <div class="pet-avatar" :class="{ active, flashing }">
-    <div
-      class="pet-glow"
-      :style="{ background: glowColor, boxShadow: `0 0 10px ${color}40` }"
-    />
-    <div v-if="isLottie" ref="containerEl" class="pet-lottie" :style="lottieStyle" />
-    <img
-      v-else-if="isMedia"
-      ref="imgEl"
-      class="pet-media"
-      :class="imageAnimationClass"
-      :style="mediaStyle"
-      :src="mediaSrc"
-      alt=""
-    />
+  <!-- clip-playing：pack 片段播放期间暂停 motion overlay（见样式区门控规则） -->
+  <div class="pet-avatar" :class="{ active, flashing, 'clip-playing': currentClip !== null }">
+    <!-- 地面投影：贴容器底的静态椭圆软阴影，给「立在桌面上」的重量感。
+         纯黑低透明（同 App.vue 面板投影的既有做法，透明窗上彩色泛光会成脏晕）。
+         热区纪律：渲染像素在 .avatar 命中盒下缘附近，必须 pointer-events:none；
+         静态不动画——透明窗上任何脉动都是拖拽闪烁源。 -->
+    <div class="pet-shadow" />
+    <!-- motion/fidget 动画只挂在这个包裹层，不碰 .pet-lottie/.pet-media 的 transform 链 -->
+    <div class="pet-motion" :class="[motionClass, fidgetClass]">
+      <div v-if="isLottie" ref="containerEl" class="pet-lottie" :style="lottieStyle" />
+      <img
+        v-else-if="isMedia"
+        ref="imgEl"
+        class="pet-media"
+        :class="imageAnimationClass"
+        :style="mediaStyle"
+        :src="mediaSrc"
+        alt=""
+      />
+      <!-- pack 宠物：idle 为常态，点播片段同容器切换（gif/webm/spritesheet 三种素材）。
+           整棵子树 pointer-events:none，翻转挂内层 .pet-pack-flip，不碰命中盒。 -->
+      <div v-else-if="isPack" class="pet-pack" :style="packStyle">
+        <div class="pet-pack-flip" :class="{ 'pack-flipped': packFlipped }">
+          <img
+            v-if="activePackClip && activePackClip.type === 'gif'"
+            v-show="!packClipFailed"
+            class="pet-pack-media"
+            :src="packClipSrc"
+            alt=""
+            @error="onPackMediaError"
+          />
+          <!-- webm 素材：VP9-alpha 在 WebView2 上是实验特性（未真机验证，PRD 接受
+               不透明底降级）；:key 按文件重建元素，保证切片段时 autoplay 必触发 -->
+          <video
+            v-else-if="activePackClip && activePackClip.type === 'webm'"
+            v-show="!packClipFailed"
+            ref="packVideoEl"
+            :key="activePackClip.file"
+            class="pet-pack-media"
+            :src="packClipSrc"
+            muted
+            playsinline
+            autoplay
+            :loop="currentClip === null || clipLoop"
+            @ended="onPackVideoEnded"
+            @error="onPackMediaError"
+          />
+          <div
+            v-else-if="activePackClip && activePackClip.type === 'spritesheet'"
+            v-show="!packClipFailed"
+            class="pet-sprite-box"
+            :style="spriteBoxStyle"
+          >
+            <div class="pet-sprite" :style="spriteStyle" @animationend="onPackSpriteEnded" />
+          </div>
+        </div>
+      </div>
+    </div>
     <div class="pet-dot" :style="{ background: color }" />
   </div>
 </template>
@@ -120,21 +453,29 @@ watch(() => props.petId, () => {
 <style scoped>
 .pet-avatar {
   position: relative;
-  width: 72px;
-  height: 72px;
+  /* 尺寸三档：--pet-size 从 App.vue 的 .jarvis-container 按配置注入，
+     缺省 128 = medium 默认档。容器内全是相对尺寸（inset/百分比），
+     petManifest 的 render.scale/offset 是相对倍率，天然兼容。 */
+  width: var(--pet-size, 128px);
+  height: var(--pet-size, 128px);
   cursor: pointer;
   transition: transform 0.18s ease;
 }
 .pet-avatar:hover { transform: scale(1.08); }
 
-.pet-glow {
+/* 地面投影：脚下椭圆软阴影（纯黑低透明，透明窗上彩色泛光会成脏晕）。
+   pointer-events:none——渲染像素超出 .avatar 命中盒下缘，禁命中后穿透
+   判定不受影响；静态不动画，也不随 motion/fidget 形变（拖拽闪烁红线）。 */
+.pet-shadow {
   position: absolute;
-  inset: -2px;
-  border-radius: 50%;
+  left: 50%;
+  bottom: 0;
+  width: 64%;
+  height: 10px;
+  transform: translateX(-50%);
+  background: radial-gradient(closest-side, rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0));
   z-index: 0;
-  /* 常态不脉动——大范围脉动光在透明窗上被边缘裁切，拖动时就是闪烁源；
-     状态色靠 pet-dot 与柔光圈本身表达。 */
-  opacity: 0.5;
+  pointer-events: none;
 }
 
 .pet-lottie {
@@ -142,7 +483,7 @@ watch(() => props.petId, () => {
   inset: 0;
   z-index: 1;
   /* Lottie 渲染出来的 SVG 默认会带边距和 viewBox 留白；用 transform: scale
-     让动画稍微撑大一点，72×72 容器内更饱满。具体倍数靠经验，1.1 视觉刚好。 */
+     让动画稍微撑大一点，容器内更饱满。具体倍数靠经验，1.1 视觉刚好。 */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -158,25 +499,83 @@ watch(() => props.petId, () => {
   position: absolute;
   bottom: 3px;
   right: 3px;
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
   border: 2px solid rgba(15, 23, 42, 1);
   z-index: 2;
 }
 
-/* 图片/GIF 宠物 */
+/* 图片/GIF 宠物：object-fit:contain 按自然轮廓显示——透明背景 PNG/GIF 呈自由
+   形态，不裁圆、不裁边；不透明方图就照方图显示。 */
 .pet-media {
   position: absolute;
   inset: 4px;
   z-index: 1;
   width: calc(100% - 8px);
   height: calc(100% - 8px);
-  object-fit: cover;
-  border-radius: 50%;
-  box-shadow: 0 0 8px rgba(0, 0, 0, 0.3);
+  object-fit: contain;
   transform: translate(var(--pet-offset-x, 0), var(--pet-offset-y, 0)) scale(var(--pet-scale, 1));
   transform-origin: center center;
+}
+
+/* ===== 宠物包 v2 渲染层 =====
+   穿透铁律：整棵子树 pointer-events:none（素材像素绝不截事件）；
+   翻转 scaleX(-1) 挂内层 .pet-pack-flip（素材容器），不碰 .avatar 命中盒；
+   --pack-scale 缩放同样挂 .pet-pack 层，与命中盒无关。 */
+.pet-pack {
+  position: absolute;
+  inset: 4px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  transform: scale(var(--pack-scale, 1));
+  transform-origin: center center;
+}
+.pet-pack-flip {
+  /* 绝对定位撑满 .pet-pack：给内部素材一个确定的 100% 基准，
+     max-width/max-height 才能正确把大图收到 --pet-size 盒内 */
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  transform-origin: center center;
+}
+.pet-pack-flip.pack-flipped {
+  transform: scaleX(-1);
+}
+.pet-pack-media {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+/* spritesheet：以帧尺寸为基准的「取景框」，按容器/帧的最大边缩放装进
+   --pet-size 盒（pack.scale 叠乘）；pixelated 对齐像素画素材观感。 */
+.pet-sprite-box {
+  position: relative;
+  flex: none;
+  overflow: hidden;
+  width: calc(var(--sprite-fw, 64) * 1px);
+  height: calc(var(--sprite-fh, 64) * 1px);
+  pointer-events: none;
+  transform: scale(calc(var(--pet-size, 128px) / max(var(--sprite-fw, 64), var(--sprite-fh, 64)) * var(--pack-scale, 1)));
+  image-rendering: pixelated;
+}
+.pet-sprite {
+  width: 100%;
+  height: 100%;
+  background-image: var(--sprite-src);
+  background-repeat: no-repeat;
+  pointer-events: none;
+  /* steps(1,end)：相邻关键帧之间保持起始帧值 → 每段恰好定格一帧；
+     点播中一次性播完（--sprite-once:1 + animationend 收尾），idle 无限循环 */
+  animation: var(--sprite-anim) calc(var(--sprite-frames, 1) / var(--sprite-fps, 8) * 1s) steps(1, end) var(--sprite-once, infinite) both;
 }
 
 /* 图片动画：呼吸效果 */
@@ -216,13 +615,110 @@ watch(() => props.petId, () => {
   50% { transform: translate(var(--pet-offset-x, 0), calc(var(--pet-offset-y, 0) - 6px)) scale(var(--pet-scale, 1)); }
 }
 
-/* 状态切换瞬间脉冲一次，给视觉信号 */
-.pet-avatar.flashing .pet-glow {
+/* 状态切换瞬间脉冲一次，给视觉信号。挂 .pet-motion（内容脉冲），不碰
+   .pet-lottie/.pet-media 的 transform 链。特异性 (0,3,0) 压过单类 motion 规则，
+   脉冲的 0.8s 内临时接管动画；结束（flashing 摘除）后 motion 动画原样恢复。 */
+.pet-avatar.flashing .pet-motion {
   animation: pet-flash 0.4s ease-out 0s 2;
 }
 @keyframes pet-flash {
-  0%   { transform: scale(1);    opacity: 1; }
-  50%  { transform: scale(1.45); opacity: 0.4; }
-  100% { transform: scale(1);    opacity: 1; }
+  0%   { transform: scale(1); }
+  50%  { transform: scale(1.1); }
+  100% { transform: scale(1); }
 }
+
+/* ===== 状态动效 overlay（motion prop 驱动，stateMap.animation 接线）=====
+   动画全部限定在小人本体的 .pet-motion 包裹层，与 .pet-lottie/.pet-media
+   的 translate+scale 分属不同元素、互相叠加不冲突；状态切换的 flash 脉冲
+   也挂这层（见上）。透明窗上不做任何大面积脉动发光——发光环已删
+   （大面积脉动光 = 拖拽闪烁源，v0.10.6）。 */
+.pet-motion {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  transform-origin: center center;
+  /* 热区纪律：穿透判定靠 elementFromPoint→closest('.pointer-target')，动效的
+     transform 会把渲染像素移出命中盒（happy 上跳 -8px、breathe 横向 +1.4px），
+     不禁用命中就把框外穿透区算成 UI 区，鼠标掠过小人上方时穿透反复翻转。
+     关掉后命中只落在 .pet-dot / .avatar 上，区域恒定不随动画呼吸。 */
+  pointer-events: none;
+}
+.pet-motion-breathe { animation: pet-motion-breathe 3s ease-in-out infinite; }
+.pet-motion-think   { animation: pet-motion-think 2.6s ease-in-out infinite; }
+.pet-motion-work    { animation: pet-motion-work 0.9s ease-in-out infinite; }
+.pet-motion-alert   { animation: pet-motion-alert 0.45s ease-in-out infinite; }
+.pet-motion-happy   { animation: pet-motion-happy 0.7s ease-in-out infinite; }
+
+@keyframes pet-motion-breathe {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.04); }
+}
+@keyframes pet-motion-think {
+  0%, 100% { transform: rotate(0deg); }
+  25%      { transform: rotate(2deg); }
+  75%      { transform: rotate(-2deg); }
+}
+@keyframes pet-motion-work {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-3px); }
+}
+@keyframes pet-motion-alert {
+  0%, 100% { transform: rotate(0deg); }
+  25%      { transform: rotate(3deg); }
+  75%      { transform: rotate(-3deg); }
+}
+@keyframes pet-motion-happy {
+  0%  { transform: translateY(0) scale(1, 1); }
+  30% { transform: translateY(-8px) scale(0.96, 1.05); }
+  60% { transform: translateY(0) scale(1.06, 0.94); }  /* 落地压扁 */
+  80% { transform: translateY(0) scale(0.99, 1.01); }
+  100% { transform: translateY(0) scale(1, 1); }
+}
+
+/* ===== idle fidget 微动作（一次性，播完由 JS 摘 class）=====
+   放在 motion 类之后声明：同时挂两类时 fidget 覆盖 overlay 动画。 */
+.pet-fidget-tilt-left {
+  animation: pet-fidget-tilt-left 2s ease-in-out both;
+}
+@keyframes pet-fidget-tilt-left {
+  0%, 100% { transform: rotate(0deg); }
+  35%, 65% { transform: rotate(-7deg) translateX(-2px); }
+}
+.pet-fidget-tilt-right {
+  animation: pet-fidget-tilt-right 2s ease-in-out both;
+}
+@keyframes pet-fidget-tilt-right {
+  0%, 100% { transform: rotate(0deg); }
+  35%, 65% { transform: rotate(7deg) translateX(2px); }
+}
+.pet-fidget-stretch {
+  animation: pet-fidget-stretch 2.2s ease-in-out both;
+}
+@keyframes pet-fidget-stretch {
+  0%, 100% { transform: scale(1, 1); }
+  30%, 60% { transform: scale(1.07, 0.95); }
+  45%      { transform: scale(1.1, 0.92); }
+}
+
+/* minimal 主题的设计定义是 no shadow / no motion：动效（overlay + fidget +
+   flash 脉冲）在此主题下全关，地面投影一并隐藏。flash 规则是 (0,3,0)，
+   这里用 (0,4,1) 的同结构选择器压过它；其余单类规则 (0,2,1) 即可覆盖。 */
+html[data-theme="minimal"] .pet-motion {
+  animation: none;
+}
+html[data-theme="minimal"] .pet-avatar.flashing .pet-motion {
+  animation: none;
+}
+html[data-theme="minimal"] .pet-shadow {
+  display: none;
+}
+
+/* pack 片段播放期间暂停 motion overlay（PRD E1-4）：pack 片段自带完整动作，
+   再叠 breathe/happy 的形变会打架；播完回 idle（clip-playing 摘除）自动恢复。
+   选择器结构与 minimal 门控同款，(0,3,0) 压过单类 motion/fidget 规则，
+   与 flashing 规则同特异性但声明在后，同时挂时以此为准。 */
+.pet-avatar.clip-playing .pet-motion {
+  animation: none;
+}
+
 </style>

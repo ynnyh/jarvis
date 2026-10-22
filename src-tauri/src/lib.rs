@@ -27,6 +27,7 @@ mod llm;
 mod logging;
 mod mcp_client;
 mod memory;
+mod plugins;
 mod repo_recommender;
 mod settings;
 mod settings_extras;
@@ -256,8 +257,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 });
             }
 
-            // 存储 AppHandle 供 deploy 轮询任务 emit 事件到前端。
-            tools::deploy::init_app_handle(app.handle().clone());
+            // 存储 AppHandle 供无窗口上下文的工具路径 emit 事件到前端
+            // （deploy 构建轮询推送、effort_logging 的 effort_written 应用事件）。
+            tools::init_app_handle(app.handle().clone());
 
             // 启动全局 MCP client 管理器：读 ~/.jarvis/mcp-servers.json，spawn 所有 enabled
             // 的 stdio MCP server。没配文件 → Ok([])，正常启动（无 MCP server）。单个 server
@@ -290,8 +292,15 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             commands::manual_drag_start,
             commands::manual_drag_stop,
             commands::tool_execute,
+            commands::plugin_list,
+            commands::plugin_set_enabled,
+            commands::plugin_reload,
+            commands::plugins_dir_open,
+            commands::app_event,
+            commands::plugin_tool_execute,
             commands::chat_send_stream,
             commands::summarize_work_content,
+            commands::pet_chatter,
             commands::get_proactive_reminders,
             commands::fetch_task_alerts,
             commands::list_projects,
@@ -303,6 +312,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             commands::custom_pet_list,
             commands::custom_pet_save,
             commands::custom_pet_delete,
+            commands::pet_pack_list,
+            commands::pet_pack_save,
+            commands::pet_pack_delete,
+            commands::pet_pack_read_file,
             commands::deploy_config_get,
             commands::deploy_config_save,
             commands::deploy_test_connection,

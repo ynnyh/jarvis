@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { onMounted, onUnmounted, watch } from 'vue'
 import { useAppStore, type CommitLink } from '../stores/app'
 import { useConfigStore, type CommitsRange } from '../stores/config'
+import { appEvent } from '../api/plugins'
 
 interface ToolResult {
   success: boolean
@@ -78,6 +79,21 @@ export function useTaskCommits(options: { autoLoad?: boolean } = { autoLoad: fal
       for (const t of payload.tasks) {
         map[String(t.taskId)] = t.commits
       }
+      // 事件血管（方案 C′）：本轮有「新增」关联 commit 才发 commits_scanned。
+      // 去重口径：与 store 已有列表按 taskId|sha diff，只数本轮新出现的；
+      // 必须在覆盖 store 前算，否则永远 diff 出 0。
+      const prevKeys = new Set(
+        Object.entries(store.commitsByTask).flatMap(([tid, list]) =>
+          (list as CommitLink[]).map(c => `${tid}|${c.sha}`),
+        ),
+      )
+      let fresh = 0
+      for (const [tid, list] of Object.entries(map)) {
+        for (const c of list) {
+          if (!prevKeys.has(`${tid}|${c.sha}`)) fresh++
+        }
+      }
+      if (fresh > 0) appEvent('commits_scanned', { count: fresh })
       store.commitsByTask = map
       store.commitsRange = effectiveRange
       store.commitsLastError = null

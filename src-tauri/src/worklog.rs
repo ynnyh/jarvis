@@ -910,16 +910,19 @@ pub async fn worklog_card_remove(
 pub async fn worklog_card_write(
     card_id: String,
     date: Option<String>,
+    app: tauri::AppHandle,
 ) -> Result<WorklogWriteResult, String> {
     let date = date.unwrap_or_else(today_str);
     let mut session = load_or_build_session(&date).await?;
     let result = write_card_impl(&mut session, &card_id).await?;
+    notify_effort_written(&app, 1, result.ok);
     Ok(result)
 }
 
 #[tauri::command]
 pub async fn worklog_session_write_confirmed(
     date: Option<String>,
+    app: tauri::AppHandle,
 ) -> Result<Vec<WorklogWriteResult>, String> {
     let date = date.unwrap_or_else(today_str);
     let mut session = load_or_build_session(&date).await?;
@@ -933,7 +936,22 @@ pub async fn worklog_session_write_confirmed(
     for card_id in card_ids {
         out.push(write_card_impl(&mut session, &card_id).await?);
     }
+    let ok_count = out.iter().filter(|r| r.ok).count();
+    notify_effort_written(&app, ok_count, ok_count > 0);
     Ok(out)
+}
+
+/// 写工时成功后广播 effort_written 应用事件（方案 C′ 事件血管）。
+/// 插件按 event 触发器订阅（`{ "type": "event", "on": "effort_written" }`），
+/// payload `{ cards: n }` 供模板变量 `{payload.cards}` 插值。
+fn notify_effort_written(app: &tauri::AppHandle, cards: usize, ok: bool) {
+    if ok {
+        crate::commands::emit_app_event(
+            app,
+            "effort_written",
+            serde_json::json!({ "cards": cards }),
+        );
+    }
 }
 #[cfg(test)]
 mod tests {

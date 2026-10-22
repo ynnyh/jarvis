@@ -108,6 +108,16 @@ pub(crate) async fn log_task_effort(input: Value) -> Result<Value, String> {
     append_audit_log(audit_entry);
 
     let r = result?;
+
+    // 广播 effort_written 应用事件（方案 C′ 事件血管）：真实写工时的成功路径。
+    // UI 里 worklog_card_write/worklog_session_write_confirmed 无调用方，真正写
+    // 工时都走 tool_execute('log-task-effort')，事件必须挂在这里才摸得到全部入口
+    // （手写工时/批量写入/复盘窗/聊天确认流）。幂等去重命中（前面 early return）
+    // 没有新写入，不发事件。payload `{ cards: n }` 供插件 `{payload.cards}` 插值。
+    if let Some(app) = crate::tools::app_handle() {
+        crate::commands::emit_app_event(&app, "effort_written", json!({ "cards": 1 }));
+    }
+
     Ok(json!({
         "ok": true,
         "effortId": r.id,

@@ -9,7 +9,6 @@
 
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
-use std::sync::OnceLock;
 use tauri::Emitter;
 
 // ============================================================================
@@ -56,15 +55,8 @@ pub(crate) fn deploy_presets_path() -> std::path::PathBuf {
 }
 
 // ============================================================================
-// 全局 AppHandle：供轮询任务 emit 事件到前端
+// 全局 AppHandle → 已上移 tools::app_handle（effort_logging 的事件发射也用它）
 // ============================================================================
-
-static APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
-
-/// 在 app setup 阶段调用一次，存储 AppHandle 供后续轮询任务使用。
-pub(crate) fn init_app_handle(app: tauri::AppHandle) {
-    let _ = APP_HANDLE.set(app);
-}
 
 /// 读 deploy-presets.json。
 ///
@@ -310,12 +302,19 @@ pub(crate) async fn confirm_deploy(input: Value) -> Result<Value, String> {
 
             // 启动后台轮询构建状态（PR4）。触发后按间隔查 get_build_status，
             // 通过 Tauri 事件推送到前端更新卡片。不阻塞 agent loop。
-            if let Some(app_handle) = APP_HANDLE.get().cloned() {
+            if let Some(app_handle) = crate::tools::app_handle() {
                 // jobName 从 args 里取；buildNumber 优先从触发结果取，没有就从 args 取。
                 let job_name = parsed.args.get("jobName")
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
+                // 广播 deploy_done 应用事件（方案 C′ 事件血管）：插件可订阅
+                // （如发版成功后推一条渠道消息）。放轮询 spawn 前，触发成功即发。
+                crate::commands::emit_app_event(
+                    &app_handle,
+                    "deploy_done",
+                    json!({ "server": server, "jobName": job_name }),
+                );
                 // buildNumber 只认**真正的构建号**：trigger_build 通常只返回 queueId（≠ buildNumber），
                 // 绝不能拿 queueId 当 buildNumber 去查（jenkins 会 404 → 前端「构建状态查询出错」）。
                 // 没有真 buildNumber 时不传，让 get_build_status 取 lastBuild（触发后最新构建即本次）。

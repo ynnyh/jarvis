@@ -40,6 +40,24 @@ use serde_json::Value;
 pub use task_queries::get_tasks;
 
 // ============================================================================
+// 全局 AppHandle：供没有窗口上下文的工具路径 emit 事件到前端
+// （deploy 的构建轮询推送、effort_logging 的 effort_written 应用事件）。
+// app setup 阶段 init_app_handle 存一次，之后任意 tool 内 app_handle() 取用。
+// ============================================================================
+
+static APP_HANDLE: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
+
+/// 在 app setup 阶段调用一次，存储 AppHandle 供后续无窗口上下文的任务 emit 事件。
+pub(crate) fn init_app_handle(app: tauri::AppHandle) {
+    let _ = APP_HANDLE.set(app);
+}
+
+/// 尽力取全局 AppHandle；setup 前调用返回 None，调用方静默跳过事件广播。
+pub(crate) fn app_handle() -> Option<tauri::AppHandle> {
+    APP_HANDLE.get().cloned()
+}
+
+// ============================================================================
 // dispatch：所有 tool 的统一入口
 // ============================================================================
 
