@@ -1,8 +1,8 @@
 import { defineConfig } from 'vitepress'
 
 export default defineConfig({
-  title: 'Jarvis',
-  description: '个人桌面 AI 助手 —— 本地优先的智能工作伴侣',
+  title: 'Jarvis 桌宠助手',
+  description: 'Jarvis 桌宠助手——会干活儿的桌面 AI 宠物：禅道任务提醒、工时自动填写、LLM 对话 Agent、插件系统，本地优先，支持 Windows / macOS。',
   base: '/jarvis/',
   lang: 'zh-CN',
   ignoreDeadLinks: true,
@@ -10,6 +10,7 @@ export default defineConfig({
   head: [
     ['link', { rel: 'icon', href: '/jarvis/favicon.ico' }],
     ['meta', { name: 'theme-color', content: '#646cff' }],
+    ['meta', { name: 'keywords', content: '桌宠,桌面宠物,AI 桌宠,桌面助手,AI 助手,desktop pet,AI desktop pet,Tauri,禅道,工时,LLM,Agent,插件' }],
   ],
 
   themeConfig: {

@@ -2,9 +2,9 @@
 layout: home
 
 hero:
-  name: Jarvis
-  text: 个人桌面 AI 助手
-  tagline: 本地优先 · 隐私安全 · 智能高效
+  name: Jarvis 桌宠助手
+  text: 会干活儿的桌面 AI 宠物
+  tagline: 任务提醒 · 工时自动填写 · LLM 对话 Agent · 插件系统 · 本地优先，支持 Windows / macOS
   image:
     src: /screenshot-pet.png
     alt: Jarvis 桌宠形象

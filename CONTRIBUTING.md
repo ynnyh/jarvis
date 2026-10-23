@@ -28,7 +28,7 @@ npm run desktop:dev        # 开发模式，端口 15174
 ## CI 与发版
 
 - `push` 到 `main` 或提 PR → 触发 `.github/workflows/ci.yml`（编码审计 + 测试 + lint），**不发版**
-- 发版是独立流程：打 tag `vX.Y.Z` 才触发 `release.yml` 构建发布，详见 README
+- 发版是独立流程：打 tag `vX.Y.Z` 才触发 `release.yml` 构建发布，详见 [BUILD.md](BUILD.md#发版maintainer)
 
 ## 行为准则
 

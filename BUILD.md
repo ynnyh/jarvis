@@ -105,3 +105,18 @@ C:\Program Files\Jarvis\
 | 安装后启动 | `<resource_dir>/bundled/daemon.mjs` | `<resource_dir>/bundled/node.exe` |
 
 Rust 端 `daemon_client.rs::resolve_daemon_launch` 自动判断：先找 exe 同级的 `resources/bundled/`，找不到再回落到项目根目录的 `dist/daemon/server.js` + 系统 node。
+
+## 发版（maintainer）
+
+推 tag `vX.Y.Z` 触发 GitHub Actions（`release.yml`）自动构建 + 发布。**只有 tag 触发发版**；push 到 `main` 只跑 CI 质量门（测试 + lint），不发版。
+
+```bash
+# 1. 同步版本号（三处一致）：
+#    src-tauri/tauri.conf.json  "version"
+#    src-tauri/Cargo.toml        version
+#    package.json                "version"
+# 2. 提交 + 打 tag + 推送
+git commit -am "release: bump version to X.Y.Z"
+git tag vX.Y.Z
+git push origin main && git push origin vX.Y.Z
+```
