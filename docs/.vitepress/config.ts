@@ -11,6 +11,9 @@ export default defineConfig({
     ['link', { rel: 'icon', href: '/jarvis/favicon.ico' }],
     ['meta', { name: 'theme-color', content: '#646cff' }],
     ['meta', { name: 'keywords', content: '桌宠,桌面宠物,AI 桌宠,桌面助手,AI 助手,desktop pet,AI desktop pet,Tauri,禅道,工时,LLM,Agent,插件' }],
+    ['meta', { property: 'og:title', content: 'Jarvis 桌宠助手——会干活儿的桌面 AI 宠物' }],
+    ['meta', { property: 'og:description', content: '禅道任务提醒 · 工时自动填写 · LLM 对话 Agent · 插件系统 · 本地优先，支持 Windows / macOS' }],
+    ['meta', { property: 'og:image', content: 'https://ynnyh.github.io/jarvis/social-preview.png' }],
   ],
 
   themeConfig: {
