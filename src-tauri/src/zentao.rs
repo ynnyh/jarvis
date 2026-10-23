@@ -32,6 +32,10 @@ const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
 pub struct ZentaoTestResult {
     pub ok: bool,
     pub message: String,
+    /// 失败时的 HTTP 状态码（成功/未发请求时为 None）。供调用方区分
+    /// "凭证被拒"（400/401，多半是密码改了）和"网络/服务端异常"。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_code: Option<u16>,
 }
 
 // ===== 任务工时分类 =====
@@ -177,11 +181,15 @@ impl ZentaoClient {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         if !status.is_success() {
-            return Err(format!(
+            let mut msg = format!(
                 "禅道 token HTTP {}: {}",
                 status.as_u16(),
-                crate::util::truncate_chars(&text, 300)
-            ));
+                humanize_error_body(&text)
+            );
+            if matches!(status.as_u16(), 400 | 401) {
+                msg.push_str("。若近期修改过禅道密码，请到设置 → 禅道连接 输入新密码并保存");
+            }
+            return Err(msg);
         }
         let v: Value = serde_json::from_str(&text).map_err(|_| {
             format!(
@@ -852,6 +860,22 @@ fn extract_first_digits(s: &str) -> Option<String> {
 // 测试连接（给设置 / wizard 用）
 // ============================================================================
 
+/// 把禅道错误响应体转成可读消息。服务端错误通常是 `{"error":"密码错误：…"}`
+/// 这类 JSON（中文以 \uXXXX 转义出现，直接展示用户没法读）——解析出 error/message
+/// 字段，serde 会把转义还原成中文；解不出就退回原文截断。
+fn humanize_error_body(text: &str) -> String {
+    if let Ok(v) = serde_json::from_str::<Value>(text) {
+        for key in ["error", "message"] {
+            if let Some(s) = v.get(key).and_then(|x| x.as_str()) {
+                if !s.is_empty() {
+                    return s.to_string();
+                }
+            }
+        }
+    }
+    crate::util::truncate_chars(text, 300)
+}
+
 /// 简化版连接测试：直接打 /api.php/v1/tokens，成功就说能登。
 /// 不依赖密钥链，完全从入参取凭证。
 pub async fn test_connection(base_url: &str, account: &str, password: &str) -> ZentaoTestResult {
@@ -860,6 +884,7 @@ pub async fn test_connection(base_url: &str, account: &str, password: &str) -> Z
         return ZentaoTestResult {
             ok: false,
             message: "禅道地址不能为空".into(),
+            status_code: None,
         };
     }
     if !base.ends_with('/') {
@@ -869,6 +894,7 @@ pub async fn test_connection(base_url: &str, account: &str, password: &str) -> Z
         return ZentaoTestResult {
             ok: false,
             message: "账号不能为空".into(),
+            status_code: None,
         };
     }
 
@@ -881,6 +907,7 @@ pub async fn test_connection(base_url: &str, account: &str, password: &str) -> Z
             return ZentaoTestResult {
                 ok: false,
                 message: format!("HTTP client 构造失败: {}", e),
+                status_code: None,
             }
         }
     };
@@ -898,6 +925,7 @@ pub async fn test_connection(base_url: &str, account: &str, password: &str) -> Z
         Err(e) => ZentaoTestResult {
             ok: false,
             message: format!("请求失败: {}\n实际请求：{}", e, url),
+            status_code: None,
         },
         Ok(r) => {
             let status = r.status();
@@ -908,23 +936,27 @@ pub async fn test_connection(base_url: &str, account: &str, password: &str) -> Z
                     message: format!(
                         "HTTP {}：{}\n实际请求：{}",
                         status.as_u16(),
-                        crate::util::truncate_chars(&text, 300),
+                        humanize_error_body(&text),
                         url
                     ),
+                    status_code: Some(status.as_u16()),
                 };
             }
             match serde_json::from_str::<Value>(&text) {
                 Ok(v) if v.get("token").is_some() => ZentaoTestResult {
                     ok: true,
                     message: "连接成功".into(),
+                    status_code: Some(status.as_u16()),
                 },
                 Ok(v) => ZentaoTestResult {
                     ok: false,
                     message: format!("响应缺 token 字段: {}", v),
+                    status_code: Some(status.as_u16()),
                 },
                 Err(_) => ZentaoTestResult {
                     ok: false,
                     message: format!("响应非 JSON: {}", crate::util::truncate_chars(&text, 200)),
+                    status_code: Some(status.as_u16()),
                 },
             }
         }
@@ -1013,5 +1045,18 @@ mod tests {
     fn compute_new_left_zero_hours_keeps_value() {
         // 写 0 工时：left 不变
         assert!((compute_new_left(8.0, 0.0) - 8.0).abs() < 1e-9);
+    }
+
+    // —— humanize_error_body：服务端错误转可读中文 ——
+
+    #[test]
+    fn humanize_error_body_decodes_zentao_json() {
+        assert_eq!(
+            humanize_error_body(r#"{"error":"\u5bc6\u7801\u9519\u8bef"}"#),
+            "密码错误"
+        );
+        assert_eq!(humanize_error_body(r#"{"message":"account locked"}"#), "account locked");
+        // 非 JSON 原样截断返回
+        assert_eq!(humanize_error_body("gateway timeout"), "gateway timeout");
     }
 }

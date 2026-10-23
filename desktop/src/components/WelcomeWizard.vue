@@ -142,7 +142,11 @@ function removeRoot(index: number) {
 async function finish() {
   finishing.value = true
   try {
-    await invoke('credentials_set', { account: account.value, password: password.value })
+    // 密码框为空时跳过：此时密码已在第 3 步测试通过后随 keychain 既有值验证，
+    // 不能用空值覆盖掉已存的密码（credentials_set 现在也会拒绝空密码）。
+    if (password.value) {
+      await invoke('credentials_set', { account: account.value, password: password.value })
+    }
     store.config.zentao.baseUrl = normalizeZentaoBaseUrl(baseUrl.value)
     store.config.zentao.account = account.value.trim()
     store.config.repoRoots = [...repoRoots.value]

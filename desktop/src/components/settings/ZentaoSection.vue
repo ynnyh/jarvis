@@ -3,6 +3,8 @@
 //
 // 密码框只在用户输入时有值；空提交时 zentao_test_connection 会自动回退到
 // keychain 已存值（见 src-tauri/src/credentials.rs::zentao_test_connection）。
+// 输入了新密码且测试通过时会自动写入 keychain——否则改密码后很容易
+// "测试通过了但没保存"，后台任务读取仍然拿着旧密码失败。
 
 import { ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
@@ -32,6 +34,22 @@ async function testConnection() {
     })
     state.value = r.ok ? 'ok' : 'fail'
     message.value = r.message
+    // 新密码测试通过 → 顺手存进 keychain，一步到位
+    if (r.ok && password.value) {
+      try {
+        await invoke('credentials_set', {
+          account: store.config.zentao.account,
+          password: password.value,
+        })
+        password.value = ''
+        message.value = '连接成功，新密码已保存到密钥链'
+      } catch (e: any) {
+        message.value =
+          '连接成功，但自动保存密码失败：' +
+          String(e?.message ?? e) +
+          '。请手动点「保存密码到密钥链」'
+      }
+    }
   } catch (e: any) {
     state.value = 'fail'
     message.value = String(e?.message ?? e)
@@ -79,7 +97,7 @@ async function savePassword() {
     </label>
     <label class="settings-field">
       <span class="settings-field-label">密码</span>
-      <input class="settings-input" type="password" placeholder="留空表示不修改密钥链中的密码"
+      <input class="settings-input" type="password" placeholder="留空=用已存密码测试；输入新密码测试通过后自动保存"
         v-model="password" />
     </label>
     <div class="settings-actions">

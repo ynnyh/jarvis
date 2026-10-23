@@ -12,13 +12,19 @@ use serde::{Deserialize, Serialize};
 const SERVICE_NAME: &str = "Jarvis";
 
 fn entry(account: &str) -> Result<Entry, String> {
-    Entry::new(SERVICE_NAME, account).map_err(|e| format!("无法访问密钥链: {}", e))
+    // 统一在这里 trim：settings 运行时读凭证用的也是 trim 后的账号，
+    // 写入时多空格会导致读写键不一致（存进去却读不到）。
+    Entry::new(SERVICE_NAME, account.trim()).map_err(|e| format!("无法访问密钥链: {}", e))
 }
 
 #[tauri::command]
 pub fn credentials_set(account: String, password: String) -> Result<(), String> {
     if account.trim().is_empty() {
         return Err("禅道账号不能为空".to_string());
+    }
+    if password.is_empty() {
+        // 空密码覆盖会让密钥链里已存的密码"凭空消失"，任务读取全部失败。
+        return Err("密码不能为空（如需更换密码，请输入新密码）".to_string());
     }
     let e = entry(&account)?;
     e.set_password(&password)
@@ -63,6 +69,9 @@ pub struct ZentaoTestRequest {
 pub struct ZentaoTestResult {
     pub ok: bool,
     pub message: String,
+    /// 失败时的 HTTP 状态码（成功/未发请求时为 None）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_code: Option<u16>,
 }
 
 /// 把用户输入的禅道 URL 清洗成可拼 /api.php/v1/... 的根地址。
@@ -128,34 +137,48 @@ pub async fn zentao_test_connection(req: ZentaoTestRequest) -> Result<ZentaoTest
         return Ok(ZentaoTestResult {
             ok: false,
             message: "禅道地址不能为空".to_string(),
+            status_code: None,
         });
     }
     if req.account.trim().is_empty() {
         return Ok(ZentaoTestResult {
             ok: false,
             message: "账号不能为空".to_string(),
+            status_code: None,
         });
     }
 
     // 密码空 → 回退到 keychain 已存值。Settings 页的密码框不回填 keychain（防泄露），
     // 用户多半希望直接测"已保存的配置能不能登"，而不是再敲一遍密码。
-    let password = if req.password.is_empty() {
-        match entry(req.account.trim()).and_then(|e| match e.get_password() {
-            Ok(p) => Ok(Some(p)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(err) => Err(format!("读取密钥链失败: {}", err)),
-        }) {
-            Ok(Some(p)) => p,
-            _ => req.password.clone(),
+    let (password, from_keychain) = if req.password.is_empty() {
+        match entry(&req.account)?.get_password() {
+            Ok(p) => (p, true),
+            Err(keyring::Error::NoEntry) => {
+                // 密钥链里没存过密码，硬测也只会换来 400，直接把话说明白。
+                return Ok(ZentaoTestResult {
+                    ok: false,
+                    message: "密码框为空，密钥链中也没有保存过密码。请输入密码后点「测试连接」（会自动保存）或「保存密码到密钥链」。".to_string(),
+                    status_code: None,
+                });
+            }
+            Err(err) => return Err(format!("读取密钥链失败: {}", err)),
         }
     } else {
-        req.password.clone()
+        (req.password.clone(), false)
     };
 
     let result = crate::zentao::test_connection(&base, &req.account, &password).await;
+    let mut message = result.message;
+    // 用的是密钥链里的密码且被服务端当凭证拒绝 → 大概率服务端改过密码，指路换密码。
+    if from_keychain && !result.ok && matches!(result.status_code, Some(400) | Some(401)) {
+        message.push_str(
+            "\n以上用的是密钥链中保存的密码，服务端已拒绝——如果近期改过禅道密码，请在密码框输入新密码后点「测试连接」（会自动保存到密钥链）。",
+        );
+    }
     Ok(ZentaoTestResult {
         ok: result.ok,
-        message: result.message,
+        message,
+        status_code: result.status_code,
     })
 }
 
