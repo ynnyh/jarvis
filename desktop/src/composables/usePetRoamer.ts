@@ -205,7 +205,7 @@ export function usePetRoamer(options: UsePetRoamerOptions) {
     if (!avatar || avatar.currentClip !== null) return
     const win = getCurrentWindow()
     let winPx = 0, winPy = 0, scale = 1
-    let halfWinPx = 450
+    let halfWinPx: number
     try {
       const pos = await win.outerPosition()
       scale = await win.scaleFactor()
