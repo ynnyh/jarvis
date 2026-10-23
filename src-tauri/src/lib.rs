@@ -12,6 +12,7 @@
     clippy::unnecessary_unwrap,
 )]
 
+mod avatar_guard;
 mod channels;
 mod chat_agent;
 mod commands;
@@ -64,6 +65,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         .manage(channels::ChannelServiceState::default())
         .manage(memory::MemoryState::new(&memory::default_db_path()))
         .setup(|app| {
+            // ===== avatar 走丢守护（OS 线程，不受 WebView 遮挡节流影响）=====
+            avatar_guard::spawn(app.handle().clone());
+
             // ===== 系统托盘 =====
             let show_i = MenuItem::with_id(app, "tray_show", "显示小人", true, None::<&str>)?;
             let hide_i = MenuItem::with_id(app, "tray_hide", "隐藏小人", true, None::<&str>)?;

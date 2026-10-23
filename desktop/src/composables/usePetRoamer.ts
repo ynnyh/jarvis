@@ -14,23 +14,26 @@
 //
 // 优先级与打断（高→低，PRD E2-3）：
 //   拖拽 > 气泡在场 > agent 活动 > dock > 决策循环
-// 每种打断路径对走路 rAF / clip 的处理：
-//   - 拖拽（isDragging 置位）：rAF 立即取消 + walk clip 收尾 + 播 held（若有）；
+// 每种打断路径对走路步进 / clip 的处理：
+//   - 拖拽（isDragging 置位）：步进定时器立即清掉 + walk clip 收尾 + 播 held（若有）；
 //     dragEnd 收掉 held 回 idle。
 //   - 气泡在场（hasAlert）：立即停走冻结当前位置（PRD E2-3「暂停走动」）——
 //     showAlert 触发的 ensureBubbleVisible 会 animateWindowToLogical 矫正窗口
-//     位置，与走路 rAF 并发写 setPosition 互相打架，且走路闭包里的旧坐标会把
+//     位置，与走路步进并发写 setPosition 互相打架，且走路闭包里的旧坐标会把
 //     矫正结果冲掉（气泡被推回屏外）；之后不再发起新决策，气泡消失后自愈续跑。
 //   - agent 活动：不发起走路（发起时检查），在走的走完当前目标即停。
-//   - dock（dockEdge 非空）：rAF 立即取消（dock 的 animateWindowToLogical 要
+//   - dock（dockEdge 非空）：步进定时器立即清掉（dock 的 animateWindowToLogical 要
 //     独占窗口移动权）+ walk clip 收尾，决策挂起；exitDock 恢复排期。
 //
 // 走路几何：小人恒居 900×900 窗口正中心（ANCHOR_AVATAR_CENTER 四键恒等），
 // 脚 = 渲染盒底缘 = 窗口中心 + petSizePx/2。目标 = 当前 x ± 100~400px，clamp 在
 // 当前显示器「工作区」内；y 一次算定为「脚踩工作区底边」（任务栏上缘），走动
 // 途中 y 以同速向底边靠拢（不在起点瞬移贴地，从半空被拖上去的场景是"走下去"）。
-// 移动用自写 rAF 线性匀速步进（~60px/s），刻意不用 dock 的缓动 —— 漫游要匀速
+// 移动用自写 setTimeout 步进（16ms，遮挡期自动降频）线性匀速（~60px/s），刻意不用 dock 的缓动 —— 漫游要匀速
 // 可取消，缓动是奔固定点的收束动画，语义不同。
+// 全程物理像素（2026-10-23）：混合 DPI 多屏下「全局逻辑坐标」不连续，旧的
+// 逻辑坐标版会把窗口中心换算到屏幕外（宠物走丢、cy 恒卡屏外同一值），见
+// getWorkAreaPhysical 注释。起点沉在屏外时目标同样钳进工作区，第一段路自愈。
 //
 // 睡觉：连续无交互 ≥10 分钟且有 sleep clip → 循环播 sleep；任何点击/拖拽/
 // 气泡/菜单交互唤醒回 idle。交互时钟由 notifyInteraction（App.vue mousedown）+
@@ -38,10 +41,10 @@
 // ============================================================================
 
 import { ref, computed, watch, onUnmounted, type Ref } from 'vue'
-import { getCurrentWindow, currentMonitor, LogicalPosition } from '@tauri-apps/api/window'
+import { getCurrentWindow, currentMonitor, PhysicalPosition } from '@tauri-apps/api/window'
 import { useConfigStore } from '../stores/config'
 import { isPackPetId, packHasClip, getPackPets } from '../petManifest'
-import { ANCHOR_AVATAR_CENTER, type DockEdge } from './useAvatarDock'
+import { type DockEdge } from './useAvatarDock'
 
 /** PetAvatar defineExpose 的结构化口径（避免 composable 直接依赖组件类型）。
  *  注意 currentClip 是「解包后」的值：defineExpose 暴露的对象经 proxyRefs 包装，
@@ -85,18 +88,29 @@ const SLEEP_AFTER_IDLE_MS = 10 * 60 * 1000
 /** 睡觉判定的巡检间隔 */
 const SLEEP_CHECK_INTERVAL_MS = 15000
 
-/** 当前显示器工作区（逻辑像素全局坐标）。dock 的 getMonitorBounds 是全屏口径，
- *  走路要贴「任务栏上缘」必须用 workArea —— Tauri v2 Monitor 自带 workArea，
- *  照 getMonitorBounds 的逻辑坐标换算先例除以 scaleFactor。 */
-async function getWorkAreaBounds(): Promise<{ x: number; y: number; w: number; h: number }> {
+/** 当前显示器工作区（物理像素全局坐标）。
+ *
+ *  为什么全程物理坐标：混合 DPI 多屏（如 100% 主屏 + 150% 副屏）下不存在一致的
+ *  「全局逻辑坐标」——physical ÷ 本屏 scale 得到的逻辑值只在本屏内有意义，跨屏
+ *  复用再乘彼屏 scale 会落到别的点。旧实现把 workArea 除以 scale 变逻辑、
+ *  setPosition(Logical) 又被 tao 按「窗口当前屏」scale 展回物理，两次换算用的
+ *  scale 不是同一个 → 窗口中心被打到屏幕外（宠物走丢，实测 cy 恒定卡在屏外同
+ *  一值）。物理坐标全局唯一，setPosition(Physical) 原样直达 OS，不经任何 scale
+ *  再解释。渲染盒半径/行程/速度这类 CSS 常量按窗口当前屏 scale 展成物理值；窗口
+ *  中心偏移取实际物理尺寸的一半，不做任何恒定尺寸假设。 */
+async function getWorkAreaPhysical(): Promise<{ x: number; y: number; w: number; h: number }> {
   const mon = await currentMonitor()
-  if (!mon) return { x: 0, y: 0, w: window.screen.availWidth, h: window.screen.availHeight }
-  const s = mon.scaleFactor
+  if (!mon) {
+    // 拿不到显示器（极端环境）：按窗口 scale 把 CSS 视口估算成物理值兜底
+    const s = await getCurrentWindow().scaleFactor()
+    return { x: 0, y: 0, w: window.screen.availWidth * s, h: window.screen.availHeight * s }
+  }
+  // Monitor.workArea 本身就是物理像素，直接用——禁止再除 scaleFactor
   return {
-    x: mon.workArea.position.x / s,
-    y: mon.workArea.position.y / s,
-    w: mon.workArea.size.width / s,
-    h: mon.workArea.size.height / s,
+    x: mon.workArea.position.x,
+    y: mon.workArea.position.y,
+    w: mon.workArea.size.width,
+    h: mon.workArea.size.height,
   }
 }
 
@@ -113,10 +127,11 @@ export function usePetRoamer(options: UsePetRoamerOptions) {
   /** 拖拽期由我们播的 held clip（dragEnd 时收尾；不碰用户点播的片段） */
   let playingHeld = false
 
-  // 小人渲染盒半径（与 useAvatarDock 的 avatarHalf 同源：petSizePx/2，加载时已钳制）
+  // 小人渲染盒半径（与 useAvatarDock 的 avatarHalf 同源：petSizePx/2，加载时已钳制）。
+  // 注意不再用 ANCHOR_AVATAR_CENTER(450,450) 推窗口中心偏移——那隐含「窗口恒 900×900
+  // 逻辑」假设，DPI 变更/外力 resize 后逻辑尺寸会漂（实测被撑到 1350/2026），常量全错。
+  // 改为每步读窗口实际物理尺寸取一半（见 startWalk），对尺寸漂移免疫。
   const avatarHalf = () => configStore.config.petSizePx / 2
-  // 窗口中心 = 小人中心（四键恒等，取 rb 即可）
-  const CENTER = ANCHOR_AVATAR_CENTER.rb
 
   /** 当前宠物的包清单（非 pack 宠物返回 null） */
   function currentPack() {
@@ -142,7 +157,7 @@ export function usePetRoamer(options: UsePetRoamerOptions) {
   let sleepTimer: number | null = null
 
   interface WalkSession {
-    raf: number | null
+    timer: number | null
     finished: boolean
     resolve: () => void
   }
@@ -167,13 +182,13 @@ export function usePetRoamer(options: UsePetRoamerOptions) {
 
   // ===== 走路 =====
 
-  /** 打断走路：rAF 立即取消 + resolve 挂起的 startWalk promise。幂等。 */
+  /** 打断走路：timer 立即清掉 + resolve 挂起的 startWalk promise。幂等。 */
   function stopWalking() {
     if (!walk) return
     const session = walk
     walk = null
     isMoving.value = false
-    if (session.raf !== null) cancelAnimationFrame(session.raf)
+    if (session.timer !== null) clearTimeout(session.timer)
     session.finished = true
     session.resolve()
   }
@@ -189,40 +204,48 @@ export function usePetRoamer(options: UsePetRoamerOptions) {
     const avatar = petAvatar.value
     if (!avatar || avatar.currentClip !== null) return
     const win = getCurrentWindow()
-    let winX: number, winY: number
+    let winPx = 0, winPy = 0, scale = 1
+    let halfWinPx = 450
     try {
       const pos = await win.outerPosition()
-      const scale = await win.scaleFactor()
-      winX = pos.x / scale
-      winY = pos.y / scale
+      scale = await win.scaleFactor()
+      winPx = pos.x
+      winPy = pos.y
+      // 窗口中心偏移用实际物理尺寸的一半——不假设 900×900 逻辑，DPI 变更/
+      // 外力 resize 导致的逻辑尺寸漂移不再影响定位
+      const size = await win.outerSize()
+      halfWinPx = size.width / 2
     } catch {
       return
     }
-    const area = await getWorkAreaBounds()
-    const half = avatarHalf()
+    const area = await getWorkAreaPhysical()
+    // CSS 常量（渲染盒半径/行程/速度）按窗口当前屏 scale 展成物理值
+    const halfPx = avatarHalf() * scale
     // 异步取坐标/工作区期间可能已被打断（拖拽/dock 抢先），重查一遍再动窗口
     if (walk !== null || isDragging.value || dockEdge.value) return
 
-    const centerX = winX + CENTER.x
-    // 小人渲染盒全须留在工作区内：中心 clamp 到 [左缘+half, 右缘-half]
-    const minX = area.x + half
-    const maxX = area.x + area.w - half
-    const dist = WALK_MIN_PX + Math.random() * (WALK_MAX_PX - WALK_MIN_PX)
+    const centerPxX = winPx + halfWinPx
+    // 小人渲染盒全须留在工作区内：中心 clamp 到 [左缘+half, 右缘-half]。
+    // 起点沉在屏外（历史 sunk 状态）时目标同样钳进工作区 → 第一段路就把小人
+    // 带回可见区，自愈。
+    const minX = area.x + halfPx
+    const maxX = area.x + area.w - halfPx
+    const distPx = (WALK_MIN_PX + Math.random() * (WALK_MAX_PX - WALK_MIN_PX)) * scale
     let dir: 1 | -1 = Math.random() < 0.5 ? -1 : 1
-    let targetCenterX = centerX + dir * dist
-    if (targetCenterX < minX || targetCenterX > maxX) {
+    let targetCenterPxX = centerPxX + dir * distPx
+    if (targetCenterPxX < minX || targetCenterPxX > maxX) {
       // 该方向出界 → 反方向走（贴边场景变成「往空处走满 100~400px」）
       dir = dir === 1 ? -1 : 1
-      targetCenterX = Math.min(Math.max(centerX + dir * dist, minX), maxX)
+      targetCenterPxX = Math.min(Math.max(centerPxX + dir * distPx, minX), maxX)
     } else {
-      targetCenterX = Math.min(Math.max(targetCenterX, minX), maxX)
+      targetCenterPxX = Math.min(Math.max(targetCenterPxX, minX), maxX)
     }
     // 两侧都顶死（工作区比行程还窄，正常屏幕不会发生）：放弃本次
-    if (Math.abs(targetCenterX - centerX) < WALK_MIN_PX) return
+    if (Math.abs(targetCenterPxX - centerPxX) < WALK_MIN_PX * scale) return
 
-    // 脚踩工作区底边：底边 - 渲染盒半径 = 小人中心 y → 反推窗口 y
-    const targetWinX = targetCenterX - CENTER.x
-    const targetWinY = area.y + area.h - half - CENTER.y
+    // 脚踩工作区底边：底边 - 渲染盒半径(物理) = 小人中心 y → 反推窗口 y
+    const targetWinPxX = targetCenterPxX - halfWinPx
+    const targetWinPxY = area.y + area.h - halfPx - halfWinPx
 
     // 按行进方向翻素材（素材层 pointer-events:none，翻转不碰命中盒）
     avatar.setFacing(dir === 1 ? 'right' : 'left')
@@ -235,32 +258,36 @@ export function usePetRoamer(options: UsePetRoamerOptions) {
       void avatar.playClip('walk', { loop: true })
     }
 
-    const session: WalkSession = { raf: null, finished: false, resolve: () => {} }
+    const session: WalkSession = { timer: null, finished: false, resolve: () => {} }
     walk = session
     await new Promise<void>((resolve) => {
       session.resolve = resolve
-      // 闭包持有当前逻辑坐标逐帧推进：窗口 setPosition 是异步 IPC，逐帧回读
+      // 闭包持有当前物理坐标逐帧推进：窗口 setPosition 是异步 IPC，逐帧回读
       // outerPosition 会拿到滞后值造成步进抖动，参照 dock 动画的「起点+推进」写法
-      let curX = winX
-      let curY = winY
+      let curX = winPx
+      let curY = winPy
       let last = performance.now()
+      // 用 setTimeout 而非 rAF 驱动步进：小人沉到屏外后 WebView 被判定遮挡，
+      // rAF 永久停摆会把走路 promise 挂死、决策循环跟着死锁（走丢不可自愈的
+      // 直接原因）。定时器在遮挡下也会被节流（≥1s/跳），但遮挡期本就看不见，
+      // 跳步无感；可见时 16ms 精度与 rAF 等价。
       const step = (now: number) => {
         if (session.finished || walk !== session) return
-        // 长帧钳制：窗口隐藏期 rAF 暂停，恢复瞬间 dt 巨大，不钳会瞬移
+        // 长帧钳制：节流期 dt 巨大，不钳会瞬移
         const dt = Math.min((now - last) / 1000, 0.1)
         last = now
-        const stepLen = WALK_SPEED_PX_S * dt
-        const dx = targetWinX - curX
-        const dy = targetWinY - curY
+        const stepLen = WALK_SPEED_PX_S * scale * dt
+        const dx = targetWinPxX - curX
+        const dy = targetWinPxY - curY
         const arrive = Math.abs(dx) <= stepLen && Math.abs(dy) <= stepLen
         if (arrive) {
-          curX = targetWinX
-          curY = targetWinY
+          curX = targetWinPxX
+          curY = targetWinPxY
         } else {
           curX += Math.sign(dx) * Math.min(Math.abs(dx), stepLen)
           curY += Math.sign(dy) * Math.min(Math.abs(dy), stepLen)
         }
-        win.setPosition(new LogicalPosition(Math.round(curX), Math.round(curY))).catch(() => {})
+        win.setPosition(new PhysicalPosition(Math.round(curX), Math.round(curY))).catch(() => {})
         if (arrive) {
           walk = null
           session.finished = true
@@ -268,9 +295,9 @@ export function usePetRoamer(options: UsePetRoamerOptions) {
           resolve()
           return
         }
-        session.raf = requestAnimationFrame(step)
+        session.timer = window.setTimeout(step, 16)
       }
-      session.raf = requestAnimationFrame(step)
+      session.timer = window.setTimeout(step, 16)
     })
     // 到达（或打断后由本函数收尾的场景）：walk clip 收尾回 idle。
     // 只收自己播的 walk —— 打断方（拖拽）可能已经换成 held 了。
@@ -385,7 +412,7 @@ export function usePetRoamer(options: UsePetRoamerOptions) {
   // ===== 交互信号接线（唤醒 + 交互时钟）=====
 
   // 拖拽（最高优先级）：sync 立即打断 —— Windows 自驱拖拽的 Rust 线程随即接管
-  // 窗口移动，走路 rAF 晚停一帧都会和它打架抢 setPosition。
+  // 窗口移动，走路步进晚停一拍都会和它打架抢 setPosition。
   watch(isDragging, (dragging) => {
     if (dragging) {
       wake()
@@ -412,7 +439,7 @@ export function usePetRoamer(options: UsePetRoamerOptions) {
 
   // 气泡在场：立即冻结走路（PRD E2-3「暂停走动：冻结当前位置」）—— showAlert
   // 触发的 ensureBubbleVisible 会 animateWindowToLogical 矫正窗口位置，与走路
-  // rAF 并发写 setPosition 互相打架，且走路闭包里的旧坐标会把矫正结果冲回
+  // 走路步进并发写 setPosition 互相打架，且走路闭包里的旧坐标会把矫正结果冲回
   // （气泡可能被顶回屏外）。停走即冻结在当前帧位置；「不再发起新决策」由
   // decide() 资格检查承担，气泡消失后经 stopWalking 的 resolve 链自愈重排
   watch(hasAlert, (present) => {
@@ -427,7 +454,7 @@ export function usePetRoamer(options: UsePetRoamerOptions) {
     if (open) wake()
   })
 
-  // dock：入 dock 挂起（dock 动画独占窗口移动权，走路 rAF 必须立刻让位），
+  // dock：入 dock 挂起（dock 动画独占窗口移动权，走路步进必须立刻让位），
   // 出 dock 恢复决策排期
   watch(dockEdge, (edge) => {
     if (edge) {
@@ -485,8 +512,8 @@ export function usePetRoamer(options: UsePetRoamerOptions) {
     clearDecideTimer()
     if (sleepTimer) { clearInterval(sleepTimer); sleepTimer = null }
     if (walk) {
-      // 只撤 rAF，不 resolve：卸载后无消费者等待，防止 resolve 回调再排定时器
-      if (walk.raf !== null) cancelAnimationFrame(walk.raf)
+      // 只撤 timer，不 resolve：卸载后无消费者等待，防止 resolve 回调再排定时器
+      if (walk.timer !== null) clearTimeout(walk.timer)
       walk.finished = true
       walk = null
     }
