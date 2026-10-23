@@ -116,10 +116,11 @@ pub fn toggle_avatar_window(app: tauri::AppHandle) -> Result<(), String> {
 
 /// 统一显隐 avatar 小人窗口，并收敛焦点行为。
 ///
-/// 除 chat 外的独立工具窗（settings/todayPlan/writeHours/batchWrite/cost/manualHours）
+/// 会藏小人的独立工具窗（todayPlan/writeHours/batchWrite/cost/manualHours）
 /// 打开时隐藏小人、关闭时恢复，集中在此避免每条命令重复写 hide/show/focus 三件套，
-/// 也避免日后新增窗口漏掉显隐逻辑。chat 自 2026-10 起与小人共存（见 chat_open），
-/// 只在其它窗口 open/close 时经由本函数间接显隐。avatar 窗口不存在时静默跳过（不报错）。
+/// 也避免日后新增窗口漏掉显隐逻辑。chat 自 2026-10 起与小人共存（见 chat_open）；
+/// settings 自 2026-10-22 起也与小人共存（设置里拖大小滑杆要实时看到宠物变大小，
+/// 见 settings_open）。avatar 窗口不存在时静默跳过（不报错）。
 fn set_avatar_visible(app: &tauri::AppHandle, visible: bool) -> Result<(), String> {
     let Some(avatar) = app.get_webview_window("avatar") else {
         return Ok(());
@@ -140,12 +141,14 @@ fn set_avatar_visible(app: &tauri::AppHandle, visible: bool) -> Result<(), Strin
 
 // ===== Chat 窗口切换 =====
 
-/// 除 chat 外的独立工具窗（settings/todayPlan/writeHours/batchWrite/cost/manualHours）
-/// 是否有任一可见。这些窗开着期间小人应保持隐藏（v0.10.11 策略，见
-/// set_avatar_visible 注释），chat_close 恢复小人显示前必须先确认没有别的窗
-/// 仍在藏它——否则「settings 开着 → 开/关聊天」会把被 settings 藏住的小人点亮。
+/// 会藏小人的独立工具窗（todayPlan/writeHours/batchWrite/cost/manualHours）
+/// 是否有任一可见。这些窗开着期间小人保持隐藏（v0.10.11 策略，见
+/// set_avatar_visible 注释），恢复小人显示前必须先确认没有别的窗仍在藏它。
+/// settings 自 2026-10-22 起不再藏小人（见 settings_open），**不在清单内**——
+/// 否则「settings 开着时关聊天/关设置」会误判「有工具窗在场」而不点亮小人；
+/// settings_close 也用本函数做守卫，与 chat_close 同款模式。
 fn any_tool_window_visible(app: &tauri::AppHandle) -> bool {
-    ["settings", "todayPlan", "writeHours", "batchWrite", "cost", "manualHours"]
+    ["todayPlan", "writeHours", "batchWrite", "cost", "manualHours"]
         .iter()
         .any(|label| {
             app.get_webview_window(label)
@@ -166,10 +169,10 @@ pub async fn chat_open(app: tauri::AppHandle) -> Result<(), String> {
     }
     // 聊天大窗与 avatar 小人共存（2026-10 活物感改造）：小人不再随 chat 打开而
     // 隐藏，留在桌面上实时反映 agent 状态——前端监听 chat:stream 事件驱动动画
-    // 状态机（thinking/working/happy 状态色与 motion）。其余工具窗
-    // （settings/todayPlan 等）维持「打开即隐藏」策略不变。chat_close 恢复显示
-    // 前会先确认没有其它工具窗仍开着（any_tool_window_visible），不会把被
-    // settings 等窗藏着的小人点亮。
+    // 状态机（thinking/working/happy 状态色与 motion）。其余大窗
+    // （todayPlan/cost 等）维持「打开即隐藏」策略不变（settings 自 2026-10-22
+    // 起也与小人共存，见 settings_open）。chat_close 恢复显示前会先确认没有
+    // 其它藏小人的窗仍开着（any_tool_window_visible），不会把它们藏着的小人点亮。
     // 同步前端大窗状态：聊天窗打开 → isChatOpen=true，用于"聊天窗打开期间不弹气泡"等联动。
     app.emit_to("avatar", "chat-window-state", true)
         .map_err(|e| format!("emit chat-window-state 失败: {}", e))?;
@@ -217,10 +220,10 @@ pub async fn settings_open(app: tauri::AppHandle, page: Option<String>) -> Resul
             settings
                 .show()
                 .map_err(|e| format!("show settings 失败: {}", e))?;
-            // 首次打开设置窗口时隐藏 avatar 小人（与 chat 等工具窗行为统一），
-            // 关闭（settings_close）时再恢复显示。
-            set_avatar_visible(&app, false)?;
-            // 同步前端：设置窗口从「未开」变「开」→ isSettingsOpen=true。
+            // settings 不再隐藏 avatar 小人（2026-10-22 真机反馈）：小人窗置顶透
+            // 明，浮在设置窗上方——用户在设置里拖大小滑杆时能实时看到宠物变大变
+            // 小。这里只同步前端状态（isSettingsOpen），供「设置开着不弹临时气
+            // 泡」等联动使用；关闭（settings_close）按守卫恢复显示。
             app.emit_to("avatar", "settings-window-state", true)
                 .map_err(|e| format!("emit settings-window-state 失败: {}", e))?;
         }
@@ -241,7 +244,12 @@ pub async fn settings_close(app: tauri::AppHandle) -> Result<(), String> {
             .hide()
             .map_err(|e| format!("hide settings 失败: {}", e))?;
     }
-    set_avatar_visible(&app, true).ok();
+    // settings 不藏小人后，这里只是「归还」自己从未拿走的显示权：必须守卫，
+    // 否则「todayPlan 等大窗开着时关设置」会把被大窗藏住的小人点亮。对齐
+    // chat_close 的 any_tool_window_visible 守卫模式。
+    if !any_tool_window_visible(&app) {
+        set_avatar_visible(&app, true)?;
+    }
     app.emit_to("avatar", "settings-detail-closed", ())
         .map_err(|e| format!("emit settings-detail-closed 失败: {}", e))?;
     // 同步前端：设置窗口已关闭 → isSettingsOpen=false。

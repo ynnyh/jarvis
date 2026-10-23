@@ -130,7 +130,9 @@ export interface JarvisConfig {
   commitsRange: CommitsRange
   /** 左键单击小人弹什么。默认任务列表 */
   leftClickAction: LeftClickAction
-  /** 选用的宠物形象 id（见 petManifest.ts）；默认 'robo'。形象不在列表时回退到默认 */
+  /** 选用的宠物形象 id（见 petManifest.ts）。新配置默认官方吉祥物 jarvis-butler；
+   *  老配置已保存的 petId 不覆盖 —— load 合并时 remote.petId 有值即用 remote，
+   *  这里的默认只对「从没存过 petId」的全新配置生效 */
   petId: string
   /** 老三档尺寸字段（见 PetSize）。已被 petSizePx 取代，仅兼容保留：加载时
    *  折算成 petSizePx 后不再读取，写回时原样保留（老配置迁移不丢字段） */
@@ -233,7 +235,8 @@ const defaultConfig = (): JarvisConfig => ({
   repoRoots: [],
   commitsRange: 'thisWeek',
   leftClickAction: 'tasks',
-  petId: 'robo',
+  // 默认宠物 = 官方吉祥物（PRD：默认切换仅影响新配置，老用户已存 petId 不动）
+  petId: 'jarvis-butler',
   petSize: 'medium',
   petSizePx: PET_SIZE_DEFAULT,
   petProactiveChat: true,

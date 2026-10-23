@@ -1,11 +1,16 @@
 // ============================================================================
-// E2 漫游行为引擎：让 pack 宠物在桌面上「活」起来。
+// E2 漫游行为引擎：让宠物在桌面上「活」起来。
 //
-// 只对「当前宠物是 pack 且 petRoaming 开启」的场景生效；lottie/图片宠物与
-// petRoaming=false 时零行为变化（active=false 即完全不排定时器）。
+// 对「petRoaming 开启」的全部宠物生效（2026-10-22 真机反馈放宽：原先只认 pack
+// 宠物，内置 lottie/图片宠物「那么多动作」一个没有；petRoaming=false 时零行为
+// 变化，active=false 即完全不排定时器）。能力按素材有无自动降级：
+//   - 走路：pack 有 walk clip 走真素材；其余宠物（含无 walk clip 的 pack）
+//     程序化走路——窗口滑动 + PetAvatar 的 moving 弹跳动效，到站撤销。
+//   - 小动作：pack 有 actions 才播，没有就继续 idle（fidget 微动作照旧）。
+//   - 拎起/睡觉/点播：仍需 held/sleep/actions clip（pack 专属），无则跳过。
 //
 // 决策循环：idle 下每 15-40s 随机决策一次 —— 45% 继续 idle（方案 A 的 fidget
-// 照旧）、35% 播加权随机小动作、20% 走路（无 walk clip 退化为小动作）。
+// 照旧）、35% 播加权随机小动作（无 actions 继续 idle）、20% 走路。
 //
 // 优先级与打断（高→低，PRD E2-3）：
 //   拖拽 > 气泡在场 > agent 活动 > dock > 决策循环
@@ -120,12 +125,16 @@ export function usePetRoamer(options: UsePetRoamerOptions) {
     return getPackPets().find(p => p.id === petId)?.pack ?? null
   }
 
-  /** 引擎总闸：config 已加载 + 开关开启 + 当前宠物是 pack（idle 必有）。 */
-  const active = computed(() =>
-    configStore.loaded
-    && configStore.config.petRoaming !== false
-    && packHasClip(configStore.config.petId, 'idle'),
-  )
+  /** 引擎总闸：config 已加载 + 开关开启（2026-10-22 起任意宠物均可漫游，能力
+   *  按素材降级，见文件头）。pack 宠物额外要求包清单已加载（idle clip 恒在，
+   *  读到它 = 清单已从后端就绪）——否则启动竞态下「有 walk clip 的包」会被当成
+   *  无 clip 走程序化弹跳，破坏 pack 既有行为零变化红线。 */
+  const active = computed(() => {
+    if (!configStore.loaded) return false
+    if (configStore.config.petRoaming === false) return false
+    const petId = configStore.config.petId
+    return !isPackPetId(petId) || packHasClip(petId, 'idle')
+  })
 
   // ===== 定时器 / 走路会话（onUnmounted 全清理）=====
 
@@ -171,9 +180,10 @@ export function usePetRoamer(options: UsePetRoamerOptions) {
 
   /**
    * 走一段：目标 x = 当前 ±100~400px（clamp 在当前显示器工作区内），y 贴工作区
-   * 底边（脚踩任务栏上缘）。播 walk clip（loop）+ 按行进方向翻转素材。到达或被
-   * 打断后 resolve（调用方决定后续排期）；walk clip 的收尾统一在完成后做（被打
-   * 断时由打断方按优先级接管 clip：held / dock 静默回 idle）。
+   * 底边（脚踩任务栏上缘）。pack 有 walk clip 播真素材（loop），否则程序化走路
+   * ——moving 经 prop 驱动 PetAvatar 挂 walk 弹跳动效；两者都按行进方向翻转素
+   * 材。到达或被打断后 resolve（调用方决定后续排期）；walk clip 的收尾统一在
+   * 完成后做（被打断时由打断方按优先级接管 clip：held / dock 静默回 idle）。
    */
   async function startWalk(): Promise<void> {
     const avatar = petAvatar.value
@@ -217,8 +227,13 @@ export function usePetRoamer(options: UsePetRoamerOptions) {
     // 按行进方向翻素材（素材层 pointer-events:none，翻转不碰命中盒）
     avatar.setFacing(dir === 1 ? 'right' : 'left')
     isMoving.value = true
-    // loop clip 的 promise 永不 resolve（靠 stopClip 收尾），fire-and-forget 即可
-    void avatar.playClip('walk', { loop: true })
+    // pack 且有真 walk clip → 播素材（loop，promise 永不 resolve，靠 stopClip
+    // 收尾），fire-and-forget 即可；playClip 同步置 currentClip，弹跳动效的
+    // isProceduralWalk 判定不会闪一帧。其余宠物不播片段——程序化走路，moving
+    // 驱动 PetAvatar 挂 walk 弹跳（2026-10-22 全宠物开放），方向翻转同由 setFacing 驱动
+    if (packHasClip(configStore.config.petId, 'walk')) {
+      void avatar.playClip('walk', { loop: true })
+    }
 
     const session: WalkSession = { raf: null, finished: false, resolve: () => {} }
     walk = session
@@ -319,8 +334,10 @@ export function usePetRoamer(options: UsePetRoamerOptions) {
       scheduleDecision()
       return
     }
-    // 20% 走路：agent 活动期间不发起走路（PRD E2-3）；无 walk clip 退化为小动作
-    if (packHasClip(configStore.config.petId, 'walk') && !options.isAgentActive()) {
+    // 20% 走路：agent 活动期间不发起（PRD E2-3），退化为小动作/继续 idle。
+    // 2026-10-22 起对全部宠物开放，startWalk 内部按素材自动降级：pack 有 walk
+    // clip 走真素材，其余宠物程序化走路（moving 弹跳），不再「无 clip 退化成小动作」
+    if (!options.isAgentActive()) {
       void startWalk().then(() => scheduleDecision())
       return
     }

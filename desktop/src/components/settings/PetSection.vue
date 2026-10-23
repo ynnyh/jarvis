@@ -17,6 +17,7 @@ import {
   loadPackPets,
   clearPackClipCache,
   isPackPetId,
+  MASCOT_PET_ID,
   type PetInfo,
 } from '../../petManifest'
 import { customPetDelete } from '../../api/customPet'
@@ -58,9 +59,11 @@ function packIsMultiAction(pet: PetInfo): boolean {
 // 刷新宠物选项列表
 async function refreshOptions() {
   await Promise.all([loadCustomPets(), loadPackPets()])
+  // mascot 在 PETS 首位（getAllPets 保持数组序）→ 内置列表自动排第一；
+  // 「新」徽标以文本缀进 label（DropdownOption 无徽标字段，下拉项够用）
   petOptions.value = getAllPets().map(p => ({
     value: p.id,
-    label: `${p.name}${p.description ? ' · ' + p.description : ''}${isPackPetId(p.id) && packIsMultiAction(p) ? ' · 多动作' : ''}`,
+    label: `${p.name}${p.id === MASCOT_PET_ID ? '（新）' : ''}${p.description ? ' · ' + p.description : ''}${isPackPetId(p.id) && packIsMultiAction(p) ? ' · 多动作' : ''}`,
     group: PET_CATEGORY_LABELS[p.category],
   }))
 }

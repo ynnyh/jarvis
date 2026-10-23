@@ -1,4 +1,5 @@
-// 宠物形象注册表。每个宠物 = 一个 Lottie JSON + 一组元信息。
+// 宠物形象注册表。内置宠物多为「一个 Lottie JSON + 一组元信息」；
+// 官方吉祥物（mascot）是例外：无内联素材，渲染走 PetAvatar 的组件分支。
 //
 // 内置宠物：把 Lottie .json 文件放到 desktop/src/assets/pets/，在 PETS 数组里加一项。
 // 自定义宠物：通过设置界面上传 Lottie/图片/GIF，存储在 ~/.jarvis/custom-pets/。
@@ -33,18 +34,51 @@ export interface PetInfo {
   category: PetCategory
   /** 一句话描述，给设置 UI 提示文案用 */
   description: string
-  /** Lottie 动画 JSON 数据，或图片/GIF 的 Base64 数据；pack 类型无内联 data（素材按 clip 惰性加载） */
+  /** Lottie 动画 JSON 数据，或图片/GIF 的 Base64 数据；pack/mascot 类型无内联 data
+   *  （pack 素材按 clip 惰性加载，mascot 渲染走 PetAvatar 的组件分支） */
   data: unknown
   render?: PetRenderConfig
-  /** 自定义宠物类型：lottie | image | gif；宠物包为 pack */
-  petType?: 'lottie' | 'image' | 'gif' | 'pack'
+  /** 自定义宠物类型：lottie | image | gif；宠物包为 pack；官方吉祥物为 mascot */
+  petType?: 'lottie' | 'image' | 'gif' | 'pack' | 'mascot'
   /** 仅图片类型：动画效果 */
   imageAnimation?: ImageAnimation
   /** 仅 pack 类型：完整包清单（clips/scale/facing） */
   pack?: PetPack
 }
 
+// ===== 官方吉祥物「Jarvis 机器管家」（SVG 程序化角色）=====
+// 渲染走 PetAvatar 的 petType==='mascot' 组件分支（PetMascot.vue），无内联素材。
+// 片段调度对齐 pack 语义：sleep/walk 走 playClip(..., loop) + stopClip 链路
+// （见 packHasClip 的 mascot 映射），点播动作一次性播完自动回 idle。
+
+export const MASCOT_PET_ID = 'jarvis-butler'
+
+/** mascot 点播动作（PRD M3）：name 给点播菜单与 hasClip，key 给 PetMascot 的
+ *  姿态类名，durationMs 给 PetAvatar 的一次性收尾定时器（程序化动画没有真实
+ *  播放结束事件，按 PRD 固定时长收尾）。 */
+export interface MascotActionClip {
+  name: string
+  key: 'greet' | 'spin' | 'salute'
+  durationMs: number
+}
+
+export const MASCOT_ACTION_CLIPS: MascotActionClip[] = [
+  { name: '打招呼', key: 'greet', durationMs: 1800 },
+  { name: '转圈', key: 'spin', durationMs: 1300 },
+  { name: '敬礼', key: 'salute', durationMs: 1500 },
+]
+
 export const PETS: PetInfo[] = [
+  {
+    // 首位 = 新配置默认形象（stores/config.ts defaultConfig 的 petId 与此对齐）；
+    // 老配置已保存的 petId 在 load 合并时 remote 优先，不受首位插入影响
+    id: MASCOT_PET_ID,
+    name: 'Jarvis 机器管家',
+    category: 'mecha',
+    description: '官方吉祥物·全套程序化动作',
+    data: null,
+    petType: 'mascot',
+  },
   {
     id: 'robo',
     name: '小机器人',
@@ -217,9 +251,13 @@ export function getPackPets(): PetInfo[] {
   return packPetsCache.value
 }
 
-/** pack 宠物是否拥有某片段（idle 恒真；walk/held/sleep 查对应槽；其余查 actions 名）。
+/** 查询宠物是否拥有某片段：pack 查清单；mascot 是程序化内置角色——walk/sleep
+ *  对漫游引擎视为「有真素材」，E2 零改动直接走 playClip(..., loop) + stopClip
+ *  链路获得走路/睡觉（usePetRoamer 只认本函数，故 mascot 映射必须落在这里）；
+ *  held 由 dragging prop 驱动（PRD M2-3）、点播动作仅右键菜单播，都不在此列。
  *  纯函数读 shallowRef 缓存 —— E2 漫游引擎在 computed 里调用即可获得响应式。 */
 export function packHasClip(petId: string, name: string): boolean {
+  if (petId === MASCOT_PET_ID) return name === 'walk' || name === 'sleep'
   if (!isPackPetId(petId)) return false
   const pack = getPackPets().find(p => p.id === petId)?.pack
   if (!pack) return false

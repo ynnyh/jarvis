@@ -11,7 +11,7 @@ import WelcomeWizard from './components/WelcomeWizard.vue'
 import PetAvatar from './components/PetAvatar.vue'
 import PetChat from './components/PetChat.vue'
 import ErrorBoundary from './components/ErrorBoundary.vue'
-import { getPetById } from './petManifest'
+import { getPetById, MASCOT_ACTION_CLIPS } from './petManifest'
 
 const {
   avatarAnchor, showMenu, state, current, hasAlert, stateFlashing,
@@ -89,8 +89,8 @@ onBeforeUnmount(() => {
   if (squishTimer) clearTimeout(squishTimer)
 })
 
-// ===== 点播菜单（pack 宠物专属，PRD E1-6，dsh-pet 同款「来一个」）=====
-// 每次开菜单把当前包的小动作洗牌取最多 6 个；点击经 PetAvatar 暴露的
+// ===== 点播菜单（pack / mascot 宠物专属，PRD E1-6 与 M2-2，dsh-pet 同款「来一个」）=====
+// 每次开菜单把可用小动作洗牌取最多 6 个；点击经 PetAvatar 暴露的
 // playClip 播该片段（一次性，播完自动回 idle）。menu-themes 的固定 key
 // 体系不动，动态区块直接追加在菜单模板末尾。petAvatarEl 声明在
 // useWindowOrchestration（与 E2 漫游引擎共用同一个组件 ref）。
@@ -98,7 +98,10 @@ const packMenuActions = ref<string[]>([])
 
 function reshufflePackActions() {
   const pet = getPetById(configStore.config.petId)
-  const names = pet.petType === 'pack' ? (pet.pack?.clips.actions ?? []).map(a => a.name) : []
+  // mascot 的动作是程序化预设（petManifest 单一来源）；pack 读包清单
+  const names = pet.petType === 'pack'
+    ? (pet.pack?.clips.actions ?? []).map(a => a.name)
+    : pet.petType === 'mascot' ? MASCOT_ACTION_CLIPS.map(a => a.name) : []
   // Fisher-Yates 洗牌
   for (let i = names.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1))
@@ -163,7 +166,7 @@ function playPackAction(name?: string) {
         <span>{{ systemMenuItems[4].emoji }}</span><span>{{ systemMenuItems[4].label }}</span>
       </button>
 
-      <!-- 点播区块（仅 pack 宠物且有 actions 时出现，PRD 指定放菜单末尾）：
+      <!-- 点播区块（pack / mascot 宠物且有动作时出现，PRD 指定放菜单末尾）：
            「来一个」播随机动作，下面是本次开菜单洗出的动作名（≤6 个）。
            menu-themes 固定 key 体系不进这里。 -->
       <template v-if="packMenuActions.length">

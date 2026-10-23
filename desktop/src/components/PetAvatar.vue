@@ -1,19 +1,23 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, shallowRef, type CSSProperties } from 'vue'
 import lottie, { type AnimationItem } from 'lottie-web'
-import { getPetById, getPackClipSrc } from '../petManifest'
+import { getPetById, getPackClipSrc, MASCOT_ACTION_CLIPS } from '../petManifest'
 import type { PetPackAction, PetPackClip } from '../api/petPack'
+import PetMascot from './PetMascot.vue'
 
 // 单一职责：把选中的宠物渲染进一个尺寸可配（--pet-size，三档）的透明容器，
 // 自由轮廓显示（不裁圆、无发光环）+ 地面投影 + 右下角状态点。换 petId 时销毁旧
 // 动画再加载新动画，避免内存堆积。
 //
-// 支持四种宠物类型：
+// 支持五种宠物类型：
 // - lottie: 使用 lottie-web 渲染 Lottie JSON
 // - image: 使用 <img> 标签，可选 CSS 动画
 // - gif: 使用 <img> 标签，GIF 自带动画
 // - pack: 宠物包 v2，多动作片段（gif/webm/spritesheet），idle 为常态，其余
 //   片段经 playClip 点播（E2 漫游引擎 + 右键「来一个」菜单共用）
+// - mascot: 官方吉祥物（PetMascot.vue 纯 SVG 程序化角色），无内联素材；
+//   sleep/walk/点播动作复用同一套 playClip/stopClip 调度，只是「片段」由
+//   预设动画表驱动（时长查 MASCOT_ACTION_CLIPS，收尾同 pack 一次性片段）
 //
 // 状态动效（motion）：stateMap.animation 驱动的 CSS overlay 动画，挂在
 // .pet-motion 包裹层上。动画只作用于小人本体——透明窗上不做任何大面积
@@ -29,7 +33,8 @@ const props = defineProps<{
   motion: string      // stateMap.animation：breathe/think/work/alert/happy
   idle: boolean       // 仅 idle 态允许 fidget 微动作
   dragging: boolean   // 拖拽进行中：不启动新的 fidget（已在播的让其自然结束）
-  moving?: boolean    // E2 漫游移动中：不启动新的 fidget（模式照 dragging）
+  moving?: boolean    // E2 漫游移动中：不启动新的 fidget（模式照 dragging）；
+                      // 无 pack clip 在播时强制套 walk 弹跳（程序化走路，2026-10-22 全宠物开放）
 }>()
 
 const containerEl = ref<HTMLDivElement | null>(null)
@@ -45,6 +50,7 @@ const isImage = computed(() => pet.value.petType === 'image')
 const isGif = computed(() => pet.value.petType === 'gif')
 const isMedia = computed(() => isImage.value || isGif.value)
 const isPack = computed(() => pet.value.petType === 'pack')
+const isMascot = computed(() => pet.value.petType === 'mascot')
 
 // ===== 宠物包 v2（pack 类型）：多动作片段渲染与点播 =====
 // idle 是常态渲染；walk/held/sleep/actions 经 playClip 点播（一次性播完自动回
@@ -75,6 +81,11 @@ function resolveClip(name: string): PetPackClip | PetPackAction | null {
 }
 
 function hasClip(name: string): boolean {
+  // mascot：sleep/walk 恒可播（程序化内置片段，PRD M2-2），其余查点播动作清单。
+  // 与 petManifest.packHasClip 的 mascot 映射保持同一口径（roamer 走那份）
+  if (isMascot.value) {
+    return name === 'sleep' || name === 'walk' || MASCOT_ACTION_CLIPS.some(a => a.name === name)
+  }
   const clips = pack.value?.clips
   if (!clips) return false
   if (name === 'idle') return !!clips.idle
@@ -116,6 +127,7 @@ function finishClip() {
  * 片段不存在时直接 resolve（调用方应先用 hasClip 过滤）。
  */
 function playClip(name: string, opts?: { loop?: boolean }): Promise<void> {
+  if (isMascot.value) return playMascotClip(name, opts)
   if (!isPack.value || !hasClip(name)) return Promise.resolve()
   if (clipResolve) finishClip() // 打断上一个片段（清掉它的收尾定时器）
   clipLoop.value = opts?.loop ?? false
@@ -130,6 +142,26 @@ function playClip(name: string, opts?: { loop?: boolean }): Promise<void> {
     } else if (clip?.type === 'gif') {
       clipEndTimer = window.setTimeout(finishClip, PACK_GIF_ONESHOT_MS)
     }
+  })
+}
+
+/**
+ * mascot 片段播放（PRD M2-2/M3）：walk/sleep 天然循环（漫游引擎播了靠 stopClip
+ * 收尾，与 pack 真素材同语义）；点播动作一次性，按 MASCOT_ACTION_CLIPS 的固定
+ * 时长定时收尾（程序化动画没有真实播放结束事件）。currentClip/收尾 promise 与
+ * pack 共用同一套机制，roamer/点播菜单零感知差异。
+ */
+function playMascotClip(name: string, opts?: { loop?: boolean }): Promise<void> {
+  if (!hasClip(name)) return Promise.resolve()
+  if (clipResolve) finishClip() // 打断上一个片段（清掉它的收尾定时器）
+  const loop = name === 'walk' || name === 'sleep' || opts?.loop === true
+  clipLoop.value = loop
+  currentClip.value = name
+  return new Promise<void>((resolve) => {
+    clipResolve = resolve
+    if (loop) return
+    const durationMs = MASCOT_ACTION_CLIPS.find(a => a.name === name)?.durationMs ?? 1500
+    clipEndTimer = window.setTimeout(finishClip, durationMs + 60)
   })
 }
 
@@ -318,16 +350,43 @@ onBeforeUnmount(() => {
 })
 
 watch(() => props.petId, () => {
+  // 换宠即打断在播片段（pack 目标另有 watch(pack) 兜底，且先于本 watcher 执行；
+  // 这里收口非 pack 目标——mascot 点播动作的收尾定时器还没到点就切走时，
+  // 不让新宠短暂吃到 clip-playing 门控）
+  stopClip()
   mountAnimation()
-})
+  // mascot 素材默认朝右（PetMascot 口径）：挂载/切回时对齐朝向，否则首帧按
+  // facingDir 缺省 'left' 渲染成镜像姿态（新配置默认就是 mascot）。其余类型的
+  // 朝向不在这里动——pack 由 watch(pack) 按包默认复位，lottie 静止渲染不读朝向
+  if (pet.value.petType === 'mascot') facingDir.value = 'right'
+}, { flush: 'post' }) // post：等 DOM 按 petType 重渲染完（lottie 容器挂好 ref）再挂动画。
+// 默认 pre 时这是个时序地雷：新配置默认 mascot（无 lottie 容器），老用户开机从
+// mascot 切到 lottie 宠物的瞬间 containerEl 还是 null → 静默早退 → 容器渲染出来
+// 后没人再挂动画，小人永久空白（2026-10-23 真机实锤）。
 
 // ===== motion → CSS overlay 动画 + Lottie 变速 =====
 
 // 白名单：未知 motion 值直接不挂动画类，避免脏字符串进 DOM
 const MOTION_CLASSES = new Set(['breathe', 'think', 'work', 'alert', 'happy'])
-const motionClass = computed(() =>
-  MOTION_CLASSES.has(props.motion) ? `pet-motion-${props.motion}` : '',
+// 程序化走路（E2 漫游 2026-10-22 开放全宠物）：roamer 滑窗期间（moving）且没有
+// pack 片段在播 → 强制套 walk 弹跳。优先级：moving 弹跳 > stateMap motion >
+// fidget（fidget 本就被 moving 门控，watch 里再收掉在播的）。pack 走真 walk
+// clip 时 clip 在播、判定为假——既有行为零变化（有真素材不套程序化动效）。
+const isProceduralWalk = computed(() => props.moving === true && currentClip.value === null)
+// 方向镜像：仅 lottie/图片/GIF 需要（pack 走 .pet-pack-flip 既有链路）。非 pack
+// 的默认朝向视为 left，roamer setFacing('right') 时镜像；只在程序化走路期间挂，
+// 到站（moving 撤销）即恢复原始朝向——静止形象与既有渲染零差异。
+const walkFlipClass = computed(() =>
+  isProceduralWalk.value && !isPack.value && facingDir.value !== 'left' ? 'pet-motion-flip' : '',
 )
+const motionClass = computed(() => {
+  // mascot：think/work/alert/happy 有角色化版本（PetMascot 内层动画），通用
+  // overlay 形变不叠加（双层 bounce/rotate 会打架）；flashing 脉冲与 clip-playing
+  // 门控（.pet-motion 上）不受影响，照常作用
+  if (isMascot.value) return ''
+  if (isProceduralWalk.value) return 'pet-motion-walk'
+  return MOTION_CLASSES.has(props.motion) ? `pet-motion-${props.motion}` : ''
+})
 
 // Lottie 变速让本体动画节奏跟状态匹配（image/gif 无法变速，接受原速）。
 // petId 重挂载后 mountAnimation 里会按当前 motion 恢复速度。
@@ -376,6 +435,15 @@ onBeforeUnmount(() => {
   clearFidgetTimers()
 })
 
+// 走路弹跳 > fidget（PRD 优先级）：移动开始时立刻收掉在播的 fidget（一次性动
+// 作，摘 class 即归位），避免两个 keyframes 在同一元素上抢动画。
+watch(() => props.moving, (moving) => {
+  if (moving) {
+    clearFidgetTimers()
+    fidgetClass.value = ''
+  }
+})
+
 // 面板外的消费方（App.vue 点播菜单 / E2 漫游引擎）经组件 ref 调用这组接口
 defineExpose({
   playClip,
@@ -395,8 +463,9 @@ defineExpose({
          热区纪律：渲染像素在 .avatar 命中盒下缘附近，必须 pointer-events:none；
          静态不动画——透明窗上任何脉动都是拖拽闪烁源。 -->
     <div class="pet-shadow" />
-    <!-- motion/fidget 动画只挂在这个包裹层，不碰 .pet-lottie/.pet-media 的 transform 链 -->
-    <div class="pet-motion" :class="[motionClass, fidgetClass]">
+    <!-- motion/fidget/程序化走路动效只挂这个包裹层，不碰 .pet-lottie/.pet-media 的
+         transform 链（走路的 scaleX(-1) 镜像除外：追加在链末尾、基项原样保留） -->
+    <div class="pet-motion" :class="[motionClass, fidgetClass, walkFlipClass]">
       <div v-if="isLottie" ref="containerEl" class="pet-lottie" :style="lottieStyle" />
       <img
         v-else-if="isMedia"
@@ -445,6 +514,18 @@ defineExpose({
           </div>
         </div>
       </div>
+      <!-- mascot 官方吉祥物：纯 SVG 程序化角色（PetMascot）。位于 .pet-motion 内
+           （pointer-events:none 继承 + 组件根显式兜底），动画全挂其内层节点；
+           currentClip 直接作 clip prop——sleep/walk/点播动作由 PetMascot 换挡 -->
+      <PetMascot
+        v-else-if="isMascot"
+        :color="color"
+        :motion="motion"
+        :moving="moving === true"
+        :dragging="dragging"
+        :clip="currentClip"
+        :facing="facingDir"
+      />
     </div>
     <div class="pet-dot" :style="{ background: color }" />
   </div>
@@ -700,6 +781,32 @@ defineExpose({
   45%      { transform: scale(1.1, 0.92); }
 }
 
+/* ===== 程序化走路（E2 漫游 2026-10-22 开放全宠物）=====
+   roamer 滑窗期间（moving 且无 pack clip 在播）挂 .pet-motion-walk 弹跳，模拟
+   「走起来」，到站 moving 撤销即归位。声明在 fidget 之后：同时挂时走路压过
+   fidget（JS 侧 watch 已收掉在播 fidget，这里是兜底）。挂 .pet-motion 内层
+   动画层（穿透铁律：命中盒不动，形变幅度与既有 motion 同量级）；minimal 主题
+   (0,2,1) 的 animation:none 自动关掉；pack 真 walk clip 在播时 clip-playing
+   (0,3,0) 压掉且 computed 本就不挂——pack 既有行为零变化。 */
+.pet-motion-walk {
+  animation: pet-motion-walk 0.55s ease-in-out infinite;
+}
+@keyframes pet-motion-walk {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  35%      { transform: translateY(-6px) scale(0.98, 1.04); }
+  70%      { transform: translateY(0) scale(1.05, 0.95); }
+}
+
+/* 程序化走路的方向镜像：仅 lottie/图片/GIF（pack 走 .pet-pack-flip 既有链路）。
+   scaleX(-1) 追加在素材层 transform 链末尾，--pet-scale/offset 基项原样保留
+   （manifest 注入的缩放/偏移不失效）；仅走路期间挂，静止归位。注：图片宠物若
+   配了 imageAnimation（keyframes 会接管 transform），镜像在该动画进行中被
+   覆盖——接受该边缘降级，不为每个图片动画关键帧逐一套镜像。 */
+.pet-motion-flip .pet-lottie,
+.pet-motion-flip .pet-media {
+  transform: translate(var(--pet-offset-x, 0), var(--pet-offset-y, 0)) scale(var(--pet-scale, 1)) scaleX(-1);
+}
+
 /* minimal 主题的设计定义是 no shadow / no motion：动效（overlay + fidget +
    flash 脉冲）在此主题下全关，地面投影一并隐藏。flash 规则是 (0,3,0)，
    这里用 (0,4,1) 的同结构选择器压过它；其余单类规则 (0,2,1) 即可覆盖。 */
@@ -711,6 +818,15 @@ html[data-theme="minimal"] .pet-avatar.flashing .pet-motion {
 }
 html[data-theme="minimal"] .pet-shadow {
   display: none;
+}
+
+/* mascot 程序化角色的全部循环动画节点都在 .pet-mascot 子树内，minimal（no motion
+   设计定义）下随 motion 门控一并关停。只点名 mascot 子树（:deep 穿透 scoped），
+   pack 素材动画（.pet-sprite 等）不受影响——pack/minimal 既有行为零变化。
+   sleep 的变暗是滤镜非动画，按 theming spec 例外口径保留。 */
+html[data-theme="minimal"] .pet-motion .pet-mascot,
+html[data-theme="minimal"] .pet-motion .pet-mascot :deep(*) {
+  animation: none;
 }
 
 /* pack 片段播放期间暂停 motion overlay（PRD E1-4）：pack 片段自带完整动作，

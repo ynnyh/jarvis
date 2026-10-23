@@ -69,8 +69,10 @@ export const useAppStore = defineStore('app', () => {
   const isSettingsOpen = ref(false)
   /** todayPlan/writeHours/batchWrite/cost/manualHours 任一打开即为 true */
   const isBigWindowOpen = ref(false)
-  /** 任一独立窗口打开（聊天/设置/大窗）。设置/大窗打开等价于小人被隐藏；
-   *  chat 例外：小人与大窗共存，仅用于抑制临时气泡与 agent 联动判定 */
+  /** 任一独立窗口打开（聊天/设置/大窗）。大窗打开等价于小人被隐藏；settings
+   *  自 2026-10-22 起不再藏小人（设置里拖大小滑杆要实时看到宠物），抑制气泡
+   *  的理由是用户正在设置界面操作、气泡徒增遮挡；chat 例外：小人与大窗共存，
+   *  仅用于抑制临时气泡与 agent 联动判定 */
   const isAnyToolWindowOpen = computed(
     () => isChatOpen.value || isSettingsOpen.value || isBigWindowOpen.value,
   )

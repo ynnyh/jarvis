@@ -363,7 +363,9 @@ export function useWindowOrchestration() {
     showMenu,
     dockEdge,
     isAgentActive: () => agentRunActive.value,
-    // 工具窗打开会藏小人（走动无意义且不可见）、迷你对话面板贴着小人 —— 都不发起
+    // 大窗打开会藏小人（走动不可见）、设置窗打开用户正在设置界面操作（2026-10-22
+    // 起小人不再被设置窗藏起，走动会干扰滑杆调尺寸的预览）、迷你对话面板贴着
+    // 小人 —— 都不发起走路
     isPanelOpen: () => store.isAnyToolWindowOpen || store.isPetChatOpen,
   })
 
@@ -436,12 +438,13 @@ export function useWindowOrchestration() {
     duration = 5000,
     actions: Array<{ label: string; action: () => void | Promise<void> }> = [],
   ) {
-    // 任意独立工具窗打开期间抑制临时气泡（duration>0）：settings/大窗开着时小人
-    // 被后端隐藏，弹了也看不见；chat 是例外——小人已改为与大窗共存，但对话内容
-    // 就在大窗里，再叠一条气泡只会互相遮挡（agent 联动只切状态色即可）。
-    // 迷你对话面板同理（B1-4）：面板就贴在小人身边，气泡会盖住对话流。
-    // 持久气泡（duration=0，带操作按钮）是用户必须响应的，仍照常弹出——
-    // 关窗后 avatar 恢复（chat 场景本就可见），气泡才真正可见，不会造成信息丢失。
+    // 任意独立工具窗打开期间抑制临时气泡（duration>0）：大窗开着时小人被后端
+    // 隐藏，弹了也看不见；settings 开着时小人虽仍可见（2026-10-22 起不藏），
+    // 但用户正在设置界面操作，气泡徒增遮挡与打扰；chat 是例外——小人已改为与
+    // 大窗共存，但对话内容就在大窗里，再叠一条气泡只会互相遮挡（agent 联动只
+    // 切状态色即可）。迷你对话面板同理（B1-4）：面板就贴在小人身边，气泡会盖
+    // 住对话流。持久气泡（duration=0，带操作按钮）是用户必须响应的，仍照常
+    // 弹出——关窗后气泡仍可见，不会造成信息丢失。
     if ((store.isAnyToolWindowOpen || store.isPetChatOpen) && duration > 0) return
     state.value = s
     alertText.value = text
