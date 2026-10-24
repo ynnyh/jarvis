@@ -121,6 +121,12 @@ function playPackAction(name?: string) {
   showMenu.value = false
   void petAvatarEl.value?.playClip(target)
 }
+
+/** 召唤登场：魔法阵出场动画（PetAvatar 程序化效果，任意宠物可播） */
+function menuSummon() {
+  showMenu.value = false
+  petAvatarEl.value?.playSummon()
+}
 </script>
 
 <template>
@@ -144,6 +150,10 @@ function playPackAction(name?: string) {
       </button>
       <button v-if="configStore.config.costFeatureEnabled && costMenuItem" class="menu-item" @click="menuOpenCost">
         <span>{{ costMenuItem.emoji }}</span><span>{{ costMenuItem.label }}</span>
+      </button>
+      <!-- 召唤登场：魔法阵出场动画（PetAvatar 程序化，任意宠物类型可播） -->
+      <button class="menu-item" @click="menuSummon">
+        <span>✦</span><span>召唤登场</span>
       </button>
 
       <div class="menu-divider" />

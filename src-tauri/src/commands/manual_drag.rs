@@ -57,20 +57,25 @@ fn sess() -> &'static Sess {
 }
 
 #[cfg(target_os = "windows")]
-fn poll_loop() {
+fn poll_loop(window: tauri::WebviewWindow) {
     // 节奏 1ms：近似系统鼠标消息频率上限，验证尽量苛刻。
     // **松手必须由本线程主动检测结束会话**：不能全靠前端 onWindowMouseUp →
     // manual_drag_stop。因为本线程在松手后若不停止，会继续 SetWindowPos 把窗口追到光标
-    // → 窗口持续移动 → onMoved 持续触发 → 前端 scheduleDragEnd 的 200ms 防抖被无限刷新
+    // → 窗口持续移动 → onMoved 持续触发 → 前端 scheduleDragEnd 的防抖被无限刷新
     // → finishDrag 永不执行 → manual_drag_stop 永不调 → active 永真 → 死锁：松手后小人
     // 继续跟手、点不到任何东西。本线程是松手的唯一可靠哨兵。
     //
     // 下降沿判定（was_down → now up）：避免单帧采样噪声误停；按下→松开那帧才结束。
+    // 松手即向前端广播 manual_drag_released：onMoved 防抖只能靠「窗口停止移动」间接
+    // 猜松手，拖拽途中窗口移动事件断流 >200ms（用户暂停、跨屏 DPI 重排、渲染卡顿）
+    // 就会误判松手把拖拽拆掉（实测「拖着走老是断掉」）——权威信号必须由这里推送。
     let mut was_down = true; // 会话由按下启动，初值即按下态
     while sess().active.load(Ordering::SeqCst) {
         let down = unsafe { GetAsyncKeyState(VK_LBUTTON.0 as i32) < 0 };
         if was_down && !down {
-            // 真实松手：结束会话，前端 finishDrag 随后会做收尾
+            // 真实松手：结束会话，前端经 manual_drag_released 事件立即 finishDrag
+            use tauri::Emitter;
+            let _ = window.emit("manual_drag_released", ());
             manual_drag_stop();
             break;
         }
@@ -140,7 +145,7 @@ pub fn manual_drag_start(
             grab_dy: 0.0,
             grab_set: false,
         });
-        std::thread::spawn(poll_loop);
+        std::thread::spawn(move || poll_loop(window));
         Ok(())
     }
     #[cfg(not(target_os = "windows"))]

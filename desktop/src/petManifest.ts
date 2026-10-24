@@ -266,11 +266,23 @@ export function packHasClip(petId: string, name: string): boolean {
   return (pack.clips.actions ?? []).some(a => a.name === name)
 }
 
-// 素材 data URL 缓存（模块级，跨组件重挂载复用）；pending 表去重并发请求
+// 素材 URL 缓存（模块级，跨组件重挂载复用）；pending 表去重并发请求
 const packClipSrcCache = new Map<string, string>()
 const packClipPending = new Map<string, Promise<string | null>>()
 
-/** 惰性加载包内素材 → data URL（带缓存）。失败返回 null，调用方走降级。 */
+/** data URL → blob: URL（2026-10-24 隐身事故修复）。
+ *  后端返回 base64 data URL；雪碧图常在 1.5-2.5MB，base64 后 200-330 万字符。
+ *  Chromium 对 CSS 自定义属性的值有 ~210 万字符的静默硬上限（实测 200 万可设、
+ *  210 万被丢弃且无任何报错）——超限的 --sprite-src 被悄悄扔掉 = 角色隐形、
+ *  阴影还在（不依赖该变量）。转成 blob: URL（几十字节）后无此限制，img/video
+ *  src 与 CSS url() 全兼容，内存占用也更低（省掉 base64 常驻字符串）。 */
+async function toBlobUrl(dataUrl: string): Promise<string> {
+  if (!dataUrl.startsWith('data:')) return dataUrl
+  const blob = await (await fetch(dataUrl)).blob()
+  return URL.createObjectURL(blob)
+}
+
+/** 惰性加载包内素材 → blob: URL（带缓存）。失败返回 null，调用方走降级。 */
 export async function getPackClipSrc(packId: string, file: string): Promise<string | null> {
   const key = `${packId}/${file}`
   const hit = packClipSrcCache.get(key)
@@ -278,6 +290,7 @@ export async function getPackClipSrc(packId: string, file: string): Promise<stri
   const pending = packClipPending.get(key)
   if (pending) return pending
   const task = petPackReadFile(packId, file)
+    .then((url) => toBlobUrl(url))
     .then((url) => {
       packClipSrcCache.set(key, url)
       return url

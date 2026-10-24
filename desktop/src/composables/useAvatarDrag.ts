@@ -1,7 +1,7 @@
 import { ref, type Ref } from 'vue'
 import { getCurrentWindow, currentMonitor } from '@tauri-apps/api/window'
 import { invoke } from '@tauri-apps/api/core'
-import type { UnlistenFn } from '@tauri-apps/api/event'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { AvatarAnchor, DockEdge } from './useAvatarDock'
 import { ANCHOR_AVATAR_CENTER } from './useAvatarDock'
 import { setPassthroughDragHold } from './useCursorPassthrough'
@@ -71,8 +71,12 @@ export interface UseAvatarDragOptions {
   onHold?: () => void
 }
 
-// 拖拽结束判定：拖拽期间 onMoved 持续触发，停手后这段时间没有新移动即视为松手。
-const DRAG_END_DEBOUNCE_MS = 200
+// 拖拽结束判定：onMoved 停止触发 + 这段时间没有新移动 = 疑似松手。这只是**兜底**
+// ——权威松手信号是 Rust 侧 GetAsyncKeyState 下降沿广播的 manual_drag_released 事件
+// （见 manual_drag.rs），onMoved 断流 >防抖窗口（用户暂停、跨屏 DPI 重排、渲染卡顿）
+// 并不代表松手，不能据此拆拖拽（实测「拖着走老是断掉」即此误判）。防抖窗口放宽到
+// 1s：真实松手走事件/mouseup 立即收尾，防抖只兜「事件和 mouseup 都丢」的极端情况。
+const DRAG_END_DEBOUNCE_MS = 1000
 // 单击判定阈值
 const CLICK_MAX_MS = 300
 const MOVE_THRESHOLD_PX = 5
@@ -123,6 +127,7 @@ export function useAvatarDrag(options: UseAvatarDragOptions) {
   const isDragging = ref(false)
 
   let moveUnlisten: UnlistenFn | null = null
+  let releaseUnlisten: UnlistenFn | null = null
   let dragEndTimer: number | null = null
   let dockDelayTimer: number | null = null  // 自驱拖拽松手后延迟贴边（防拖上半屏后弹回中线）
   let holdTimer: number | null = null       // 摸头定时器
@@ -179,6 +184,10 @@ export function useAvatarDrag(options: UseAvatarDragOptions) {
       moveUnlisten()
       moveUnlisten = null
     }
+    if (releaseUnlisten) {
+      releaseUnlisten()
+      releaseUnlisten = null
+    }
     if (started) {
       started = false
       isDragging.value = false
@@ -222,7 +231,16 @@ export function useAvatarDrag(options: UseAvatarDragOptions) {
       // 方案2 自驱路径：Rust 轮询线程驱动 SetWindowPos，不进 NC move loop → 无顶边钳制。
       // 浏览器在此路径下能正常收到 mouseup（OS 不接管），保留前端 mouse 监听以便停钩。
       // 穿透锁 + onMoved 防抖收尾逻辑与原生路径共用。
+      // 松手以 Rust 广播的 manual_drag_released 为权威信号立即收尾；onMoved 防抖
+      // 只作兜底（拖拽途中 onMoved 断流不等于松手，见 DRAG_END_DEBOUNCE_MS 注释）。
       useManualDrag = true
+      try {
+        releaseUnlisten = await listen('manual_drag_released', () => {
+          void finishDrag()
+        })
+      } catch {
+        releaseUnlisten = null
+      }
       try {
         await invoke('manual_drag_start')
       } catch {

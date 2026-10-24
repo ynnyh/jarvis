@@ -55,6 +55,8 @@ export interface PetAvatarApi {
   hasClip: (name: string) => boolean
   setFacing: (dir: 'left' | 'right') => void
   currentClip: string | null
+  /** 召唤登场魔法阵（PetAvatar 程序化效果，任意宠物可播） */
+  playSummon: () => void
 }
 
 export interface UsePetRoamerOptions {

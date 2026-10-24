@@ -283,8 +283,10 @@ const spriteStyle = computed<CSSProperties>(() => {
     '--sprite-anim': spriteAnimName.value,
     '--sprite-frames': String(Math.max(1, Math.floor(clip.frames ?? 1))),
     '--sprite-fps': String(clip.fps && clip.fps > 0 ? clip.fps : 8),
-    // 点播中的一次性片段只播一轮；常态 idle 无限循环
-    '--sprite-once': currentClip.value ? '1' : 'infinite',
+    // 点播中的一次性片段只播一轮；常态 idle 与 loop 片段（漫游 walk/held/sleep）
+    // 无限循环 —— 与视频路径的 :loop="currentClip === null || clipLoop" 同一口径，
+    // 不然 loop 片段的雪碧图会播一轮就冻在末帧
+    '--sprite-once': !currentClip.value || clipLoop.value ? 'infinite' : '1',
   }
 })
 
@@ -444,6 +446,42 @@ watch(() => props.moving, (moving) => {
   }
 })
 
+// ===== 召唤登场（2026-10-24，《光明使者》式魔法阵出场）=====
+// 纯 SVG/CSS 程序化：魔法阵描线（外环→五角星→符文环）+ 整阵缓旋 + 角色从阵中
+// 升起 + 收尾闪光淡出。零素材、任意宠物类型通用、命中盒零参与（svg 根
+// pointer-events:none，升起 transform 挂 .pet-rise 包裹层不碰 .pet-motion 的
+// 动画链）。触发：启动首次加载 / 切换宠物 / 右键菜单「召唤登场」。
+const summoning = ref(false)
+let summonTimer: number | null = null
+
+/** 播一次召唤（幂等可重入：重触发先摘类 + 强制 reflow 从头播） */
+function playSummon() {
+  if (summonTimer !== null) { clearTimeout(summonTimer); summonTimer = null }
+  summoning.value = false
+  // 摘类后强制 reflow 再挂类，同名动画从头播（SVG 无 offsetWidth，手法同眨眼）
+  void document.body.offsetWidth
+  summoning.value = true
+  summonTimer = window.setTimeout(() => {
+    summonTimer = null
+    summoning.value = false
+  }, 1900)
+}
+
+onBeforeUnmount(() => {
+  if (summonTimer !== null) { clearTimeout(summonTimer); summonTimer = null }
+})
+
+// 触发 1：启动登场——PetAvatar 常驻，mounted 即应用启动（avatar 窗内容挂载）。
+// pack 宠物 idle 素材是惰性加载的，稍等首帧就位再召唤，视觉更完整
+onMounted(() => {
+  window.setTimeout(() => playSummon(), 150)
+})
+
+// 触发 2：切换宠物 = 新角色登场（immediate:false，启动登场由 mounted 管）
+watch(() => props.petId, () => {
+  playSummon()
+})
+
 // 面板外的消费方（App.vue 点播菜单 / E2 漫游引擎）经组件 ref 调用这组接口
 defineExpose({
   playClip,
@@ -451,6 +489,7 @@ defineExpose({
   hasClip,
   setFacing,
   currentClip,
+  playSummon,
 })
 
 </script>
@@ -463,6 +502,27 @@ defineExpose({
          热区纪律：渲染像素在 .avatar 命中盒下缘附近，必须 pointer-events:none；
          静态不动画——透明窗上任何脉动都是拖拽闪烁源。 -->
     <div class="pet-shadow" />
+    <!-- 召唤魔法阵：描线→缓旋→闪光淡出，全程只在本组件子树（svg 根
+         pointer-events:none + 零命中盒参与）；minimal 主题整组关停。 -->
+    <div v-if="summoning" class="pet-summon-circle" aria-hidden="true">
+      <svg class="pet-summon-svg" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+        <g class="pet-summon-rot">
+          <!-- 外环（青）：pathLength=1 + dashoffset 描线 -->
+          <circle class="pet-summon-ring" cx="60" cy="60" r="52" pathLength="1" />
+          <!-- 五角星（琥珀）：外接圆 r=40，五点每 72° 隔点相连 -->
+          <path class="pet-summon-star" pathLength="1"
+            d="M60 20 L83.5 92.4 L22.0 47.6 L98.0 47.6 L36.5 92.4 Z" />
+          <!-- 符文环（青，虚线段模拟符文刻度）+ 内环 -->
+          <circle class="pet-summon-runes" cx="60" cy="60" r="46" pathLength="1" />
+          <circle class="pet-summon-inner" cx="60" cy="60" r="26" pathLength="1" />
+        </g>
+        <!-- 收尾闪光：淡青色圆盘脉冲（低透明纯色，非渐变非泛光） -->
+        <circle class="pet-summon-flash" cx="60" cy="60" r="30" />
+      </svg>
+    </div>
+    <!-- 召唤升起包裹层：transform 只在召唤期存在，不与 .pet-motion 的动画链
+         同元素共存（各挂一层，零冲突） -->
+    <div class="pet-rise" :class="{ 'pet-rise-active': summoning }">
     <!-- motion/fidget/程序化走路动效只挂这个包裹层，不碰 .pet-lottie/.pet-media 的
          transform 链（走路的 scaleX(-1) 镜像除外：追加在链末尾、基项原样保留） -->
     <div class="pet-motion" :class="[motionClass, fidgetClass, walkFlipClass]">
@@ -526,6 +586,7 @@ defineExpose({
         :clip="currentClip"
         :facing="facingDir"
       />
+    </div>
     </div>
     <div class="pet-dot" :style="{ background: color }" />
   </div>
@@ -637,15 +698,25 @@ defineExpose({
 }
 
 /* spritesheet：以帧尺寸为基准的「取景框」，按容器/帧的最大边缩放装进
-   --pet-size 盒（pack.scale 叠乘）；pixelated 对齐像素画素材观感。 */
+   --pet-size 盒。
+   ⚠ 换算公式必须 `÷ 1px` 收尾把长度换算成纯数：calc(96px / max(192,200))
+   的结果是 0.48px（长度），而 scale() 只接受 <number>——整条 transform 会被
+   判无效而整体丢弃（2026-10-24 真浏览器 getBoundingClientRect 实测：盒子以
+   自然尺寸 192×200 渲染，只吃父容器 packScale 一层 → 角色溢出命中盒 60%+、
+   阴影卡膝盖，雪碧图自上线起该缩放从未生效）。
+   packScale 只由父容器 .pet-pack 统一施加（gif/webm 同路径），此处不乘。
+   居中用绝对定位几何居中（top/left 50% + translate 负半）：雪碧图自然尺寸
+   恒大于容器，flex 超大子项居中行为跨引擎有差异，几何居中对任意尺寸确定；
+   pixelated 对齐像素画素材观感。 */
 .pet-sprite-box {
-  position: relative;
-  flex: none;
+  position: absolute;
+  top: 50%;
+  left: 50%;
   overflow: hidden;
   width: calc(var(--sprite-fw, 64) * 1px);
   height: calc(var(--sprite-fh, 64) * 1px);
   pointer-events: none;
-  transform: scale(calc(var(--pet-size, 128px) / max(var(--sprite-fw, 64), var(--sprite-fh, 64)) * var(--pack-scale, 1)));
+  transform: translate(-50%, -50%) scale(calc(var(--pet-size, 128px) / max(var(--sprite-fw, 64), var(--sprite-fh, 64)) / 1px));
   image-rendering: pixelated;
 }
 .pet-sprite {
@@ -836,5 +907,107 @@ html[data-theme="minimal"] .pet-motion .pet-mascot :deep(*) {
 .pet-avatar.clip-playing .pet-motion {
   animation: none;
 }
+
+/* ===== 召唤登场魔法阵（2026-10-24，《光明使者》式出场）=====
+   青色环/符文 + 琥珀五角星 = 品牌双色。纪律：线稿 + 低透明纯色，无大面积
+   脉动泛光；svg 根 pointer-events:none，全组随 minimal 门控关停。
+   时间轴（总 1.9s）：0 外环描线 → 0.25 五角星描线 → 0.55 符文环/内环就位
+   + 整阵 -20°→25° 缓旋 → 0.55 角色升起（回弹）→ 1.3 闪光脉冲 → 1.5 起整阵淡出 */
+.pet-summon-circle {
+  position: absolute;
+  inset: -45%;              /* 阵比角色大一圈，中心对齐 */
+  z-index: 0;               /* 阴影之上（同层 DOM 后到）、角色之下 */
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pet-summon-svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  animation: pet-summon-fadeout 1.9s ease-out both;
+}
+.pet-summon-rot {
+  transform-origin: 60px 60px;
+  transform-box: view-box;
+  animation: pet-summon-rotate 1.9s ease-in-out both;
+}
+.pet-summon-ring {
+  fill: none;
+  stroke: #24C8DB;
+  stroke-width: 1.6;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: pet-summon-draw 0.45s ease-out both;
+}
+.pet-summon-star {
+  fill: none;
+  stroke: #FFC131;
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: pet-summon-draw 0.5s ease-in-out 0.25s both;
+}
+.pet-summon-runes {
+  fill: none;
+  stroke: #24C8DB;
+  stroke-width: 1;
+  stroke-dasharray: 0.02 0.03;   /* pathLength=1 下的符文刻度虚线 */
+  opacity: 0;
+  animation: pet-summon-runes-in 0.35s ease-out 0.55s both;
+}
+.pet-summon-inner {
+  fill: none;
+  stroke: #24C8DB;
+  stroke-width: 1;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: pet-summon-draw 0.3s ease-out 0.6s both;
+}
+.pet-summon-flash {
+  fill: #7fd0e6;
+  opacity: 0;
+  transform-origin: 60px 60px;
+  transform-box: view-box;
+  animation: pet-summon-flash 1.9s ease-out both;
+}
+@keyframes pet-summon-draw { to { stroke-dashoffset: 0; } }
+@keyframes pet-summon-runes-in { to { opacity: 0.75; } }
+@keyframes pet-summon-rotate { from { transform: rotate(-20deg); } to { transform: rotate(25deg); } }
+@keyframes pet-summon-flash {
+  0%, 68% { opacity: 0; transform: scale(0.6); }
+  78% { opacity: 0.28; transform: scale(1.15); }
+  92% { opacity: 0.1; transform: scale(1.28); }
+  100% { opacity: 0; transform: scale(1.32); }
+}
+@keyframes pet-summon-fadeout {
+  0%, 80% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* 升起包裹层：召唤期角色从阵中升起——transform 只挂本层（.pet-motion 的
+   动画链在子元素，零冲突）；升起 blur→清晰制造「从阵中凝聚成形」 */
+.pet-rise {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+.pet-rise-active {
+  animation: pet-summon-rise 0.75s cubic-bezier(0.2, 1.3, 0.4, 1) 0.45s both;
+}
+@keyframes pet-summon-rise {
+  0% { transform: translateY(15%) scale(0.72); opacity: 0; filter: blur(2px); }
+  30% { opacity: 1; }
+  65% { filter: blur(0); }
+  100% { transform: translateY(0) scale(1); opacity: 1; filter: blur(0); }
+}
+
+/* minimal（no motion）：魔法阵整组不渲染，升起动画关停（角色直接现形） */
+html[data-theme="minimal"] .pet-summon-circle { display: none; }
+html[data-theme="minimal"] .pet-rise-active { animation: none; }
 
 </style>
