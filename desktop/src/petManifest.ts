@@ -1,5 +1,6 @@
 // 宠物形象注册表。内置宠物多为「一个 Lottie JSON + 一组元信息」；
-// 官方吉祥物（mascot）是例外：无内联素材，渲染走 PetAvatar 的组件分支。
+// 官方吉祥物（mascot）是例外：data 是 rig 文档（部件树+动作表），
+// 渲染走 PetRig 的数据驱动程序化角色（见 petRig/ 与 PetAvatar 的 mascot 分支）。
 //
 // 内置宠物：把 Lottie .json 文件放到 desktop/src/assets/pets/，在 PETS 数组里加一项。
 // 自定义宠物：通过设置界面上传 Lottie/图片/GIF，存储在 ~/.jarvis/custom-pets/。
@@ -18,6 +19,8 @@ import cuteTigerData from './assets/pets/Cute Tiger.json'
 import slothMeditateData from './assets/pets/Sloth meditate.json'
 import cowDrinkMilkData from './assets/pets/Cow Drink Milk.json'
 import dancingLlamaData from './assets/pets/Dancing llama.json'
+import butlerRigData from './assets/pets/rig/jarvis-butler.rig.json'
+import { parseRigDoc, type RigDoc } from './petRig/types'
 import { customPetList, type CustomPet, type ImageAnimation } from './api/customPet'
 import { petPackList, petPackReadFile, type PetPack } from './api/petPack'
 
@@ -46,27 +49,30 @@ export interface PetInfo {
   pack?: PetPack
 }
 
-// ===== 官方吉祥物「Jarvis 机器管家」（SVG 程序化角色）=====
-// 渲染走 PetAvatar 的 petType==='mascot' 组件分支（PetMascot.vue），无内联素材。
+// ===== 官方吉祥物「Jarvis 机器管家」（rig 数据驱动的程序化角色）=====
+// 渲染走 PetAvatar 的 mascot 分支 → PetRig.vue（WAAPI 引擎按 rig 数据播放）。
 // 片段调度对齐 pack 语义：sleep/walk 走 playClip(..., loop) + stopClip 链路
 // （见 packHasClip 的 mascot 映射），点播动作一次性播完自动回 idle。
 
 export const MASCOT_PET_ID = 'jarvis-butler'
 
-/** mascot 点播动作（PRD M3）：name 给点播菜单与 hasClip，key 给 PetMascot 的
- *  姿态类名，durationMs 给 PetAvatar 的一次性收尾定时器（程序化动画没有真实
- *  播放结束事件，按 PRD 固定时长收尾）。 */
+/** 管家 rig 文档（部件树 + 动作表 + 点播清单），PETS 的 mascot 条目 data 即它 */
+export const BUTLER_RIG: RigDoc = parseRigDoc(butlerRigData)
+
+/** mascot 点播动作（name 给点播菜单与 hasClip，key 是稳定 ascii 标识）。
+ *  从 rig 数据推导：单一来源在 jarvis-butler.rig.json（含时长），PetAvatar
+ *  的一次性收尾定时器也查这里。 */
 export interface MascotActionClip {
   name: string
-  key: 'greet' | 'spin' | 'salute'
+  key: string
   durationMs: number
 }
 
-export const MASCOT_ACTION_CLIPS: MascotActionClip[] = [
-  { name: '打招呼', key: 'greet', durationMs: 1800 },
-  { name: '转圈', key: 'spin', durationMs: 1300 },
-  { name: '敬礼', key: 'salute', durationMs: 1500 },
-]
+export const MASCOT_ACTION_CLIPS: MascotActionClip[] = BUTLER_RIG.actions.map((a) => ({
+  name: a.name,
+  key: a.key,
+  durationMs: BUTLER_RIG.clips[a.clip]?.durationMs ?? 1500,
+}))
 
 export const PETS: PetInfo[] = [
   {
@@ -76,7 +82,7 @@ export const PETS: PetInfo[] = [
     name: 'Jarvis 机器管家',
     category: 'mecha',
     description: '官方吉祥物·全套程序化动作',
-    data: null,
+    data: BUTLER_RIG,
     petType: 'mascot',
   },
   {

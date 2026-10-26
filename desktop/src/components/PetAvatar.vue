@@ -3,7 +3,8 @@ import { ref, computed, watch, onMounted, onBeforeUnmount, shallowRef, type CSSP
 import lottie, { type AnimationItem } from 'lottie-web'
 import { getPetById, getPackClipSrc, MASCOT_ACTION_CLIPS } from '../petManifest'
 import type { PetPackAction, PetPackClip } from '../api/petPack'
-import PetMascot from './PetMascot.vue'
+import type { RigDoc } from '../petRig/types'
+import PetRig from './PetRig.vue'
 
 // 单一职责：把选中的宠物渲染进一个尺寸可配（--pet-size，三档）的透明容器，
 // 自由轮廓显示（不裁圆、无发光环）+ 地面投影 + 右下角状态点。换 petId 时销毁旧
@@ -15,9 +16,9 @@ import PetMascot from './PetMascot.vue'
 // - gif: 使用 <img> 标签，GIF 自带动画
 // - pack: 宠物包 v2，多动作片段（gif/webm/spritesheet），idle 为常态，其余
 //   片段经 playClip 点播（E2 漫游引擎 + 右键「来一个」菜单共用）
-// - mascot: 官方吉祥物（PetMascot.vue 纯 SVG 程序化角色），无内联素材；
+// - mascot: 官方吉祥物（PetRig.vue 读 rig 文档的数据驱动程序化角色）；
 //   sleep/walk/点播动作复用同一套 playClip/stopClip 调度，只是「片段」由
-//   预设动画表驱动（时长查 MASCOT_ACTION_CLIPS，收尾同 pack 一次性片段）
+//   rig 数据表驱动（时长查 MASCOT_ACTION_CLIPS，收尾同 pack 一次性片段）
 //
 // 状态动效（motion）：stateMap.animation 驱动的 CSS overlay 动画，挂在
 // .pet-motion 包裹层上。动画只作用于小人本体——透明窗上不做任何大面积
@@ -51,6 +52,8 @@ const isGif = computed(() => pet.value.petType === 'gif')
 const isMedia = computed(() => isImage.value || isGif.value)
 const isPack = computed(() => pet.value.petType === 'pack')
 const isMascot = computed(() => pet.value.petType === 'mascot')
+// mascot 的 rig 文档（petManifest 已 parseRigDoc 校验）；P2 起 rig 角色走同一分支
+const mascotDoc = computed(() => (isMascot.value ? (pet.value.data as RigDoc) : null))
 
 // ===== 宠物包 v2（pack 类型）：多动作片段渲染与点播 =====
 // idle 是常态渲染；walk/held/sleep/actions 经 playClip 点播（一次性播完自动回
@@ -357,7 +360,7 @@ watch(() => props.petId, () => {
   // 不让新宠短暂吃到 clip-playing 门控）
   stopClip()
   mountAnimation()
-  // mascot 素材默认朝右（PetMascot 口径）：挂载/切回时对齐朝向，否则首帧按
+  // mascot 素材默认朝右（rig 文档 doc.facing 口径）：挂载/切回时对齐朝向，否则首帧按
   // facingDir 缺省 'left' 渲染成镜像姿态（新配置默认就是 mascot）。其余类型的
   // 朝向不在这里动——pack 由 watch(pack) 按包默认复位，lottie 静止渲染不读朝向
   if (pet.value.petType === 'mascot') facingDir.value = 'right'
@@ -382,7 +385,7 @@ const walkFlipClass = computed(() =>
   isProceduralWalk.value && !isPack.value && facingDir.value !== 'left' ? 'pet-motion-flip' : '',
 )
 const motionClass = computed(() => {
-  // mascot：think/work/alert/happy 有角色化版本（PetMascot 内层动画），通用
+  // mascot：think/work/alert/happy 有角色化版本（PetRig 内层动画），通用
   // overlay 形变不叠加（双层 bounce/rotate 会打架）；flashing 脉冲与 clip-playing
   // 门控（.pet-motion 上）不受影响，照常作用
   if (isMascot.value) return ''
@@ -574,11 +577,12 @@ defineExpose({
           </div>
         </div>
       </div>
-      <!-- mascot 官方吉祥物：纯 SVG 程序化角色（PetMascot）。位于 .pet-motion 内
-           （pointer-events:none 继承 + 组件根显式兜底），动画全挂其内层节点；
-           currentClip 直接作 clip prop——sleep/walk/点播动作由 PetMascot 换挡 -->
-      <PetMascot
-        v-else-if="isMascot"
+      <!-- mascot 官方吉祥物：rig 数据驱动的程序化角色（PetRig）。位于 .pet-motion 内
+           （pointer-events:none 继承 + 组件根显式兜底），动画全挂 rig 部件节点；
+           currentClip 直接作 clip prop——sleep/walk/点播动作由 PetRig 换挡 -->
+      <PetRig
+        v-else-if="isMascot && mascotDoc"
+        :doc="mascotDoc"
         :color="color"
         :motion="motion"
         :moving="moving === true"
@@ -891,14 +895,9 @@ html[data-theme="minimal"] .pet-shadow {
   display: none;
 }
 
-/* mascot 程序化角色的全部循环动画节点都在 .pet-mascot 子树内，minimal（no motion
-   设计定义）下随 motion 门控一并关停。只点名 mascot 子树（:deep 穿透 scoped），
-   pack 素材动画（.pet-sprite 等）不受影响——pack/minimal 既有行为零变化。
-   sleep 的变暗是滤镜非动画，按 theming spec 例外口径保留。 */
-html[data-theme="minimal"] .pet-motion .pet-mascot,
-html[data-theme="minimal"] .pet-motion .pet-mascot :deep(*) {
-  animation: none;
-}
+/* mascot（PetRig）无 CSS 循环动画——全部 WAAPI 由组件读主题在 JS 侧挂起/恢复
+   （minimal 门控 JS 化），此处无需再点名其子树；pack 素材动画（.pet-sprite 等）
+   照旧走上面的通用门控。 */
 
 /* pack 片段播放期间暂停 motion overlay（PRD E1-4）：pack 片段自带完整动作，
    再叠 breathe/happy 的形变会打架；播完回 idle（clip-playing 摘除）自动恢复。
