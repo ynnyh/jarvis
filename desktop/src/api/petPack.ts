@@ -23,10 +23,14 @@ export interface PetPackClip {
   durationMs?: number
 }
 
-/** 小动作片段：name 进点播菜单，weight 是随机权重（缺省 1） */
+/** 小动作片段：name 进点播菜单，weight 是随机权重（缺省 1）。
+ *  category 声明点播菜单的分类（如 移动/小动作/玩耍/吃什么/时节），
+ *  任一动作带 category → 「来一个」区块变为 分类→动作 两级点播；
+ *  全部不带 → 维持洗牌 6 个的平铺现状。 */
 export interface PetPackAction extends PetPackClip {
   name: string
   weight?: number
+  category?: string
 }
 
 /** 动画链（v3，对齐 dsh-pet）：一次性动作播完后按权重接续下一段，待机/小动作
