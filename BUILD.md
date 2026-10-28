@@ -108,15 +108,24 @@ Rust 端 `daemon_client.rs::resolve_daemon_launch` 自动判断：先找 exe 同
 
 ## 发版（maintainer）
 
-推 tag `vX.Y.Z` 触发 GitHub Actions（`release.yml`）自动构建 + 发布。**只有 tag 触发发版**；push 到 `main` 只跑 CI 质量门（测试 + lint），不发版。
+推 tag `vX.Y.Z` 触发 GitHub Actions（`release.yml`）自动**构建**（Windows + macOS universal，先过 quality 质量门）。**只有 tag 触发发版**；push 到 `main` 只跑 CI 质量门（测试 + lint），不发版。
+
+**发布分两段（2026-10-28 改造）**：
+
+1. **Actions 构建**：推 tag 后自动跑，产物以 artifacts 形式挂在 run 上（不再由 runner 直接发布——跨洋上传 Gitee/GitHub Releases 大文件经常超时，v0.12.0 两次 45min 实锤）。
+2. **本地发布**（构建完成后，一条命令双渠道 + OTA）：
 
 ```bash
-# 1. 同步版本号（三处一致）：
-#    src-tauri/tauri.conf.json  "version"
-#    src-tauri/Cargo.toml        version
-#    package.json                "version"
-# 2. 提交 + 打 tag + 推送
+# 1. 同步版本号（三处一致）：tauri.conf.json / Cargo.toml / package.json
+# 2. 提交 + 打 tag + 推送（触发构建）
 git commit -am "release: bump version to X.Y.Z"
 git tag vX.Y.Z
 git push origin main && git push origin vX.Y.Z
+# 3. 等 Actions 构建完成后，本地一键发布（需 GITEE_TOKEN 环境变量 + gh 已登录）：
+GITEE_TOKEN=<gitee私人令牌> npm run release:publish
 ```
+
+`release:publish` 自动：等构建（可中断重跑，产物不丢）→ 下载产物 → GitHub Release（保底）→ Gitee Release + OTA `latest.json`（国内更新主源）→ 校验资产清单。
+
+- Gitee 只发布失败：`node scripts/publish-to-gitee.mjs --sync-from-github` 从 GitHub Release 补同步（也可直接重跑 release:publish，幂等）。
+- 若 `GITEE_TOKEN` 不便配置在 shell 里，可写入本地 `.env` 后自行 source，或用 `GITEE_TOKEN=xxx npm run release:publish` 内联。

@@ -203,9 +203,67 @@ jobs:
           path: staging/*
           retention-days: 14
 
-  publish:
+  # GitHub Release：gh CLI 同区域上传，稳定路径，必须成功。
+  # 与 Gitee 解耦——Gitee 跨洋上传经常超时（v0.12.0 两次 45min 实锤），
+  # 不能让它拖死 GitHub 用户的主发布通道。
+  publish-github:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+          pattern: jarvis-*-${{ github.ref_name }}
+
+      - name: List artifacts
+        run: ls -R artifacts/
+
+      - name: Publish to GitHub Releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          echo "发布 GitHub Release: $TAG"
+
+          # 收集所有平台的用户可下载安装包（.exe / .dmg / .app.tar.gz），排除 .sig / PLATFORM_ID
+          STAGING="gh-release-staging"
+          mkdir -p "$STAGING"
+          find artifacts -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.app.tar.gz" \)             ! -name "*.sig" -exec cp {} "$STAGING/" \;
+          echo "待上传文件："
+          ls -la "$STAGING/"
+
+          # 从 CHANGELOG.md 提取本版本更新说明（失败则用 tag 名兜底）
+          NOTES_FILE="release-notes.md"
+          if awk "/^## ${TAG}/{f=1;next} /^## /{f=0} f" CHANGELOG.md > "$NOTES_FILE" && [ -s "$NOTES_FILE" ]; then
+            echo "✓ 从 CHANGELOG.md 提取了 ${TAG} 的更新说明"
+          else
+            echo "Jarvis ${TAG}" > "$NOTES_FILE"
+            echo "⚠ CHANGELOG 未找到 ${TAG}，用 tag 名兜底"
+          fi
+
+          # 创建/更新 GitHub Release（已存在则跳过，改用 upload 补传）
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在，补充上传资产"
+            gh release upload "$TAG" "$STAGING"/* --clobber
+          else
+            gh release create "$TAG"               --title "$TAG"               --notes-file "$NOTES_FILE"               --target main               "$STAGING"/*
+          fi
+          echo "✓ GitHub Release $TAG 发布完成"
+
+  # Gitee Release + OTA latest.json：国内更新主源，但 GitHub runner → Gitee
+  # 跨洋上传经常超时，降级为尽力而为（continue-on-error，失败不阻塞 GitHub 通道，
+  # 也不算发版失败）。失败时本地一条命令补发：
+  #   GITEE_TOKEN=<token> npm run release:publish -- --sync-from-github
+  publish-gitee:
+    needs: build
+    runs-on: ubuntu-latest
+    continue-on-error: true
     timeout-minutes: 50
     steps:
       - name: Checkout
@@ -230,9 +288,6 @@ jobs:
           path: artifacts/
           pattern: jarvis-*-${{ github.ref_name }}
 
-      - name: List artifacts
-        run: ls -R artifacts/
-
       - name: Publish to Gitee
         env:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
@@ -244,43 +299,3 @@ jobs:
           ARTIFACTS_DIR: artifacts
         run: node scripts/publish-to-gitee.mjs
         timeout-minutes: 45
-
-      - name: Publish to GitHub Releases
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
-          echo "发布 GitHub Release: $TAG"
-
-          # 收集所有平台的用户可下载安装包（.exe / .dmg），排除 .sig / PLATFORM_ID
-          STAGING="gh-release-staging"
-          mkdir -p "$STAGING"
-          find artifacts -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.app.tar.gz" \) \
-            ! -name "*.sig" -exec cp {} "$STAGING/" \;
-          echo "待上传文件："
-          ls -la "$STAGING/"
-
-          # 从 CHANGELOG.md 提取本版本更新说明（失败则用 tag 名兜底）
-          NOTES_FILE="release-notes.md"
-          VERSION="${TAG#v}"
-          if awk "/^## ${TAG}/{f=1;next} /^## /{f=0} f" CHANGELOG.md > "$NOTES_FILE" && [ -s "$NOTES_FILE" ]; then
-            echo "✓ 从 CHANGELOG.md 提取了 ${TAG} 的更新说明"
-          else
-            echo "Jarvis ${TAG}" > "$NOTES_FILE"
-            echo "⚠ CHANGELOG 未找到 ${TAG}，用 tag 名兜底"
-          fi
-
-          # 创建/更新 GitHub Release（已存在则跳过，改用 upload 补传）
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG 已存在，补充上传资产"
-            gh release upload "$TAG" "$STAGING"/* --clobber
-          else
-            gh release create "$TAG" \
-              --title "$TAG" \
-              --notes-file "$NOTES_FILE" \
-              --target main \
-              "$STAGING"/*
-          fi
-          echo "✓ GitHub Release $TAG 发布完成"
-        timeout-minutes: 15

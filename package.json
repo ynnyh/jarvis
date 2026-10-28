@@ -14,6 +14,7 @@
     "desktop:build-binary": "tauri build --no-bundle",
     "release:gitee": "node scripts/publish-to-gitee.mjs",
     "release:sync-gitee": "node scripts/publish-to-gitee.mjs --sync-from-github",
+    "release:publish": "node scripts/release-publish.mjs",
     "pre-release": "node scripts/pre-release.mjs",
     "desktop:portable": "npm run desktop:build-binary && node scripts/portable-zip.mjs",
     "docs:dev": "vitepress dev docs",
