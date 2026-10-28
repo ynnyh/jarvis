@@ -21,7 +21,16 @@ import cowDrinkMilkData from './assets/pets/Cow Drink Milk.json'
 import dancingLlamaData from './assets/pets/Dancing llama.json'
 import butlerRigData from './assets/pets/rig/jarvis-butler.rig.json'
 import { parseRigDoc, type RigDoc } from './petRig/types'
-import { DA_FEI_YU_CREDIT, DA_FEI_YU_PACK_ID } from './builtinPacks'
+
+// ===== 内置宠物包「大肥鱼」的元信息 =====
+// 常量放本文件而非 builtinPacks.ts：config store → petManifest 已有依赖边，
+// 再让 petManifest → builtinPacks → config 会成环（builtinPacks 反向引这里）。
+// 版权（不许删）：DeepSeek 的社区二创形象（非官方），原案 @上善无形、女仆鲸鱼娘
+// 设计 @ZipZipPipe，CC BY-NC-SA 4.0；素材自 dsh-pet（github.com/PC2005-cloud/dsh-pet），
+// 允许开源使用、禁止商用——同口径随应用分发，禁止用于商业用途。
+export const DA_FEI_YU_PACK_ID = 'dafeiyu'
+export const DA_FEI_YU_CREDIT =
+  'DeepSeek 二创「大肥鱼」鲸鱼娘（非官方）· 形象 CC BY-NC-SA 4.0（@上善无形 原案 / @ZipZipPipe 设计）· 素材自 dsh-pet · 禁止商用'
 import { customPetList, type CustomPet, type ImageAnimation } from './api/customPet'
 import { petPackList, petPackReadFile, type PetPack } from './api/petPack'
 
@@ -244,11 +253,17 @@ function toPackPetInfo(pack: PetPack): PetInfo {
   }
 }
 
-/** 加载宠物包列表（从后端读取，覆盖缓存） */
+/** 加载宠物包列表（从后端读取，覆盖缓存）。
+ *  内容与缓存一致时**不替换**缓存对象：config-changed 每次配置保存都会走到这里，
+ *  若无脑重建，pet.pack 等引用全部翻新，PetAvatar 的 watch(activePackClip) 按引用
+ *  判变 → 清 src 重载视频 → 在播片段被打断（点播瞬灭 + 视频闪烁，2026-10-28 实锤）。 */
 export async function loadPackPets(): Promise<PetInfo[]> {
   try {
     const packs = await petPackList()
-    packPetsCache.value = packs.map(toPackPetInfo)
+    const next = packs.map(toPackPetInfo)
+    if (JSON.stringify(next) !== JSON.stringify(packPetsCache.value)) {
+      packPetsCache.value = next
+    }
   } catch (e) {
     console.error('加载宠物包失败:', e)
   }

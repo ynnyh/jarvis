@@ -1,5 +1,6 @@
 import { useConfigStore } from './stores/config'
 import { petPackSave, type PetPack } from './api/petPack'
+import { DA_FEI_YU_PACK_ID } from './petManifest'
 
 // ============================================================================
 // 内置宠物包：随应用分发、首启自动安装的官方包（当前唯一：大肥鱼）。
@@ -9,21 +10,14 @@ import { petPackSave, type PetPack } from './api/petPack'
 // base64 走 petPackSave 写入 ~/.jarvis/pets/（复用既有宠物包链路，零后端改动），
 // 随后存版本号。用户删除后版本号已写、不会复活；升级素材集时递增版本号即重装。
 //
-// 版权（不许删）：「大肥鱼」鲸鱼娘是 DeepSeek 的**社区二创形象**（非官方），
-// 原案 @上善无形、女仆鲸鱼娘设计 @ZipZipPipe，CC BY-NC-SA 4.0；素材取自
-// dsh-pet（github.com/PC2005-cloud/dsh-pet，v0.3.8，素材「允许开源使用、禁止
-// 商用」）。本移植包按同口径（CC BY-NC-SA、禁止商用）随应用分发，仅做子集
-// 挑选与格式直迁、未修改素材内容。
+// 版权署名常量（DA_FEI_YU_CREDIT / DA_FEI_YU_PACK_ID）在 petManifest.ts——
+// 放那边是为了避免 petManifest → 本模块 → config store 的循环导入；出处与
+// 许可口径见 petManifest.ts 顶部注释，本移植包按 CC BY-NC-SA（禁商用）分发，
+// 未修改素材内容。
 // ============================================================================
 
 /** 内置包素材集版本：素材增删或替换时 +1，老用户重启即自动重装 */
-export const BUILTIN_PACK_VERSION = 1
-
-export const DA_FEI_YU_PACK_ID = 'dafeiyu'
-
-/** 大肥鱼署名文案（设置列表描述用；与上面版权注释同口径） */
-export const DA_FEI_YU_CREDIT =
-  'DeepSeek 二创「大肥鱼」鲸鱼娘（非官方）· 形象 CC BY-NC-SA 4.0（@上善无形 原案 / @ZipZipPipe 设计）· 素材自 dsh-pet · 禁止商用'
+export const BUILTIN_PACK_VERSION = 3
 
 const assetUrls = import.meta.glob<string>(
   './assets/packs/dafeiyu/*.webm',
@@ -31,7 +25,8 @@ const assetUrls = import.meta.glob<string>(
 )
 
 function assetUrl(fileName: string): string {
-  const url = assetUrls[`./assets/packs/dafeiyu/${fileName}.webm`]
+  // fileName 已带 .webm 扩展名（pack 定义里的 file 原样传进来），不能再拼一次
+  const url = assetUrls[`./assets/packs/dafeiyu/${fileName}`]
   if (!url) throw new Error(`内置大肥鱼素材缺失: ${fileName}`)
   return url
 }
@@ -40,8 +35,9 @@ function assetUrl(fileName: string): string {
 export const DA_FEI_YU_PACK: PetPack = {
   id: DA_FEI_YU_PACK_ID,
   name: '大肥鱼',
-  // 640×360 视频内角色高约 65%，×2 后在 128px 档约 94px 高（真机可再调）
-  scale: 2,
+  // 640×360 视频内角色高约 65%，×3 后约 131px——正好撑满 128px 命中盒，
+  // 且画幅边界离角色更远（特效被画幅边切的观感更轻）
+  scale: 3,
   facing: 'right',
   clips: {
     idle: { file: '待机呼吸休闲.webm', type: 'webm' },
@@ -137,6 +133,7 @@ export async function ensureBuiltinPacks(): Promise<boolean> {
       facing: DA_FEI_YU_PACK.facing,
       clips: DA_FEI_YU_PACK.clips,
       files,
+      scale: DA_FEI_YU_PACK.scale,
     })
     store.config.builtinPacksVersion = BUILTIN_PACK_VERSION
     await store.save()

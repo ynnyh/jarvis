@@ -60,6 +60,8 @@ export async function petPackSave(pack: {
   facing: PetPackFacing
   clips: PetPackClips
   files: PetPackFileIn[]
+  /** 整体缩放倍率，缺省 1.0 */
+  scale?: number
 }): Promise<void> {
   return invoke('pet_pack_save', {
     id: pack.id,
@@ -67,6 +69,7 @@ export async function petPackSave(pack: {
     facing: pack.facing,
     clips: pack.clips,
     files: pack.files,
+    scale: pack.scale,
   })
 }
 

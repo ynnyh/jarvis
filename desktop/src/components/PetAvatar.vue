@@ -540,11 +540,14 @@ defineExpose({
         alt=""
       />
       <!-- pack 宠物：idle 为常态，点播片段同容器切换（gif/webm/spritesheet 三种素材）。
-           整棵子树 pointer-events:none，翻转挂内层 .pet-pack-flip，不碰命中盒。 -->
+           整棵子树 pointer-events:none，翻转挂内层 .pet-pack-flip，不碰命中盒。
+           packClipSrc 门控：切换片段时 src 先清空再异步加载，空 src 一旦落到 video/img
+           上，Chromium 会立刻抛 MEDIA_ERR_SRC_NOT_SUPPORTED，被当成加载失败瞬间
+           打回 idle（2026-10-28 大肥鱼点播全灭实锤）。 -->
       <div v-else-if="isPack" class="pet-pack" :style="packStyle">
         <div class="pet-pack-flip" :class="{ 'pack-flipped': packFlipped }">
           <img
-            v-if="activePackClip && activePackClip.type === 'gif'"
+            v-if="activePackClip && activePackClip.type === 'gif' && packClipSrc"
             v-show="!packClipFailed"
             class="pet-pack-media"
             :src="packClipSrc"
@@ -554,7 +557,7 @@ defineExpose({
           <!-- webm 素材：VP9-alpha 在 WebView2 上是实验特性（未真机验证，PRD 接受
                不透明底降级）；:key 按文件重建元素，保证切片段时 autoplay 必触发 -->
           <video
-            v-else-if="activePackClip && activePackClip.type === 'webm'"
+            v-else-if="activePackClip && activePackClip.type === 'webm' && packClipSrc"
             v-show="!packClipFailed"
             ref="packVideoEl"
             :key="activePackClip.file"
@@ -568,7 +571,7 @@ defineExpose({
             @error="onPackMediaError"
           />
           <div
-            v-else-if="activePackClip && activePackClip.type === 'spritesheet'"
+            v-else-if="activePackClip && activePackClip.type === 'spritesheet' && packClipSrc"
             v-show="!packClipFailed"
             class="pet-sprite-box"
             :style="spriteBoxStyle"

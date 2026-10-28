@@ -231,6 +231,8 @@ pub fn pet_pack_save(
     facing: String,
     clips: serde_json::Value,
     files: Vec<PetPackFileIn>,
+    // 整体缩放倍率；缺省 1.0（老前端不传该参数也能存）
+    scale: Option<f64>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     let safe_id = sanitize_pack_id(&id);
@@ -278,7 +280,7 @@ pub fn pet_pack_save(
     let pack_json = serde_json::json!({
         "id": safe_id,
         "name": name,
-        "scale": 1.0,
+        "scale": scale.unwrap_or(1.0).clamp(0.1, 10.0),
         "facing": facing,
         "clips": clips,
     });
