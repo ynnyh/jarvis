@@ -19,7 +19,7 @@ import { useTheme } from './useTheme'
 import { useAvatarDock, type AvatarAnchor } from './useAvatarDock'
 import { useAvatarDrag } from './useAvatarDrag'
 import { usePetRoamer, type PetAvatarApi } from './usePetRoamer'
-import { loadCustomPets, loadPackPets } from '../petManifest'
+import { getPetById, loadCustomPets, loadPackPets } from '../petManifest'
 import { ensureBuiltinPacks } from '../builtinPacks'
 import { MENU_KEYS, getMenuTheme } from '../menu-themes'
 import { appEvent } from '../api/plugins'
@@ -38,6 +38,8 @@ export function useWindowOrchestration() {
   type JarvisState = 'idle' | 'thinking' | 'working' | 'warning' | 'happy' | 'morning' | 'coffee' | 'late'
 
   const state = ref<JarvisState>('idle')
+  // 工作状态档位映射（本应用状态机 → dsh-pet 六档索引；无映射的状态不接管）
+  const WORK_STATUS_TIER: Partial<Record<JarvisState, number>> = { thinking: 0, working: 1, happy: 4 }
   const showMenu = ref(false)
 
   /** 当前主题的菜单项，按 MENU_KEYS 顺序排列 */
@@ -377,7 +379,38 @@ export function useWindowOrchestration() {
     stateFlashing.value = true
     if (flashTimer) clearTimeout(flashTimer)
     flashTimer = window.setTimeout(() => { stateFlashing.value = false }, 800)
+    playWorkStatusClip()
   })
+
+  // ===== 工作状态档位动画（pack.clips.workStatus 声明时，对齐 dsh-pet 六档）=====
+  // 状态映射：thinking→0(循环) / working→1(循环) / happy→4(雀跃庆祝，播一遍)；
+  // 归位 idle 等无档状态 → 收掉自己播的档位片段。优先级让路：拖拽/用户点播/
+  // 漫游片段在播时不抢（workStatusPlaying 标记保证只收自己那段）。
+  let workStatusPlaying = false
+  function playWorkStatusClip() {
+    const avatar = petAvatarEl.value
+    if (!avatar) return
+    const pet = getPetById(configStore.config.petId)
+    const tiers = pet.petType === 'pack' ? pet.pack?.clips.workStatus : null
+    if (!tiers || tiers.length === 0) return
+    if (isDragging.value) return
+    const tier = WORK_STATUS_TIER[s.value]
+    if (tier === undefined) {
+      if (workStatusPlaying) {
+        avatar.stopClip()
+        workStatusPlaying = false
+      }
+      return
+    }
+    // 非自己片段在播（用户点播/漫游动作）：不抢，等下次状态变化再接
+    if (avatar.currentClip !== null && !workStatusPlaying) return
+    const pick = tiers[Math.min(tier, tiers.length - 1)]
+    workStatusPlaying = true
+    const terminal = tier >= 4 // 成功/出错档播一遍自动收
+    void avatar.playClip(pick.name, { loop: !terminal }).then(() => {
+      workStatusPlaying = false
+    })
+  }
 
   let alertTimer: number | null = null
   let greetingTimer: ReturnType<typeof setTimeout> | null = null

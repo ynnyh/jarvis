@@ -17,10 +17,10 @@ import { DA_FEI_YU_PACK_ID } from './petManifest'
 // ============================================================================
 
 /** 内置包素材集版本：素材增删或替换时 +1，老用户重启即自动重装 */
-export const BUILTIN_PACK_VERSION = 6
+export const BUILTIN_PACK_VERSION = 9
 
 const assetUrls = import.meta.glob<string>(
-  './assets/packs/dafeiyu/*.webm',
+  './assets/packs/dafeiyu/*.webp',
   { eager: true, query: '?url', import: 'default' },
 )
 
@@ -42,54 +42,63 @@ export const DA_FEI_YU_PACK: PetPack = {
   // 动画链：待机呼吸/东张西望/小动作/走路 按权重首尾相接，不再长呆滞
   chain: { idlePool: ['东张西望'], idleWeight: 55, actionsWeight: 35, walkWeight: 10 },
   clips: {
-    idle: { file: '待机呼吸休闲.webm', type: 'webm' },
-    walk: { file: '螃蟹走路.webm', type: 'webm' },
-    held: { file: '被鼠标拖拽悬空反馈.webm', type: 'webm' },
-    sleep: { file: '原地小憩沉眠.webm', type: 'webm' },
+    idle: { file: '待机呼吸休闲.webp', type: 'webp' },
+    walk: { file: '螃蟹走路.webp', type: 'webp' },
+    held: { file: '被鼠标拖拽悬空反馈.webp', type: 'webp' },
+    sleep: { file: '原地小憩沉眠.webp', type: 'webp' },
+    // 工作状态档位（dsh-pet 六档口径；本应用映射 thinking→0/working→1/happy→4）
+    workStatus: [
+      { name: '思考冒泡', file: '工作状态-思考冒泡.webp', type: 'webp', durationMs: 10040 },
+      { name: '忙碌点按', file: '工作状态-忙碌点按.webp', type: 'webp', durationMs: 10040 },
+      { name: '清点归档', file: '工作状态-清点归档.webp', type: 'webp', durationMs: 10040 },
+      { name: '原地踱步张望', file: '工作状态-原地踱步张望.webp', type: 'webp', durationMs: 10040 },
+      { name: '雀跃庆祝', file: '工作状态-雀跃庆祝.webp', type: 'webp', durationMs: 10040 },
+      { name: '垂头叹气冒汗', file: '工作状态-垂头叹气冒汗.webp', type: 'webp', durationMs: 4920 },
+    ],
     // 点击回应池（点按宠物时随机抽 1，档内不连播）
     clicks: [
-      { name: '开心跃动', file: '点击回应-开心跃动.webm', type: 'webm', weight: 2 },
-      { name: '害羞惊讶', file: '点击回应-害羞惊讶.webm', type: 'webm', weight: 2 },
-      { name: '傲娇生气', file: '点击回应-傲娇生气.webm', type: 'webm', weight: 2 },
-      { name: '挠痒咯咯笑', file: '点击回应-挠痒咯咯笑.webm', type: 'webm', weight: 2 },
-      { name: '元气挥手', file: '点击回应-元气挥手.webm', type: 'webm', weight: 2 },
+      { name: '开心跃动', file: '点击回应-开心跃动.webp', type: 'webp', durationMs: 10040, weight: 2 },
+      { name: '害羞惊讶', file: '点击回应-害羞惊讶.webp', type: 'webp', durationMs: 10040, weight: 2 },
+      { name: '傲娇生气', file: '点击回应-傲娇生气.webp', type: 'webp', durationMs: 10040, weight: 2 },
+      { name: '挠痒咯咯笑', file: '点击回应-挠痒咯咯笑.webp', type: 'webp', durationMs: 10040, weight: 2 },
+      { name: '元气挥手', file: '点击回应-元气挥手.webp', type: 'webp', durationMs: 10040, weight: 2 },
     ],
     actions: [
       // 转向 / 移动（原 turn / moves 池）。东张西望同时在 chain.idlePool 里
       // 轮换（hasClip 只认 actions，链条待机段靠它过门控）
-      { name: '东张西望', file: '东张西望.webm', type: 'webm', weight: 2 },
-      { name: '原地漂浮踏步', file: '原地漂浮踏步.webm', type: 'webm', weight: 2 },
-      { name: '原地左转奔跑', file: '原地左转奔跑.webm', type: 'webm', weight: 2 },
+      { name: '东张西望', file: '东张西望.webp', type: 'webp', durationMs: 10040, weight: 2 },
+      { name: '原地漂浮踏步', file: '原地漂浮踏步.webp', type: 'webp', durationMs: 10040, weight: 2 },
+      { name: '原地左转奔跑', file: '原地左转奔跑.webp', type: 'webp', durationMs: 10040, weight: 2 },
       // 小动作（原「小动作」分类精选）
-      { name: '悠闲哼歌', file: '悠闲哼歌.webm', type: 'webm', weight: 3 },
-      { name: '超大伸懒腰', file: '超大伸懒腰.webm', type: 'webm', weight: 3 },
-      { name: '哈欠连天', file: '哈欠连天.webm', type: 'webm', weight: 3 },
-      { name: '女仆屈膝礼仪', file: '女仆屈膝礼仪.webm', type: 'webm', weight: 3 },
-      { name: '被吓一跳', file: '被吓一跳.webm', type: 'webm', weight: 3 },
-      { name: '写代码', file: '写代码.webm', type: 'webm', weight: 3 },
-      { name: '晨间刷牙', file: '晨间刷牙.webm', type: 'webm', weight: 3 },
+      { name: '悠闲哼歌', file: '悠闲哼歌.webp', type: 'webp', durationMs: 10040, weight: 3 },
+      { name: '超大伸懒腰', file: '超大伸懒腰.webp', type: 'webp', durationMs: 10040, weight: 3 },
+      { name: '哈欠连天', file: '哈欠连天.webp', type: 'webp', durationMs: 10040, weight: 3 },
+      { name: '女仆屈膝礼仪', file: '女仆屈膝礼仪.webp', type: 'webp', durationMs: 10040, weight: 3 },
+      { name: '被吓一跳', file: '被吓一跳.webp', type: 'webp', durationMs: 10040, weight: 3 },
+      { name: '写代码', file: '写代码.webp', type: 'webp', durationMs: 10040, weight: 3 },
+      { name: '晨间刷牙', file: '晨间刷牙.webp', type: 'webp', durationMs: 10040, weight: 3 },
       // 玩耍（原「玩耍」分类精选）
-      { name: '玩魔方', file: '原地专心玩魔方.webm', type: 'webm', weight: 3 },
-      { name: '鲸鱼吐泡泡', file: '鲸鱼吐泡泡特效.webm', type: 'webm', weight: 3 },
-      { name: '优雅女仆舞', file: '优雅女仆舞.webm', type: 'webm', weight: 3 },
-      { name: '可爱宅舞', file: '可爱宅舞.webm', type: 'webm', weight: 3 },
-      { name: '撸猫', file: '撸猫.webm', type: 'webm', weight: 3 },
-      { name: '拆礼物', file: '拆礼物.webm', type: 'webm', weight: 3 },
-      { name: '荡秋千', file: '荡秋千.webm', type: 'webm', weight: 3 },
-      { name: '骑木马', file: '骑木马.webm', type: 'webm', weight: 3 },
+      { name: '玩魔方', file: '原地专心玩魔方.webp', type: 'webp', durationMs: 10040, weight: 3 },
+      { name: '鲸鱼吐泡泡', file: '鲸鱼吐泡泡特效.webp', type: 'webp', durationMs: 10040, weight: 3 },
+      { name: '优雅女仆舞', file: '优雅女仆舞.webp', type: 'webp', durationMs: 10040, weight: 3 },
+      { name: '可爱宅舞', file: '可爱宅舞.webp', type: 'webp', durationMs: 10040, weight: 3 },
+      { name: '撸猫', file: '撸猫.webp', type: 'webp', durationMs: 10040, weight: 3 },
+      { name: '拆礼物', file: '拆礼物.webp', type: 'webp', durationMs: 10040, weight: 3 },
+      { name: '荡秋千', file: '荡秋千.webp', type: 'webp', durationMs: 10040, weight: 3 },
+      { name: '骑木马', file: '骑木马.webp', type: 'webp', durationMs: 10040, weight: 3 },
       // 吃什么（原「吃什么」分类精选）
-      { name: '吃白饭', file: '吃白饭.webm', type: 'webm', weight: 2 },
-      { name: '大口吃零食', file: '大口吃零食.webm', type: 'webm', weight: 2 },
-      { name: '吃Token', file: '吃Token.webm', type: 'webm', weight: 2 },
-      { name: '涮火锅', file: '涮火锅.webm', type: 'webm', weight: 2 },
-      { name: '吃糖葫芦', file: '吃糖葫芦.webm', type: 'webm', weight: 2 },
+      { name: '吃白饭', file: '吃白饭.webp', type: 'webp', durationMs: 10040, weight: 2 },
+      { name: '大口吃零食', file: '大口吃零食.webp', type: 'webp', durationMs: 10040, weight: 2 },
+      { name: '吃Token', file: '吃Token.webp', type: 'webp', durationMs: 10040, weight: 2 },
+      { name: '涮火锅', file: '涮火锅.webp', type: 'webp', durationMs: 10040, weight: 2 },
+      { name: '吃糖葫芦', file: '吃糖葫芦.webp', type: 'webp', durationMs: 10040, weight: 2 },
       // 时节（原「时节」分类精选）
-      { name: '堆雪人', file: '堆雪人.webm', type: 'webm', weight: 2 },
-      { name: '放烟花', file: '放烟花.webm', type: 'webm', weight: 2 },
-      { name: '舞狮头', file: '舞狮头.webm', type: 'webm', weight: 2 },
-      { name: '收红包', file: '收红包.webm', type: 'webm', weight: 2 },
+      { name: '堆雪人', file: '堆雪人.webp', type: 'webp', durationMs: 10040, weight: 2 },
+      { name: '放烟花', file: '放烟花.webp', type: 'webp', durationMs: 10040, weight: 2 },
+      { name: '舞狮头', file: '舞狮头.webp', type: 'webp', durationMs: 10040, weight: 2 },
+      { name: '收红包', file: '收红包.webp', type: 'webp', durationMs: 10040, weight: 2 },
       // 文字（原「文字」分类，noMirror——朝左镜像时文字会反写，P1 事件引擎前先靠权重压低）
-      { name: '是啊，吃什么', file: '是啊，吃什么.webm', type: 'webm', weight: 1 },
+      { name: '是啊，吃什么', file: '是啊，吃什么.webp', type: 'webp', durationMs: 10040, weight: 1 },
     ],
   },
 }
@@ -101,6 +110,8 @@ const DA_FEI_YU_FILES: string[] = [
   DA_FEI_YU_PACK.clips.held?.file,
   DA_FEI_YU_PACK.clips.sleep?.file,
   ...(DA_FEI_YU_PACK.clips.actions ?? []).map(a => a.file),
+  ...(DA_FEI_YU_PACK.clips.clicks ?? []).map(a => a.file),
+  ...(DA_FEI_YU_PACK.clips.workStatus ?? []).map(a => a.file),
 ].filter((f): f is string => !!f)
 
 function blobToDataUrl(blob: Blob): Promise<string> {

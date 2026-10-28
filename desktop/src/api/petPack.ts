@@ -5,7 +5,7 @@ import { invoke } from '@tauri-apps/api/core'
 // ~/.jarvis/pets/<packId>/，前端按 clip 惰性经 pet_pack_read_file 换 data URL。
 // invoke 参数 key 一律 camelCase（type-safety spec：snake_case 会静默失效）。
 
-export type PetPackClipType = 'gif' | 'webm' | 'spritesheet'
+export type PetPackClipType = 'gif' | 'webm' | 'webp' | 'spritesheet'
 export type PetPackFacing = 'left' | 'right'
 
 /** 单个动画片段：gif/webm 直渲；spritesheet 额外带帧参数走 CSS steps 动画 */
@@ -18,6 +18,9 @@ export interface PetPackClip {
   fps?: number
   frames?: number
   columns?: number
+  /** 一次性片段时长毫秒（webp/gif 走 img 路径没有 ended 事件，按此收尾）；
+   *  缺省用引擎常量兜底。loop 片段不需要 */
+  durationMs?: number
 }
 
 /** 小动作片段：name 进点播菜单，weight 是随机权重（缺省 1） */
@@ -46,6 +49,11 @@ export interface PetPackClips {
   actions?: PetPackAction[]
   /** 点击回应池：点按宠物时随机抽 1 播（档内不连播同一段）；缺省无回应动画 */
   clicks?: PetPackAction[]
+  /** 工作状态档位动画（对齐 dsh-pet 六档，索引即档位）：
+   *  0思考 1工作 2整理 3等待 4成功(播一遍) 5出错(播一遍)。
+   *  本应用状态机目前映射 thinking→0 / working→1 / happy→4，其余状态不接管。
+   *  缺省无该字段 = 维持 stateMap 现状（色变表达）。 */
+  workStatus?: PetPackAction[]
 }
 
 export interface PetPack {

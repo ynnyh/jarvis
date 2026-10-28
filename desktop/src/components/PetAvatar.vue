@@ -14,7 +14,7 @@ import PetRig from './PetRig.vue'
 // - lottie: 使用 lottie-web 渲染 Lottie JSON
 // - image: 使用 <img> 标签，可选 CSS 动画
 // - gif: 使用 <img> 标签，GIF 自带动画
-// - pack: 宠物包 v2，多动作片段（gif/webm/spritesheet），idle 为常态，其余
+// - pack: 宠物包 v2，多动作片段（gif/webm/webp/spritesheet），idle 为常态，其余
 //   片段经 playClip 点播（E2 漫游引擎 + 右键「来一个」菜单共用）
 // - mascot: 官方吉祥物（PetRig.vue 读 rig 文档的数据驱动程序化角色）；
 //   sleep/walk/点播动作复用同一套 playClip/stopClip 调度，只是「片段」由
@@ -142,8 +142,9 @@ function playClip(name: string, opts?: { loop?: boolean }): Promise<void> {
     if (clip?.type === 'spritesheet') {
       const durationMs = ((clip.frames ?? 1) / (clip.fps || 8)) * 1000
       clipEndTimer = window.setTimeout(finishClip, durationMs + 60)
-    } else if (clip?.type === 'gif') {
-      clipEndTimer = window.setTimeout(finishClip, PACK_GIF_ONESHOT_MS)
+    } else if (clip?.type === 'gif' || clip?.type === 'webp') {
+      // webp/gif 走 img 路径没有 ended 事件：按素材真实时长收尾（无则常量兜底）
+      clipEndTimer = window.setTimeout(finishClip, clip.durationMs ?? PACK_GIF_ONESHOT_MS)
     }
   })
 }
@@ -545,9 +546,15 @@ defineExpose({
            上，Chromium 会立刻抛 MEDIA_ERR_SRC_NOT_SUPPORTED，被当成加载失败瞬间
            打回 idle（2026-10-28 大肥鱼点播全灭实锤）。 -->
       <div v-else-if="isPack" class="pet-pack" :style="packStyle">
-        <div class="pet-pack-flip" :class="{ 'pack-flipped': packFlipped }">
+        <!-- 双缓冲交叉淡入：flip 容器按「类型:文件」keyed，切片段时旧容器淡出、
+             新容器淡入（各 160ms），消硬切空白帧。两个容器都是 absolute inset:0，
+             过渡期自然叠放；命中盒不受影响（子树 pointer-events:none）。
+             minimal（no motion）主题由样式区规则关停过渡。 -->
+        <Transition name="pet-pack-swap">
+        <div class="pet-pack-flip" :class="{ 'pack-flipped': packFlipped }"
+             :key="activePackClip ? `${activePackClip.type}:${activePackClip.file}` : 'none'">
           <img
-            v-if="activePackClip && activePackClip.type === 'gif' && packClipSrc"
+            v-if="activePackClip && (activePackClip.type === 'gif' || activePackClip.type === 'webp') && packClipSrc"
             v-show="!packClipFailed"
             class="pet-pack-media"
             :src="packClipSrc"
@@ -579,6 +586,7 @@ defineExpose({
             <div class="pet-sprite" :style="spriteStyle" @animationend="onPackSpriteEnded" />
           </div>
         </div>
+        </Transition>
       </div>
       <!-- mascot 官方吉祥物：rig 数据驱动的程序化角色（PetRig）。位于 .pet-motion 内
            （pointer-events:none 继承 + 组件根显式兜底），动画全挂 rig 部件节点；
@@ -696,6 +704,30 @@ defineExpose({
 }
 .pet-pack-flip.pack-flipped {
   transform: scaleX(-1);
+}
+
+/* 切片段交叉淡入（见模板注释）；素材挂载淡入兜住异步 src 就位后的硬出现 */
+.pet-pack-swap-enter-active,
+.pet-pack-swap-leave-active {
+  transition: opacity 160ms ease;
+}
+.pet-pack-swap-enter-from,
+.pet-pack-swap-leave-to {
+  opacity: 0;
+}
+.pet-pack-media {
+  animation: pet-pack-media-in 160ms ease;
+}
+@keyframes pet-pack-media-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+/* minimal（no motion 设计定义）：过渡与挂载淡入一并关停（切换退回硬切） */
+html[data-theme="minimal"] .pet-pack-swap-enter-active,
+html[data-theme="minimal"] .pet-pack-swap-leave-active,
+html[data-theme="minimal"] .pet-pack-media {
+  transition: none;
+  animation: none;
 }
 .pet-pack-media {
   max-width: 100%;

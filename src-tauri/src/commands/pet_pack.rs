@@ -22,7 +22,7 @@ const MAX_SINGLE_FILE_BYTES: usize = 20 * 1024 * 1024;
 const MAX_TOTAL_BYTES: usize = 60 * 1024 * 1024;
 
 /// 合法 clip 类型白名单（与前端 PetPackClipType 对齐）
-const VALID_CLIP_TYPES: [&str; 3] = ["gif", "webm", "spritesheet"];
+const VALID_CLIP_TYPES: [&str; 4] = ["gif", "webm", "webp", "spritesheet"];
 
 /// 前端上传的素材文件：原文件名 + base64 内容
 #[derive(Debug, Clone, Deserialize)]
@@ -347,6 +347,7 @@ pub fn pet_pack_read_file(pack_id: String, file: String) -> Result<String, Strin
     let mime = match ext.as_str() {
         "gif" => "image/gif",
         "webm" => "video/webm",
+        "webp" => "image/webp",
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
         _ => return Err(format!("不支持的素材格式: .{}", ext)),
