@@ -166,3 +166,7 @@ docs/                       # VitePress 文档站
 ## License
 
 [MIT](LICENSE) © ynnyh
+
+### 第三方素材许可
+
+- **「大肥鱼」内置宠物包**：DeepSeek 的社区二创形象（非官方）——原案 [@上善无形](https://space.bilibili.com/4456176)，DeepSeek 女仆鲸鱼娘设计 [@ZipZipPipe](https://space.bilibili.com/4168597)，形象采用 [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh-hans)；动画素材取自开源项目 [dsh-pet](https://github.com/PC2005-cloud/dsh-pet)（素材允许开源使用、禁止商用）。本应用以同口径（署名 · 非商业 · 相同方式共享）随应用分发该素材子集，**禁止用于商业用途**；素材仅做子集挑选与格式直迁，未修改内容。

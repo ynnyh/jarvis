@@ -21,6 +21,7 @@ import cowDrinkMilkData from './assets/pets/Cow Drink Milk.json'
 import dancingLlamaData from './assets/pets/Dancing llama.json'
 import butlerRigData from './assets/pets/rig/jarvis-butler.rig.json'
 import { parseRigDoc, type RigDoc } from './petRig/types'
+import { DA_FEI_YU_CREDIT, DA_FEI_YU_PACK_ID } from './builtinPacks'
 import { customPetList, type CustomPet, type ImageAnimation } from './api/customPet'
 import { petPackList, petPackReadFile, type PetPack } from './api/petPack'
 
@@ -219,6 +220,8 @@ const packPetsCache = shallowRef<PetInfo[]>([])
 
 /** 从包清单推导设置列表里的一句话描述 */
 function packDescription(pack: PetPack): string {
+  // 内置大肥鱼：版权署名是合规硬要求，描述位优先给出处（可漫步等能力描述让位）
+  if (pack.id === DA_FEI_YU_PACK_ID) return DA_FEI_YU_CREDIT
   const parts: string[] = []
   if (pack.clips.walk) parts.push('可漫步')
   if (pack.clips.held) parts.push('可拎起')

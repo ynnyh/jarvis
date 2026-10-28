@@ -148,6 +148,9 @@ export interface JarvisConfig {
   /** 已禁用的插件 id 列表（方案 C′ 插件基座）。内置/用户插件的 enabled
    *  状态都存这里，manifest 本身只读；缺失视为全部启用 */
   disabledPlugins: string[]
+  /** 已安装的内置宠物包素材集版本（见 builtinPacks.ts 的 BUILTIN_PACK_VERSION）。
+   *  落后于代码常量 → avatar 主窗启动时自动安装/升级；缺失视为 0（老配置首装） */
+  builtinPacksVersion: number
   /** 开机自启 */
   autoStartOnBoot: boolean
   /** 定时提醒列表 */
@@ -242,6 +245,7 @@ const defaultConfig = (): JarvisConfig => ({
   petProactiveChat: true,
   petRoaming: true,
   disabledPlugins: [],
+  builtinPacksVersion: 0,
   autoStartOnBoot: true,
   reminders: [],
   llmProfiles: [],

@@ -20,6 +20,7 @@ import { useAvatarDock, type AvatarAnchor } from './useAvatarDock'
 import { useAvatarDrag } from './useAvatarDrag'
 import { usePetRoamer, type PetAvatarApi } from './usePetRoamer'
 import { loadCustomPets, loadPackPets } from '../petManifest'
+import { ensureBuiltinPacks } from '../builtinPacks'
 import { MENU_KEYS, getMenuTheme } from '../menu-themes'
 import { appEvent } from '../api/plugins'
 import type { ChatStreamEvent } from '../api/chat'
@@ -737,6 +738,14 @@ export function useWindowOrchestration() {
     await configStore.load()
     store.refreshTaskBindings()
     await Promise.all([loadCustomPets(), loadPackPets()])
+
+    // 内置宠物包首启安装（大肥鱼，见 builtinPacks.ts）：版本落后才写入；装完刷新一次包列表。
+    // 失败不落版本号，下次启动自动重试，不影响其余初始化
+    try {
+      if (await ensureBuiltinPacks()) await loadPackPets()
+    } catch (e) {
+      console.error('内置宠物包安装失败:', e)
+    }
 
     // 加载完自定义宠物后，验证当前 petId 是否有效，无效则回退到默认
     const { getPetById } = await import('../petManifest')
