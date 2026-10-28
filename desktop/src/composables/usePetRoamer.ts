@@ -351,33 +351,29 @@ export function usePetRoamer(options: UsePetRoamerOptions) {
     walk = session
     await new Promise<void>((resolve) => {
       session.resolve = resolve
-      // 闭包持有当前物理坐标逐帧推进：窗口 setPosition 是异步 IPC，逐帧回读
-      // outerPosition 会拿到滞后值造成步进抖动，参照 dock 动画的「起点+推进」写法
-      let curX = winPx
-      let curY = winPy
-      let last = performance.now()
-      // 用 setTimeout 而非 rAF 驱动步进：小人沉到屏外后 WebView 被判定遮挡，
-      // rAF 永久停摆会把走路 promise 挂死、决策循环跟着死锁（走丢不可自愈的
-      // 直接原因）。定时器在遮挡下也会被节流（≥1s/跳），但遮挡期本就看不见，
-      // 跳步无感；可见时 16ms 精度与 rAF 等价。
+      // 闭包持有「起点 + 墙上时钟进度」推进到目标：窗口 setPosition 是异步 IPC，
+      // 逐帧回读 outerPosition 会拿到滞后值造成步进抖动，参照 dock 动画的写法。
+      //
+      // 为什么按进度插值而不是按 dt 累加：avatar 是透明置顶窗，Chromium 常把它
+      // 判成后台页 → setTimeout 被节流到 ≥1s/跳（2026-10-28 实锤：可见状态下也
+      // 发生）。旧写法按 dt 累加且钳 0.1s 上限，节流期每秒只前进 0.1s 的路程，
+      // 60px/s 变 6px/s —— 走路变成肉眼可见的慢动作漂移（用户实拍视频）。
+      // 进度插值下位置是墙上时钟的确定函数：节流期跳步（遮挡期无感），
+      // 正常时 16ms 丝滑，速度永远正确。
+      const startX = winPx
+      const startY = winPy
+      const walkDurationMs = Math.max(
+        300,
+        (Math.abs(targetWinPxX - startX) / (WALK_SPEED_PX_S * scale)) * 1000,
+      )
+      const startTime = performance.now()
       const step = (now: number) => {
         if (session.finished || walk !== session) return
-        // 长帧钳制：节流期 dt 巨大，不钳会瞬移
-        const dt = Math.min((now - last) / 1000, 0.1)
-        last = now
-        const stepLen = WALK_SPEED_PX_S * scale * dt
-        const dx = targetWinPxX - curX
-        const dy = targetWinPxY - curY
-        const arrive = Math.abs(dx) <= stepLen && Math.abs(dy) <= stepLen
-        if (arrive) {
-          curX = targetWinPxX
-          curY = targetWinPxY
-        } else {
-          curX += Math.sign(dx) * Math.min(Math.abs(dx), stepLen)
-          curY += Math.sign(dy) * Math.min(Math.abs(dy), stepLen)
-        }
+        const progress = Math.min(1, (now - startTime) / walkDurationMs)
+        const curX = startX + (targetWinPxX - startX) * progress
+        const curY = startY + (targetWinPxY - startY) * progress
         win.setPosition(new PhysicalPosition(Math.round(curX), Math.round(curY))).catch(() => {})
-        if (arrive) {
+        if (progress >= 1) {
           walk = null
           session.finished = true
           isMoving.value = false

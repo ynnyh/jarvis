@@ -390,6 +390,10 @@ const motionClass = computed(() => {
   // overlay 形变不叠加（双层 bounce/rotate 会打架）；flashing 脉冲与 clip-playing
   // 门控（.pet-motion 上）不受影响，照常作用
   if (isMascot.value) return ''
+  // pack（视频/帧素材）：素材自带完整动作（idle 呼吸、工作状态档位…），外面再叠
+  // 呼吸缩放/状态形变只会产生额外的晃动与顿挫（2026-10-28 用户实测否掉）——
+  // 不叠加任何 overlay；程序化走路弹跳仍保留（素材没有 walk clip 时的兜底）
+  if (isPack.value && !isProceduralWalk.value) return ''
   if (isProceduralWalk.value) return 'pet-motion-walk'
   return MOTION_CLASSES.has(props.motion) ? `pet-motion-${props.motion}` : ''
 })
@@ -421,8 +425,10 @@ function clearFidgetTimers() {
 function scheduleFidget() {
   fidgetTimer = window.setTimeout(() => {
     fidgetTimer = null
-    // 到点再核对资格：不在 idle、正在拖拽、正在漫游移动或在播 pack 片段 → 本轮跳过，仅排下一轮
-    if (props.idle && !props.dragging && !props.moving && !currentClip.value) {
+    // 到点再核对资格：不在 idle、正在拖拽、正在漫游移动、在播片段或视频素材
+    // 宠物（pack 素材自带动作，歪头/伸懒腰叠加即「摇晃」，2026-10-28 实测否掉）
+    // → 本轮跳过，仅排下一轮
+    if (props.idle && !props.dragging && !props.moving && !currentClip.value && !isPack.value) {
       fidgetClass.value = FIDGET_CLASSES[Math.floor(Math.random() * FIDGET_CLASSES.length)]
       fidgetEndTimer = window.setTimeout(() => {
         fidgetClass.value = ''
@@ -500,7 +506,7 @@ defineExpose({
 
 <template>
   <!-- clip-playing：pack 片段播放期间暂停 motion overlay（见样式区门控规则） -->
-  <div class="pet-avatar" :class="{ active, flashing, 'clip-playing': currentClip !== null }">
+  <div class="pet-avatar" :class="{ active, flashing, 'clip-playing': currentClip !== null, 'pet-pack-avatar': isPack }">
     <!-- 地面投影：贴容器底的静态椭圆软阴影，给「立在桌面上」的重量感。
          纯黑低透明（同 App.vue 面板投影的既有做法，透明窗上彩色泛光会成脏晕）。
          热区纪律：渲染像素在 .avatar 命中盒下缘附近，必须 pointer-events:none；
@@ -603,7 +609,6 @@ defineExpose({
       />
     </div>
     </div>
-    <div class="pet-dot" :style="{ background: color }" />
   </div>
 </template>
 
@@ -650,17 +655,6 @@ defineExpose({
 .pet-lottie :deep(svg) {
   width: 100% !important;
   height: 100% !important;
-}
-
-.pet-dot {
-  position: absolute;
-  bottom: 3px;
-  right: 3px;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  border: 2px solid rgba(15, 23, 42, 1);
-  z-index: 2;
 }
 
 /* 图片/GIF 宠物：object-fit:contain 按自然轮廓显示——透明背景 PNG/GIF 呈自由
@@ -808,9 +802,14 @@ html[data-theme="minimal"] .pet-pack-media {
 
 /* 状态切换瞬间脉冲一次，给视觉信号。挂 .pet-motion（内容脉冲），不碰
    .pet-lottie/.pet-media 的 transform 链。特异性 (0,3,0) 压过单类 motion 规则，
-   脉冲的 0.8s 内临时接管动画；结束（flashing 摘除）后 motion 动画原样恢复。 */
+   脉冲的 0.8s 内临时接管动画；结束（flashing 摘除）后 motion 动画原样恢复。
+   pack（视频素材）宠物：素材自带状态动作（工作状态档位），脉冲叠加即「顿挫」，
+   声明在后覆盖上面那条（同特异性，后者胜）。 */
 .pet-avatar.flashing .pet-motion {
   animation: pet-flash 0.4s ease-out 0s 2;
+}
+.pet-avatar.pet-pack-avatar.flashing .pet-motion {
+  animation: none;
 }
 @keyframes pet-flash {
   0%   { transform: scale(1); }
@@ -831,7 +830,7 @@ html[data-theme="minimal"] .pet-pack-media {
   /* 热区纪律：穿透判定靠 elementFromPoint→closest('.pointer-target')，动效的
      transform 会把渲染像素移出命中盒（happy 上跳 -8px、breathe 横向 +1.4px），
      不禁用命中就把框外穿透区算成 UI 区，鼠标掠过小人上方时穿透反复翻转。
-     关掉后命中只落在 .pet-dot / .avatar 上，区域恒定不随动画呼吸。 */
+     关掉后命中只落在 .avatar 上，区域恒定不随动画呼吸。 */
   pointer-events: none;
 }
 .pet-motion-breathe { animation: pet-motion-breathe 3s ease-in-out infinite; }

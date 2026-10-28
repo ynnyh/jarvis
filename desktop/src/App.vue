@@ -49,6 +49,9 @@ let squishTimer: number | null = null
 const petSizeStyle = computed(() => ({ '--pet-size': `${configStore.config.petSizePx}px` }))
 
 function playSquish() {
+  // 视频/帧动画类宠物（pack）不做 squish：素材自带动作反馈，外面再叠压扁形变
+  // 读起来像「顿一下」（2026-10-28 用户实测否掉）；squish 留给无自动反馈的形象
+  if (getPetById(configStore.config.petId).petType === 'pack') return
   // 漫游移动中不启动新 squish（E2：模式照 isDragging 门控——移动窗口上的
   // 形变动画没有锚点，视觉发飘）
   if (petMoving.value) return
@@ -95,8 +98,28 @@ onBeforeUnmount(() => {
 // 体系不动，动态区块直接追加在菜单模板末尾。petAvatarEl 声明在
 // useWindowOrchestration（与 E2 漫游引擎共用同一个组件 ref）。
 const packMenuActions = ref<string[]>([])
+// 两级点播：null = 顶级（分类列表或洗牌平铺），非空 = 已展开某分类的动作列表。
+// 包内任一动作带 category → 走分类模式；全不带 / mascot → 洗牌平铺现状。
+const packMenuCategory = ref<string | null>(null)
+
+const packCategories = computed<string[]>(() => {
+  const pet = getPetById(configStore.config.petId)
+  if (pet.petType !== 'pack') return []
+  const cats: string[] = []
+  for (const a of pet.pack?.clips.actions ?? []) {
+    if (a.category && !cats.includes(a.category)) cats.push(a.category)
+  }
+  return cats
+})
+
+const packCategoryActions = computed(() => {
+  const pet = getPetById(configStore.config.petId)
+  return (pet.petType === 'pack' ? pet.pack?.clips.actions ?? [] : [])
+    .filter(a => a.category === packMenuCategory.value)
+})
 
 function reshufflePackActions() {
+  packMenuCategory.value = null
   const pet = getPetById(configStore.config.petId)
   // mascot 的动作是程序化预设（petManifest 单一来源）；pack 读包清单
   const names = pet.petType === 'pack'
@@ -184,14 +207,43 @@ function menuSummon() {
         <button class="menu-item menu-item-pack-title" @click="playPackAction()">
           <span>▶</span><span>来一个</span>
         </button>
-        <button
-          v-for="name in packMenuActions"
-          :key="name"
-          class="menu-item"
-          @click="playPackAction(name)"
-        >
-          <span>🎬</span><span>{{ name }}</span>
-        </button>
+        <!-- 分类模式（动作带 category）：分类列表 → 该分类动作列表，两级点播 -->
+        <template v-if="packCategories.length">
+          <template v-if="!packMenuCategory">
+            <button
+              v-for="c in packCategories"
+              :key="c"
+              class="menu-item"
+              @click="packMenuCategory = c"
+            >
+              <span>📁</span><span>{{ c }}</span>
+            </button>
+          </template>
+          <template v-else>
+            <button class="menu-item menu-item-pack-title" @click="packMenuCategory = null">
+              <span>↩</span><span>{{ packMenuCategory }}</span>
+            </button>
+            <button
+              v-for="a in packCategoryActions"
+              :key="a.name"
+              class="menu-item"
+              @click="playPackAction(a.name)"
+            >
+              <span>🎬</span><span>{{ a.name }}</span>
+            </button>
+          </template>
+        </template>
+        <!-- 洗牌平铺（无分类数据 / mascot 现状） -->
+        <template v-else>
+          <button
+            v-for="name in packMenuActions"
+            :key="name"
+            class="menu-item"
+            @click="playPackAction(name)"
+          >
+            <span>🎬</span><span>{{ name }}</span>
+          </button>
+        </template>
       </template>
     </div>
 
