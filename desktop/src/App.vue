@@ -21,7 +21,7 @@ const {
   configStore, store, hearts, isDragging,
   // 漫游引擎（E2）：petAvatarEl 在 orchestration 声明（点播菜单与漫游共用），
   // 模板 ref="petAvatarEl" 绑定到这里
-  petAvatarEl, petMoving, notifyPetInteraction, playRandomClick,
+  petAvatarEl, petMoving, notifyPetInteraction,
   toggleMenu, menuShowAlerts, menuShowRisk, menuShowReview, menuOpenTodayPlan,
   menuOpenCost, menuOpenChat, menuOpenPetChat, closePetChat,
   menuShowSettings, menuCheckUpdate, menuQuit,
@@ -49,9 +49,6 @@ let squishTimer: number | null = null
 const petSizeStyle = computed(() => ({ '--pet-size': `${configStore.config.petSizePx}px` }))
 
 function playSquish() {
-  // 点击回应池（pack.clips.clicks 声明时）：squish 照常叠加，回应动画由池内
-  // 加权抽取（自身带「片段在播不抢」门控；拖拽路径的 held 会按优先级打断它）
-  void playRandomClick()
   // 漫游移动中不启动新 squish（E2：模式照 isDragging 门控——移动窗口上的
   // 形变动画没有锚点，视觉发飘）
   if (petMoving.value) return

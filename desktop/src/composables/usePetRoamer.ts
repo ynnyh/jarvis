@@ -80,10 +80,11 @@ export interface UsePetRoamerOptions {
 /** 决策间隔：15-40s 随机 */
 const DECIDE_MIN_MS = 15000
 const DECIDE_MAX_MS = 40000
-// 动画链节拍：链激活时一次性片段播完 → 短暂停顿接续下一段（对齐 dsh-pet 的
-// 「首尾相接小剧场」）；链未激活的包维持 15-40s 低频决策不变
-const CHAIN_TICK_MIN_MS = 2200
-const CHAIN_TICK_MAX_MS = 5200
+// 动画链节拍：链激活时一次性片段播完 → 停顿接续下一段。节拍要「缓」：
+// 用户实测 2.2~5.2s 太闹（胖鱼几乎不停在动），5~10s 的呼吸间隔才从容；
+// 链未激活的包维持 15-40s 低频决策不变
+const CHAIN_TICK_MIN_MS = 4500
+const CHAIN_TICK_MAX_MS = 10000
 /** 走路速度 ~60px/s（逻辑像素），PRD 可配常量 */
 const WALK_SPEED_PX_S = 60
 /** 单次走路距离：100~400px */

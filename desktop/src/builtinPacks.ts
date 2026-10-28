@@ -17,7 +17,7 @@ import { DA_FEI_YU_PACK_ID } from './petManifest'
 // ============================================================================
 
 /** 内置包素材集版本：素材增删或替换时 +1，老用户重启即自动重装 */
-export const BUILTIN_PACK_VERSION = 9
+export const BUILTIN_PACK_VERSION = 10
 
 const assetUrls = import.meta.glob<string>(
   './assets/packs/dafeiyu/*.webp',
@@ -40,7 +40,7 @@ export const DA_FEI_YU_PACK: PetPack = {
   scale: 3,
   facing: 'right',
   // 动画链：待机呼吸/东张西望/小动作/走路 按权重首尾相接，不再长呆滞
-  chain: { idlePool: ['东张西望'], idleWeight: 55, actionsWeight: 35, walkWeight: 10 },
+  chain: { idlePool: ['东张西望'], idleWeight: 70, actionsWeight: 20, walkWeight: 10 },
   clips: {
     idle: { file: '待机呼吸休闲.webp', type: 'webp' },
     walk: { file: '螃蟹走路.webp', type: 'webp' },
@@ -54,14 +54,6 @@ export const DA_FEI_YU_PACK: PetPack = {
       { name: '原地踱步张望', file: '工作状态-原地踱步张望.webp', type: 'webp', durationMs: 10040 },
       { name: '雀跃庆祝', file: '工作状态-雀跃庆祝.webp', type: 'webp', durationMs: 10040 },
       { name: '垂头叹气冒汗', file: '工作状态-垂头叹气冒汗.webp', type: 'webp', durationMs: 4920 },
-    ],
-    // 点击回应池（点按宠物时随机抽 1，档内不连播）
-    clicks: [
-      { name: '开心跃动', file: '点击回应-开心跃动.webp', type: 'webp', durationMs: 10040, weight: 2 },
-      { name: '害羞惊讶', file: '点击回应-害羞惊讶.webp', type: 'webp', durationMs: 10040, weight: 2 },
-      { name: '傲娇生气', file: '点击回应-傲娇生气.webp', type: 'webp', durationMs: 10040, weight: 2 },
-      { name: '挠痒咯咯笑', file: '点击回应-挠痒咯咯笑.webp', type: 'webp', durationMs: 10040, weight: 2 },
-      { name: '元气挥手', file: '点击回应-元气挥手.webp', type: 'webp', durationMs: 10040, weight: 2 },
     ],
     actions: [
       // 转向 / 移动（原 turn / moves 池）。东张西望同时在 chain.idlePool 里
