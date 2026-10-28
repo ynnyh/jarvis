@@ -80,6 +80,10 @@ export interface UsePetRoamerOptions {
 /** 决策间隔：15-40s 随机 */
 const DECIDE_MIN_MS = 15000
 const DECIDE_MAX_MS = 40000
+// 动画链节拍：链激活时一次性片段播完 → 短暂停顿接续下一段（对齐 dsh-pet 的
+// 「首尾相接小剧场」）；链未激活的包维持 15-40s 低频决策不变
+const CHAIN_TICK_MIN_MS = 2200
+const CHAIN_TICK_MAX_MS = 5200
 /** 走路速度 ~60px/s（逻辑像素），PRD 可配常量 */
 const WALK_SPEED_PX_S = 60
 /** 单次走路距离：100~400px */
@@ -157,6 +161,9 @@ export function usePetRoamer(options: UsePetRoamerOptions) {
 
   let decideTimer: number | null = null
   let sleepTimer: number | null = null
+  // 动画链状态：上一个播过的片段名（链与点击回应各自防连播）
+  let lastChainName: string | null = null
+  let lastClickName: string | null = null
 
   interface WalkSession {
     timer: number | null
@@ -174,6 +181,85 @@ export function usePetRoamer(options: UsePetRoamerOptions) {
     if (!active.value) return
     clearDecideTimer()
     decideTimer = window.setTimeout(decide, delayMs)
+  }
+
+  // ===== 动画链（pack.chain 声明时激活；一次性片段播完短节拍接续）=====
+
+  function chainConfig() {
+    return currentPack()?.chain ?? null
+  }
+
+  function scheduleChainTick(delayMs = CHAIN_TICK_MIN_MS + Math.random() * (CHAIN_TICK_MAX_MS - CHAIN_TICK_MIN_MS)) {
+    if (!active.value) return
+    clearDecideTimer()
+    decideTimer = window.setTimeout(decide, delayMs)
+  }
+
+  /** 加权随机抽一个动作名（avoidRepeat 非空且池子 >1 时排除之），无可选返回 null */
+  function pickWeightedAction(
+    actions: { name: string; weight?: number }[],
+    avoidRepeat: string | null,
+  ): string | null {
+    const weightOf = (w?: number) => Math.max(0, w ?? 1)
+    const pool = avoidRepeat && actions.length > 1
+      ? actions.filter(a => a.name !== avoidRepeat)
+      : actions
+    const total = pool.reduce((sum, a) => sum + weightOf(a.weight), 0)
+    if (total <= 0) return null
+    let roll = Math.random() * total
+    for (const action of pool) {
+      roll -= weightOf(action.weight)
+      if (roll < 0) return action.name
+    }
+    return pool[pool.length - 1]?.name ?? null
+  }
+
+  /** 链节拍：待机段（idlePool 轮换一次性片段）/ 动作段（加权随机）/ 走路段。
+   *  从 decide() 的高优打断守卫后进来，这里不再重复判拖拽/气泡等。 */
+  function chainTick(avatar: PetAvatarApi) {
+    const chain = chainConfig()
+    if (!chain) { scheduleDecision(); return }
+    const idleW = Math.max(0, chain.idleWeight ?? 60)
+    const actW = Math.max(0, chain.actionsWeight ?? 30)
+    const walkW = Math.max(0, chain.walkWeight ?? 10)
+    const total = idleW + actW + walkW
+    if (total <= 0) { scheduleChainTick(); return }
+    let roll = Math.random() * total
+    // —— 待机段：idlePool 挑一次性小动作轮换（排除上一段防连播），播完接续 ——
+    roll -= idleW
+    if (roll < 0) {
+      const avail = (chain.idlePool ?? []).filter(n => avatar.hasClip(n))
+      const name = pickWeightedAction(avail.map(n => ({ name: n })), lastChainName)
+      if (!name) { scheduleChainTick(); return }
+      lastChainName = name
+      void avatar.playClip(name).then(() => scheduleChainTick())
+      return
+    }
+    // —— 动作段：加权随机（不与上一段连播）——
+    roll -= actW
+    if (roll < 0) {
+      const name = pickWeightedAction(currentPack()?.clips.actions ?? [], lastChainName)
+      if (!name) { scheduleChainTick(); return }
+      lastChainName = name
+      void avatar.playClip(name).then(() => scheduleChainTick())
+      return
+    }
+    // —— 走路段：路径规划与安全边界全在 startWalk，走完短节拍接续 ——
+    void startWalk().then(() => scheduleChainTick())
+  }
+
+  /** 点击回应池：点按宠物时随机抽 1 播（档内不连播）；无池/片段在播返回 false。
+   *  拖拽/走路中 currentClip 非 null 自然挡掉，不抢在播片段。 */
+  function playRandomClick(): boolean {
+    const clicks = currentPack()?.clips.clicks ?? []
+    if (clicks.length === 0) return false
+    const avatar = petAvatar.value
+    if (!avatar || avatar.currentClip !== null) return false
+    const name = pickWeightedAction(clicks, lastClickName)
+    if (!name) return false
+    lastClickName = name
+    void avatar.playClip(name)
+    return true
   }
 
   /** 立即收掉「我们自己播的」某个 clip；用户点播中的片段不碰 */
@@ -308,23 +394,15 @@ export function usePetRoamer(options: UsePetRoamerOptions) {
 
   // ===== 小动作（weight 加权随机）=====
 
-  /** 播一个加权随机小动作；播完自动回 idle 后续排决策。没有可用动作返回 false。 */
+  /** 播一个加权随机小动作（链未激活的 legacy 路径）；播完回 idle 续排决策。 */
   function playRandomAction(avatar: PetAvatarApi): boolean {
     const actions = currentPack()?.clips.actions ?? []
-    if (actions.length === 0) return false
-    const weightOf = (w?: number) => Math.max(0, w ?? 1)
-    const total = actions.reduce((sum, a) => sum + weightOf(a.weight), 0)
-    if (total <= 0) return false
-    let roll = Math.random() * total
-    for (const action of actions) {
-      roll -= weightOf(action.weight)
-      if (roll < 0) {
-        // 包一层箭头：scheduleDecision 的可选参数不能直接当 promise 回调（TS 签名不合）
-        void avatar.playClip(action.name).then(() => scheduleDecision())
-        return true
-      }
-    }
-    return false
+    const name = pickWeightedAction(actions, lastChainName)
+    if (!name) return false
+    lastChainName = name
+    // 包一层箭头：scheduleDecision 的可选参数不能直接当 promise 回调（TS 签名不合）
+    void avatar.playClip(name).then(() => scheduleDecision())
+    return true
   }
 
   // ===== 决策循环 =====
@@ -349,6 +427,11 @@ export function usePetRoamer(options: UsePetRoamerOptions) {
     // 用户点播片段在播（「来一个」菜单）：不抢，重排
     if (!avatar || avatar.currentClip !== null) {
       scheduleDecision()
+      return
+    }
+    // 动画链激活（pack.chain 声明）：链节拍接管待机编排，低频决策退位
+    if (chainConfig()) {
+      chainTick(avatar)
       return
     }
     const roll = Math.random()
@@ -525,5 +608,7 @@ export function usePetRoamer(options: UsePetRoamerOptions) {
   return {
     isMoving,
     notifyInteraction,
+    /** 点击回应池：点按宠物时随机播一条回应动画（无池/在播中返回 false） */
+    playRandomClick,
   }
 }

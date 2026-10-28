@@ -26,6 +26,17 @@ export interface PetPackAction extends PetPackClip {
   weight?: number
 }
 
+/** 动画链（v3，对齐 dsh-pet）：一次性动作播完后按权重接续下一段，待机/小动作
+ *  首尾相接不再长呆滞。idlePool 是进入待机轮换的一次性动画名（须在 actions 里
+ *  声明）；三权重缺省 60/30/10，和为 0 时链不运转。缺省整个字段 = 现状行为。 */
+export interface PetPackChain {
+  idlePool?: string[]
+  idleWeight?: number
+  actionsWeight?: number
+  /** 链上发起一次漫游走路的权重（走路仍由 roamer 规划路径与安全边界） */
+  walkWeight?: number
+}
+
 export interface PetPackClips {
   /** 唯一必填片段 */
   idle: PetPackClip
@@ -33,6 +44,8 @@ export interface PetPackClips {
   held?: PetPackClip
   sleep?: PetPackClip
   actions?: PetPackAction[]
+  /** 点击回应池：点按宠物时随机抽 1 播（档内不连播同一段）；缺省无回应动画 */
+  clicks?: PetPackAction[]
 }
 
 export interface PetPack {
@@ -42,6 +55,8 @@ export interface PetPack {
   scale?: number
   facing: PetPackFacing
   clips: PetPackClips
+  /** 动画链配置，缺省 = 现状行为（roamer 低频决策） */
+  chain?: PetPackChain
 }
 
 /** 上传素材：原文件名（basename）+ base64 内容 */
@@ -62,6 +77,8 @@ export async function petPackSave(pack: {
   files: PetPackFileIn[]
   /** 整体缩放倍率，缺省 1.0 */
   scale?: number
+  /** 动画链配置（v3），缺省不写 */
+  chain?: PetPackChain
 }): Promise<void> {
   return invoke('pet_pack_save', {
     id: pack.id,
@@ -70,6 +87,7 @@ export async function petPackSave(pack: {
     clips: pack.clips,
     files: pack.files,
     scale: pack.scale,
+    chain: pack.chain,
   })
 }
 

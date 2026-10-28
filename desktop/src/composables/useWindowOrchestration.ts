@@ -357,7 +357,7 @@ export function useWindowOrchestration() {
   // ===== E2 漫游行为引擎 =====
   // 依赖齐全后挂接（isDragging/hasAlert/dockEdge 都在上方）。引擎自带总闸
   // （config loaded + petRoaming + pack 宠物），非 pack 宠物 / 关开关时零行为。
-  const { isMoving: petMoving, notifyInteraction: notifyPetInteraction } = usePetRoamer({
+  const { isMoving: petMoving, notifyInteraction: notifyPetInteraction, playRandomClick } = usePetRoamer({
     petAvatar: petAvatarEl,
     isDragging,
     hasAlert,
@@ -917,7 +917,7 @@ export function useWindowOrchestration() {
     configStore, store, hearts, isDragging,
     // 漫游引擎（E2）：petAvatarEl 由 App.vue 模板绑定；isMoving 给 squish/fidget
     // 门控（模式照 isDragging）；notifyInteraction 点击小人时唤醒睡觉
-    petAvatarEl, petMoving, notifyPetInteraction,
+    petAvatarEl, petMoving, notifyPetInteraction, playRandomClick,
     toggleMenu, menuShowAlerts, menuShowRisk, menuShowReview, menuOpenTodayPlan,
     menuOpenCost, menuOpenChat, menuOpenPetChat, closePetChat,
     menuShowSettings, menuCheckUpdate, menuQuit,

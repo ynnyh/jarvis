@@ -17,7 +17,7 @@ import { DA_FEI_YU_PACK_ID } from './petManifest'
 // ============================================================================
 
 /** 内置包素材集版本：素材增删或替换时 +1，老用户重启即自动重装 */
-export const BUILTIN_PACK_VERSION = 3
+export const BUILTIN_PACK_VERSION = 6
 
 const assetUrls = import.meta.glob<string>(
   './assets/packs/dafeiyu/*.webm',
@@ -39,19 +39,24 @@ export const DA_FEI_YU_PACK: PetPack = {
   // 且画幅边界离角色更远（特效被画幅边切的观感更轻）
   scale: 3,
   facing: 'right',
+  // 动画链：待机呼吸/东张西望/小动作/走路 按权重首尾相接，不再长呆滞
+  chain: { idlePool: ['东张西望'], idleWeight: 55, actionsWeight: 35, walkWeight: 10 },
   clips: {
     idle: { file: '待机呼吸休闲.webm', type: 'webm' },
     walk: { file: '螃蟹走路.webm', type: 'webm' },
     held: { file: '被鼠标拖拽悬空反馈.webm', type: 'webm' },
     sleep: { file: '原地小憩沉眠.webm', type: 'webm' },
-    actions: [
-      // 点击回应（原 clicks 池）
+    // 点击回应池（点按宠物时随机抽 1，档内不连播）
+    clicks: [
       { name: '开心跃动', file: '点击回应-开心跃动.webm', type: 'webm', weight: 2 },
       { name: '害羞惊讶', file: '点击回应-害羞惊讶.webm', type: 'webm', weight: 2 },
       { name: '傲娇生气', file: '点击回应-傲娇生气.webm', type: 'webm', weight: 2 },
       { name: '挠痒咯咯笑', file: '点击回应-挠痒咯咯笑.webm', type: 'webm', weight: 2 },
       { name: '元气挥手', file: '点击回应-元气挥手.webm', type: 'webm', weight: 2 },
-      // 转向 / 移动（原 turn / moves 池）
+    ],
+    actions: [
+      // 转向 / 移动（原 turn / moves 池）。东张西望同时在 chain.idlePool 里
+      // 轮换（hasClip 只认 actions，链条待机段靠它过门控）
       { name: '东张西望', file: '东张西望.webm', type: 'webm', weight: 2 },
       { name: '原地漂浮踏步', file: '原地漂浮踏步.webm', type: 'webm', weight: 2 },
       { name: '原地左转奔跑', file: '原地左转奔跑.webm', type: 'webm', weight: 2 },
@@ -134,6 +139,7 @@ export async function ensureBuiltinPacks(): Promise<boolean> {
       clips: DA_FEI_YU_PACK.clips,
       files,
       scale: DA_FEI_YU_PACK.scale,
+      chain: DA_FEI_YU_PACK.chain,
     })
     store.config.builtinPacksVersion = BUILTIN_PACK_VERSION
     await store.save()

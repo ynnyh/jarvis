@@ -233,6 +233,8 @@ pub fn pet_pack_save(
     files: Vec<PetPackFileIn>,
     // 整体缩放倍率；缺省 1.0（老前端不传该参数也能存）
     scale: Option<f64>,
+    // 动画链配置（v3）；缺省 null（老前端不传也能存，pack.json 不写该键）
+    chain: Option<serde_json::Value>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     let safe_id = sanitize_pack_id(&id);
@@ -277,13 +279,16 @@ pub fn pet_pack_save(
         std::fs::write(dir.join(file_name), bytes)
             .map_err(|e| format!("写入素材 {} 失败: {}", file_name, e))?;
     }
-    let pack_json = serde_json::json!({
+    let mut pack_json = serde_json::json!({
         "id": safe_id,
         "name": name,
         "scale": scale.unwrap_or(1.0).clamp(0.1, 10.0),
         "facing": facing,
         "clips": clips,
     });
+    if let Some(chain) = chain {
+        pack_json["chain"] = chain;
+    }
     crate::util::write_atomic(
         &dir.join("pack.json"),
         &serde_json::to_string_pretty(&pack_json)
