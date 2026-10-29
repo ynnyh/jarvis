@@ -110,10 +110,10 @@ Rust 端 `daemon_client.rs::resolve_daemon_launch` 自动判断：先找 exe 同
 
 推 tag `vX.Y.Z` 触发 GitHub Actions（`release.yml`）自动**构建**（Windows + macOS universal，先过 quality 质量门）。**只有 tag 触发发版**；push 到 `main` 只跑 CI 质量门（测试 + lint），不发版。
 
-**发布分两段（2026-10-28 改造）**：
+**⚠️ 发布分两段（2026-10-28 改造，唯一官方流程——旧「runner 直接发布」渠道已废弃删除，勿再走/勿加回）**：
 
-1. **Actions 构建**：推 tag 后自动跑，产物以 artifacts 形式挂在 run 上（不再由 runner 直接发布——跨洋上传 Gitee/GitHub Releases 大文件经常超时，v0.12.0 两次 45min 实锤）。
-2. **本地发布**（构建完成后，一条命令双渠道 + OTA）：
+1. **Actions 构建**：推 tag 后自动跑，产物以 artifacts 形式挂在 run 上（`release.yml` 只构建不发布）。
+2. **本地发布**（构建完成后，一条命令双渠道 + OTA，必做——不做这步用户收不到任何更新）：
 
 ```bash
 # 1. 同步版本号（三处一致）：tauri.conf.json / Cargo.toml / package.json
