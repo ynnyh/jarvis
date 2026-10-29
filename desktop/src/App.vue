@@ -723,7 +723,13 @@ html[data-theme="minimal"] .petchat-leave-active { transition: none; }
   border-radius: var(--radius-md); border: var(--menu-border);
   box-shadow: var(--menu-shadow);
   padding: 4px 0; z-index: 100; min-width: 130px;
-  overflow: hidden;
+  /* 四个 anchor 的竖向可用空间恒为 50% + half - 6px（rb/lb 向上生长、rt/lt 向下），
+     再留 6px 呼吸边。大肥鱼分类点播把菜单顶到 16 项（~570px），116px 小人只剩
+     ~502px——不钳高时最顶上的「待办/工时」被窗口上沿静默裁掉（overflow:hidden
+     不可滚动，永远够不着）。钳高 + 滚动兜底，任何宠物/尺寸都够得着全部项。 */
+  max-height: calc(50% + var(--pet-half) - 12px);
+  overflow-y: auto; overflow-x: hidden;
+  scrollbar-width: thin;
 }
 /* 菜单跟随 anchor 翻转：始终在 menu-btn 靠屏幕中心的一侧 */
 .jarvis-container[data-anchor="rt"] .menu { top: calc(50% - var(--pet-half) + 6px); bottom: auto; }
