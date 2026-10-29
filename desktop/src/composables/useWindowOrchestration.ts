@@ -20,6 +20,7 @@ import { useAvatarDock, type AvatarAnchor } from './useAvatarDock'
 import { useAvatarDrag } from './useAvatarDrag'
 import { usePetRoamer, type PetAvatarApi } from './usePetRoamer'
 import { getPetById, loadCustomPets, loadPackPets } from '../petManifest'
+import { deepseekBalance } from '../api/balance'
 import { ensureBuiltinPacks } from '../builtinPacks'
 import { MENU_KEYS, getMenuTheme } from '../menu-themes'
 import { appEvent } from '../api/plugins'
@@ -381,6 +382,43 @@ export function useWindowOrchestration() {
     flashTimer = window.setTimeout(() => { stateFlashing.value = false }, 800)
     playWorkStatusClip()
   })
+
+  // ===== 余额分档动画（pack.clips.balance 声明时，对齐 dsh-pet 六档）=====
+  // 数据源：DeepSeek 账户余额（api/llm 的 deepseek_balance，仅 DeepSeek 官方
+  // 服务商返回数据，其余静默跳过）。每 30 分钟轮询一次，档位变化才播（不打扰），
+  // 同时头顶气泡显示余额。满额基准 ¥20 对齐 dsh-pet 口径。
+  const BALANCE_REFRESH_MS = 30 * 60 * 1000
+  const BALANCE_FULL_BASE_CNY = 20
+  let balanceTimer: number | null = null
+  let lastBalanceTier: number | null = null
+  let balanceInFlight = false
+
+  async function checkBalance() {
+    if (balanceInFlight) return
+    balanceInFlight = true
+    try {
+      const bal = await deepseekBalance()
+      if (!bal) return
+      const pet = getPetById(configStore.config.petId)
+      const tiers = pet.petType === 'pack' ? pet.pack?.clips.balance : null
+      if (!tiers || tiers.length === 0) return
+      const usedPct = bal.balance >= BALANCE_FULL_BASE_CNY
+        ? 0
+        : Math.min(100, (1 - bal.balance / BALANCE_FULL_BASE_CNY) * 100)
+      const tier = usedPct >= 100 ? 5 : Math.floor(usedPct / 20)
+      if (tier === lastBalanceTier) return // 档位未变不重复打扰
+      lastBalanceTier = tier
+      const pick = tiers[Math.min(tier, tiers.length - 1)]
+      const avatar = petAvatarEl.value
+      if (!avatar || isDragging.value || agentRunActive.value || avatar.currentClip !== null) return
+      void avatar.playClip(pick.name, { loop: false })
+      showAlert(`余额 ¥${bal.balance.toFixed(2)}`, '💰', 'idle', 10000)
+    } catch {
+      // 查询失败静默跳过（下个周期再试）
+    } finally {
+      balanceInFlight = false
+    }
+  }
 
   // ===== 工作状态档位动画（pack.clips.workStatus 声明时，对齐 dsh-pet 六档）=====
   // 状态映射：thinking→0(循环) / working→1(循环) / happy→4(雀跃庆祝，播一遍)；
@@ -780,6 +818,10 @@ export function useWindowOrchestration() {
       console.error('内置宠物包安装失败:', e)
     }
 
+    // 余额分档：启动立即查一次（建基线并触发档位动画），之后每 30 分钟轮询
+    void checkBalance()
+    balanceTimer = window.setInterval(checkBalance, BALANCE_REFRESH_MS)
+
     // 加载完自定义宠物后，验证当前 petId 是否有效，无效则回退到默认
     const { getPetById } = await import('../petManifest')
     const currentPet = getPetById(configStore.config.petId)
@@ -928,6 +970,7 @@ export function useWindowOrchestration() {
   }
 
   onUnmounted(() => {
+    if (balanceTimer !== null) { clearInterval(balanceTimer); balanceTimer = null }
     if (alertTimer) clearTimeout(alertTimer)
     if (greetingTimer) clearTimeout(greetingTimer)
     if (patHappyTimer) clearTimeout(patHappyTimer)

@@ -17,7 +17,7 @@ import { DA_FEI_YU_PACK_ID } from './petManifest'
 // ============================================================================
 
 /** 内置包素材集版本：素材增删或替换时 +1，老用户重启即自动重装 */
-export const BUILTIN_PACK_VERSION = 12
+export const BUILTIN_PACK_VERSION = 14
 
 const assetUrls = import.meta.glob<string>(
   './assets/packs/dafeiyu/*.webp',
@@ -57,6 +57,15 @@ export const DA_FEI_YU_PACK: PetPack = {
       { name: '原地踱步张望', file: '工作状态-原地踱步张望.webp', type: 'webp', durationMs: 10040 },
       { name: '雀跃庆祝', file: '工作状态-雀跃庆祝.webp', type: 'webp', durationMs: 10040 },
       { name: '垂头叹气冒汗', file: '工作状态-垂头叹气冒汗.webp', type: 'webp', durationMs: 4920 },
+    ],
+    // 余额分档（dsh-pet 六档口径，按已用百分比分档触发，满额基准 ¥20 可调）
+    balance: [
+      { name: '钱袋满溢', file: '余额-钱袋满溢.webp', type: 'webp', durationMs: 10040, weight: 1 },
+      { name: '金袋叮当', file: '余额-金袋叮当.webp', type: 'webp', durationMs: 10040, weight: 1 },
+      { name: '钱袋如常', file: '余额-钱袋如常.webp', type: 'webp', durationMs: 10040, weight: 1 },
+      { name: '数金皱眉', file: '余额-数金皱眉.webp', type: 'webp', durationMs: 10040, weight: 1 },
+      { name: '袋空如洗', file: '余额-袋空如洗.webp', type: 'webp', durationMs: 10040, weight: 1 },
+      { name: '分文不剩', file: '余额-分文不剩.webp', type: 'webp', durationMs: 10040, weight: 1 },
     ],
     actions: [
       // 转向 / 移动（原 turn / moves 池）。东张西望同时在 chain.idlePool 里
@@ -107,6 +116,7 @@ const DA_FEI_YU_FILES: string[] = [
   ...(DA_FEI_YU_PACK.clips.actions ?? []).map(a => a.file),
   ...(DA_FEI_YU_PACK.clips.clicks ?? []).map(a => a.file),
   ...(DA_FEI_YU_PACK.clips.workStatus ?? []).map(a => a.file),
+  ...(DA_FEI_YU_PACK.clips.balance ?? []).map(a => a.file),
 ].filter((f): f is string => !!f)
 
 function blobToDataUrl(blob: Blob): Promise<string> {

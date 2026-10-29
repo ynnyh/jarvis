@@ -58,6 +58,10 @@ export interface PetPackClips {
    *  本应用状态机目前映射 thinking→0 / working→1 / happy→4，其余状态不接管。
    *  缺省无该字段 = 维持 stateMap 现状（色变表达）。 */
   workStatus?: PetPackAction[]
+  /** 余额分档动画（对齐 dsh-pet 六档，按已用百分比分档：
+   *  index = p>=100 ? 5 : floor(p/20)，p = 1-余额/满额基准）。
+   *  缺省无该字段 = 不参与余额轮询。 */
+  balance?: PetPackAction[]
 }
 
 export interface PetPack {

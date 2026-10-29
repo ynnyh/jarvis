@@ -2,7 +2,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount, shallowRef, type CSSProperties } from 'vue'
 import lottie, { type AnimationItem } from 'lottie-web'
 import { getPetById, getPackClipSrc, MASCOT_ACTION_CLIPS } from '../petManifest'
-import type { PetPackAction, PetPackClip } from '../api/petPack'
+import type { PetPack, PetPackAction, PetPackClip } from '../api/petPack'
 import type { RigDoc } from '../petRig/types'
 import PetRig from './PetRig.vue'
 
@@ -73,11 +73,21 @@ watch(pack, (p) => {
 })
 
 /** 片段名 → 片段定义（idle / walk / held / sleep 直查，其余查 actions） */
+/** 片段名检索覆盖全部池：点播 + 点击回应 + 工作状态 + 余额档位
+ *  （后三者的片段不在 actions 里，hasClip/playClip 必须能找到它们） */
+function findInPools(clips: NonNullable<PetPack['clips']>, name: string): PetPackClip | PetPackAction | null {
+  for (const pool of [clips.actions, clips.clicks, clips.workStatus, clips.balance]) {
+    const hit = pool?.find(a => a.name === name)
+    if (hit) return hit
+  }
+  return null
+}
+
 function resolveClip(name: string): PetPackClip | PetPackAction | null {
   const clips = pack.value?.clips
   if (!clips) return null
   if (name === 'walk' || name === 'held' || name === 'sleep') return clips[name] ?? null
-  const action = clips.actions?.find(a => a.name === name)
+  const action = findInPools(clips, name)
   if (action) return action
   if (name === 'idle') return clips.idle ?? null
   return null
@@ -93,7 +103,7 @@ function hasClip(name: string): boolean {
   if (!clips) return false
   if (name === 'idle') return !!clips.idle
   if (name === 'walk' || name === 'held' || name === 'sleep') return !!clips[name]
-  return (clips.actions ?? []).some(a => a.name === name)
+  return !!findInPools(clips, name)
 }
 
 /** E2 漫游引擎用：按行进方向翻转素材（素材层 pointer-events:none，命中盒不动） */

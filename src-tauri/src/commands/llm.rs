@@ -405,3 +405,53 @@ pub async fn cc_switch_import_provider(provider_id: String) -> Result<serde_json
     let result = crate::tools::cc_switch_import::import_cc_switch_provider_by_id(&provider_id).await?;
     serde_json::to_value(&result).map_err(|e| e.to_string())
 }
+
+// ===== DeepSeek 账户余额（桌宠余额分档动画的数据源）=====
+
+#[derive(serde::Serialize)]
+pub struct DeepseekBalance {
+    pub balance: f64,
+    pub currency: String,
+}
+
+/// 查询 DeepSeek 账户余额。仅当当前 LLM 凭证指向 DeepSeek 官方（baseUrl 含
+/// api.deepseek.com）且配有 apiKey 时返回 Some；其余情况（其他服务商 / 未配
+/// key）返回 Ok(None)，前端静默跳过。查询失败返回 Err，前端同样静默跳过。
+#[tauri::command]
+pub async fn deepseek_balance() -> Result<Option<DeepseekBalance>, String> {
+    let cred = crate::settings::get_llm_credentials();
+    if !cred.base_url.contains("api.deepseek.com") || cred.api_key.trim().is_empty() {
+        return Ok(None);
+    }
+    let url = format!("{}/user/balance", cred.base_url.trim_end_matches('/'));
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(url)
+        .bearer_auth(cred.api_key.trim())
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| format!("余额查询请求失败: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("余额查询失败: HTTP {}", resp.status()));
+    }
+    let v: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("余额响应解析失败: {e}"))?;
+    let info = v
+        .get("balance_infos")
+        .and_then(|x| x.get(0))
+        .ok_or("余额响应缺 balance_infos")?;
+    let balance = info
+        .get("total_balance")
+        .and_then(|x| x.as_str())
+        .and_then(|s| s.parse::<f64>().ok())
+        .ok_or("total_balance 解析失败")?;
+    let currency = info
+        .get("currency")
+        .and_then(|x| x.as_str())
+        .unwrap_or("CNY")
+        .to_string();
+    Ok(Some(DeepseekBalance { balance, currency }))
+}
