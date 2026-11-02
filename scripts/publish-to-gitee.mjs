@@ -28,6 +28,7 @@
 
 import fs from 'node:fs/promises'
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Agent, setGlobalDispatcher } from 'undici'
@@ -472,24 +473,21 @@ async function createOrFindGitHubRelease() {
 }
 
 async function uploadToGitHub(filePath, name, ghRelease) {
-  const data = await fs.readFile(filePath)
-  const fileSizeMB = data.length / (1024 * 1024)
-  const uploadUrl = ghRelease.upload_url.replace(/\{.*\}/, '')
-  const r = await fetch(`${uploadUrl}?name=${name}`, {
-    method: 'POST',
-    headers: {
-      Authorization: `token ${GITHUB_TOKEN}`,
-      'User-Agent': 'jarvis-ci',
-      'Content-Type': 'application/octet-stream',
-      'Content-Length': String(data.length),
-    },
-    body: data,
+  const fileSizeMB = (await fs.stat(filePath)).size / (1024 * 1024)
+  const tag = ghRelease.tag_name
+  // 为什么走 gh CLI 而不是 Node fetch 直传：本机网络下大文件 fetch 直传稳定
+  // 复现 fetch failed（v0.13.1/v0.13.2 连续实锤，234MB 起步的产物集），gh 有
+  // 自己的重试与鉴权栈，手动补传屡次成功——把上传整段交给 gh。--clobber 幂等。
+  const r = spawnSync('gh', ['release', 'upload', tag, filePath, '--repo', GITHUB_REPO, '--clobber'], {
+    encoding: 'utf8',
   })
-  if (!r.ok) throw new Error(`GitHub 上传 ${name} 失败：${r.status} ${await r.text()}`)
-  const j = await r.json()
+  if (r.status !== 0 || r.error) {
+    throw new Error(`GitHub 上传 ${name} 失败：${(r.stderr || r.stdout || String(r.error)).slice(0, 300)}`)
+  }
+  const url = `https://github.com/${GITHUB_REPO}/releases/download/${tag}/${encodeURIComponent(name)}`
   console.log(`  ✓ GitHub ${name} (${fileSizeMB.toFixed(1)}MB)`)
-  ghUrlByName[name] = j.browser_download_url
-  return j.browser_download_url
+  ghUrlByName[name] = url
+  return url
 }
 
 let githubSucceeded = false
@@ -521,6 +519,9 @@ if (GITHUB_TOKEN && GITHUB_REPO) {
 // --- 4b. 上传到 Gitee Release ---
 // latest.json 的下载 URL 优先指向 Gitee（国内用户可达）。
 // 如果 Gitee 上传失败但 GitHub 成功，用 GitHub URL 回退。
+// Gitee 单文件附件上限 100MB（2026-11-02 v0.13.2 实锤 400）：超限文件直接跳过
+// Gitee，OTA 地址提前落到 GitHub——素材变大后 macOS tar.gz/dmg 常态超限。
+const GITEE_FILE_LIMIT_MB = 100
 const platformEntries = {}
 const uploadQueue = []
 
@@ -544,18 +545,33 @@ for (const p of platforms) {
     optional: false,
     onComplete: () => {},
   })
-  uploadQueue.push({
-    filePath: p.updaterPath,
-    name: p.updaterName,
-    priority: 2,
-    optional: false,
-    onComplete: (url) => {
-      for (const platformId of platformIds) {
-        platformEntries[platformId].url = url
-      }
-    },
-  })
+  const updaterSizeMB = statSync(p.updaterPath).size / (1024 * 1024)
+  const ghUpdaterUrl = ghUrlByName[p.updaterName]
+  if (updaterSizeMB > GITEE_FILE_LIMIT_MB) {
+    console.log(`  ⚠ ${p.updaterName} ${updaterSizeMB.toFixed(1)}MB 超 Gitee 单文件 ${GITEE_FILE_LIMIT_MB}MB 上限，跳过 Gitee（OTA 回退 GitHub）`)
+    if (ghUpdaterUrl) {
+      for (const platformId of platformIds) platformEntries[platformId].url = ghUpdaterUrl
+    } else {
+      console.warn(`  ⚠ GitHub 也没有 ${p.updaterName}，该平台 OTA 将缺地址！`)
+    }
+  } else {
+    uploadQueue.push({
+      filePath: p.updaterPath,
+      name: p.updaterName,
+      priority: 2,
+      optional: false,
+      onComplete: (url) => {
+        for (const platformId of platformIds) {
+          platformEntries[platformId].url = url
+        }
+      },
+    })
+  }
   for (const ex of p.extras) {
+    if (statSync(ex.path).size / (1024 * 1024) > GITEE_FILE_LIMIT_MB) {
+      console.log(`  ⚠ ${ex.name} 超 Gitee 单文件 ${GITEE_FILE_LIMIT_MB}MB 上限，跳过 Gitee（仅 GitHub 提供）`)
+      continue
+    }
     uploadQueue.push({
       filePath: ex.path,
       name: ex.name,
@@ -630,6 +646,11 @@ try {
 }
 
 // --- 5. 写 latest.json ---
+for (const [pid, e] of Object.entries(platformEntries)) {
+  if (!e.url) {
+    console.error(`❌ 平台 ${pid} 没有 OTA 下载地址（Gitee 与 GitHub 都缺）——该平台更新不可用！`)
+  }
+}
 const latest = {
   version,
   notes: releaseNotes || process.env.RELEASE_NOTES || `Jarvis ${tag}`,
