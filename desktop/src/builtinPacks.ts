@@ -17,7 +17,7 @@ import { DA_FEI_YU_PACK_ID } from './petManifest'
 // ============================================================================
 
 /** 内置包素材集版本：素材增删或替换时 +1，老用户重启即自动重装 */
-export const BUILTIN_PACK_VERSION = 14
+export const BUILTIN_PACK_VERSION = 15
 
 const assetUrls = import.meta.glob<string>(
   './assets/packs/dafeiyu/*.webp',
