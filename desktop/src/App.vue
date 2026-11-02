@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onBeforeUnmount, nextTick, reactive } from 'vue'
 import { useWindowOrchestration } from './composables/useWindowOrchestration'
 import TaskWindow from './components/TaskWindow.vue'
 import SettingsWindow from './components/SettingsWindow.vue'
@@ -135,7 +135,24 @@ function reshufflePackActions() {
 
 watch(showMenu, (open) => {
   if (open) reshufflePackActions()
+  if (open) nextTick(updateMenuFade)
 })
+
+// ===== 菜单滚动渐隐（v0.13.1 钳高后菜单可滚动）：内容被钳高裁进滚动区时，
+// 顶/底边缘用菜单底色淡出，提示「这个方向还有更多」。显隐随滚动实时量。=====
+const menuEl = ref<HTMLElement | null>(null)
+const menuFade = reactive({ top: false, bottom: false })
+
+function updateMenuFade() {
+  const el = menuEl.value
+  if (!el) return
+  // 4px 容差：吸边即视为到头，避免残留 1px 渐隐
+  menuFade.top = el.scrollTop > 4
+  menuFade.bottom = el.scrollTop + el.clientHeight < el.scrollHeight - 4
+}
+
+// 分类 ⇄ 动作列表切换会改变内容高度，等 DOM 更新后重量
+watch(packMenuCategory, () => nextTick(updateMenuFade))
 
 /** name 缺省 = 「来一个」随机播一个 */
 function playPackAction(name?: string) {
@@ -157,7 +174,9 @@ function menuSummon() {
   <div class="jarvis-container" :data-anchor="avatarAnchor" :style="petSizeStyle" @contextmenu.prevent="toggleMenu">
     <!-- 菜单打开时铺满窗口的透明遮罩，点击任意位置关闭菜单 -->
     <div v-if="showMenu" class="menu-backdrop pointer-target" @click="showMenu = false" @contextmenu.prevent="showMenu = false" />
-    <div v-if="showMenu" class="menu pointer-target">
+    <div v-if="showMenu" ref="menuEl" class="menu pointer-target" @scroll.passive="updateMenuFade">
+      <!-- 滚动渐隐提示：内容超出钳高时贴边淡出（sticky 负 margin 不占布局空间） -->
+      <div v-if="menuFade.top" class="menu-fade menu-fade-top" aria-hidden="true" />
       <!-- 日常组 -->
       <button class="menu-item" @click="menuShowAlerts">
         <span>{{ dailyMenuItems[0].emoji }}</span><span>{{ dailyMenuItems[0].label }}</span>
@@ -245,6 +264,7 @@ function menuSummon() {
           </button>
         </template>
       </template>
+      <div v-if="menuFade.bottom" class="menu-fade menu-fade-bottom" aria-hidden="true" />
     </div>
 
     <div class="menu-btn pointer-target" @click="toggleMenu">⋯</div>
@@ -725,11 +745,45 @@ html[data-theme="minimal"] .petchat-leave-active { transition: none; }
   padding: 4px 0; z-index: 100; min-width: 130px;
   /* 四个 anchor 的竖向可用空间恒为 50% + half - 6px（rb/lb 向上生长、rt/lt 向下），
      再留 6px 呼吸边。大肥鱼分类点播把菜单顶到 16 项（~570px），116px 小人只剩
-     ~502px——不钳高时最顶上的「待办/工时」被窗口上沿静默裁掉（overflow:hidden
-     不可滚动，永远够不着）。钳高 + 滚动兜底，任何宠物/尺寸都够得着全部项。 */
+     ~502px——不钳高时最顶上的「待办/工时」被窗口上沿静默裁掉。钳高 + 滚动兜底。 */
   max-height: calc(50% + var(--pet-half) - 12px);
   overflow-y: auto; overflow-x: hidden;
-  scrollbar-width: thin;
+}
+/* 细胶囊滚动条（仅溢出时出现）：不能用 scrollbar-width——Chromium 见到标准
+   属性就切原生渲染、禁用全部 ::-webkit-scrollbar 定制（v0.13.1 灰大条的根因）。
+   颜色跟 --text 走半透明，深色主题是白雾胶囊、浅色主题自动变深，通吃。 */
+.menu::-webkit-scrollbar { width: 6px; }
+.menu::-webkit-scrollbar-track,
+.menu::-webkit-scrollbar-corner { background: transparent; }
+.menu::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.45); /* 老引擎兜底 */
+  background: color-mix(in srgb, var(--text) 26%, transparent);
+  border-radius: 999px;
+}
+.menu::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text) 45%, transparent);
+}
+/* 滚动渐隐提示：元素画一份和菜单一致的 --popup-bg（可能是多层渐变，所以不能当
+   渐变色标用），再用 mask 把自身纵向淡出——内容看起来沉入菜单底色。 */
+.menu-fade {
+  position: sticky;
+  height: 16px;
+  pointer-events: none;
+  z-index: 1;
+}
+.menu-fade-top {
+  top: 0;
+  margin-bottom: -16px; /* 不占布局空间，否则菜单整体被顶高 */
+  background: var(--popup-bg);
+  -webkit-mask-image: linear-gradient(to bottom, #000 20%, transparent);
+  mask-image: linear-gradient(to bottom, #000 20%, transparent);
+}
+.menu-fade-bottom {
+  bottom: 0;
+  margin-top: -16px;
+  background: var(--popup-bg);
+  -webkit-mask-image: linear-gradient(to top, #000 20%, transparent);
+  mask-image: linear-gradient(to top, #000 20%, transparent);
 }
 /* 菜单跟随 anchor 翻转：始终在 menu-btn 靠屏幕中心的一侧 */
 .jarvis-container[data-anchor="rt"] .menu { top: calc(50% - var(--pet-half) + 6px); bottom: auto; }
