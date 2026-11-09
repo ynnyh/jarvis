@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
@@ -58,6 +59,22 @@ pub struct GetCommitsOpts<'a> {
     pub include_stat: bool,
 }
 
+/// dev 合并/搬运到生产分支（cherry-pick、amend 后重落分支）会以不同 sha 产生「同一条工作」
+/// 的重复记录：作者、作者日期、标题完全一致。按该特征去重，保留首条。
+/// 同标题但作者日期不同（如两条都叫"1"的提交）不会被合并。
+fn dedup_same_work(mut commits: Vec<LocalCommit>) -> Vec<LocalCommit> {
+    let mut seen: HashSet<String> = HashSet::new();
+    commits.retain(|c| {
+        seen.insert(format!(
+            "{}\u{1f}{}\u{1f}{}",
+            c.author_email,
+            c.authored_date,
+            c.title.trim()
+        ))
+    });
+    commits
+}
+
 pub async fn get_local_commits(repo: &str, opts: GetCommitsOpts<'_>) -> Result<Vec<LocalCommit>, String> {
     let mut fields = vec!["%H", "%an", "%ae", "%aI", "%cn", "%ce", "%cI", "%s"];
     if opts.include_body { fields.push("%b"); }
@@ -106,6 +123,8 @@ pub async fn get_local_commits(repo: &str, opts: GetCommitsOpts<'_>) -> Result<V
             patterns.iter().any(|p| fields.iter().any(|f| f.to_lowercase().contains(p)))
         });
     }
+
+    let mut commits = dedup_same_work(commits);
 
     if opts.include_stat && !commits.is_empty() {
         let sha_list: Vec<String> = commits.iter().map(|c| c.sha.clone()).collect();
@@ -257,6 +276,9 @@ pub async fn list_my_local_commits(input: ListMyLocalCommitsInput<'_>) -> Result
     for h in handles {
         if let Ok(r) = h.await { if !r.commits.is_empty() { repo_results.push(r); } }
     }
+    // 同一仓库被扫描出两份克隆（如多 rootDir 覆盖）时，同一 sha 只保留一条
+    let mut seen_shas: HashSet<String> = HashSet::new();
+    for r in &mut repo_results { r.commits.retain(|c| seen_shas.insert(c.sha.clone())); }
     for r in &mut repo_results { r.commits.sort_by(|a, b| b.authored_date.cmp(&a.authored_date)); }
     repo_results.sort_by(|a, b| {
         let av = a.commits.first().map(|c| c.authored_date.clone()).unwrap_or_default();
@@ -271,4 +293,51 @@ pub async fn list_my_local_commits(input: ListMyLocalCommitsInput<'_>) -> Result
         authors, root_dirs: input.root_dirs.to_vec(),
         repos: repo_results, total_commits, scanned_repos, repos_with_commits,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn commit(sha: &str, email: &str, date: &str, title: &str) -> LocalCommit {
+        LocalCommit {
+            sha: sha.to_string(),
+            short_sha: sha[..7].to_string(),
+            author_name: "张三".to_string(),
+            author_email: email.to_string(),
+            authored_date: date.to_string(),
+            committer_name: "张三".to_string(),
+            committer_email: email.to_string(),
+            committed_date: date.to_string(),
+            title: title.to_string(),
+            body: None,
+            stat: None,
+        }
+    }
+
+    #[test]
+    fn dedup_collapses_cherry_picked_duplicates() {
+        // dev 上的原始提交 + cherry-pick 到生产分支的副本：sha 不同，作者/作者日期/标题相同
+        let commits = vec![
+            commit("aaaaaaaaaa", "z@x.com", "2026-11-09T10:00:00+08:00", "修复报表查询超时"),
+            commit("bbbbbbbbbb", "z@x.com", "2026-11-09T10:00:00+08:00", "修复报表查询超时"),
+        ];
+        let out = dedup_same_work(commits);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].sha, "aaaaaaaaaa"); // 保留首条
+    }
+
+    #[test]
+    fn dedup_keeps_distinct_work() {
+        let commits = vec![
+            // 同标题但作者日期不同 → 两条独立工作（如两条都叫"1"的提交）
+            commit("aaaaaaaaaa", "z@x.com", "2026-11-09T10:00:00+08:00", "1"),
+            commit("bbbbbbbbbb", "z@x.com", "2026-11-09T11:00:00+08:00", "1"),
+            // 同作者日期但标题不同 → 不合并
+            commit("cccccccccc", "z@x.com", "2026-11-09T10:00:00+08:00", "新增导出功能"),
+            // 不同作者 → 不合并
+            commit("dddddddddd", "l@x.com", "2026-11-09T10:00:00+08:00", "新增导出功能"),
+        ];
+        assert_eq!(dedup_same_work(commits).len(), 4);
+    }
 }

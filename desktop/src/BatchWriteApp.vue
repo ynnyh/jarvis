@@ -5,6 +5,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { cleanCommitTitle } from './composables/cleanCommitTitle'
 import { useConfigStore } from './stores/config'
 import { useTheme } from './composables/useTheme'
+import AutoTextarea from './components/AutoTextarea.vue'
 import MatrixRain from './components/MatrixRain.vue'
 import CyberParticles from './components/CyberParticles.vue'
 const configStore = useConfigStore()
@@ -109,6 +110,15 @@ const dirtyRepos = ref<string[]>([])
 
 // task search for orphan assignment
 const taskSearch = ref<Record<string, string>>({})
+// 工作内容展开状态（展开 = 不限高，完整阅读）
+const expandedKeys = ref<Set<string>>(new Set())
+
+function toggleExpand(key: string) {
+  const next = new Set(expandedKeys.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  expandedKeys.value = next
+}
 
 let cleanupClose: (() => void) | null = null
 
@@ -149,16 +159,50 @@ function clearAssignedTask(entry: WriteEntry) {
   taskSearch.value[entry.key] = ''
 }
 
+// 选中的日期（YYYY-MM-DD）；空串 = 今天。选历史日期时查看并可写入那天的工时
+const selectedDate = ref('')
+
+function localTodayStr(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+// 本地时区偏移后缀（+08:00），保证 git --since/--until 按本地零点切分
+function tzOffsetStr(): string {
+  const off = -new Date().getTimezoneOffset()
+  const sign = off >= 0 ? '+' : '-'
+  const h = String(Math.floor(Math.abs(off) / 60)).padStart(2, '0')
+  const m = String(Math.abs(off) % 60).padStart(2, '0')
+  return `${sign}${h}:${m}`
+}
+
+function nextDayStr(date: string): string {
+  const d = new Date(`${date}T00:00:00`)
+  d.setDate(d.getDate() + 1)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 async function loadData() {
   loading.value = true
   loadError.value = ''
   try {
+    const date = selectedDate.value
+    const isToday = !date || date === localTodayStr()
+    const reviewInput = isToday
+      ? { range: 'today' }
+      : {
+          // 任意日期：显式 since/until 覆盖预设（本地零点切分），date 让日报与写入落到那天
+          since: `${date}T00:00:00${tzOffsetStr()}`,
+          until: `${nextDayStr(date)}T00:00:00${tzOffsetStr()}`,
+          date,
+        }
     const [raw, plan] = await Promise.all([
       invoke<ToolResult<DailyReviewData>>('tool_execute', {
         name: 'get_daily_review',
-        input: { range: 'today' },
+        input: reviewInput,
       }),
-      invoke<TodayPlanData>('today_plan_load').catch(() => null),
+      // 今日计划只对今天有意义；历史日期不加载，避免今天的预估污染历史条目
+      isToday ? invoke<TodayPlanData>('today_plan_load').catch(() => null) : Promise.resolve(null),
     ])
     if (!raw.success || !raw.data) {
       loadError.value = raw.error || 'get_daily_review 返回为空'
@@ -167,6 +211,10 @@ async function loadData() {
     reviewData.value = raw.data
     planData.value = plan
     buildEntries(raw.data, plan)
+    // 切换日期后清掉上一天的临时状态
+    expandedKeys.value = new Set()
+    taskSearch.value = {}
+    shortContentWarning.value = ''
   } catch (error) {
     loadError.value = error instanceof Error ? error.message : String(error)
   } finally {
@@ -392,7 +440,18 @@ onUnmounted(() => {
         <h1>一键写工时</h1>
         <p v-if="reviewData">{{ reviewData.date }} · {{ reviewData.summary.totalCommits }} commits · {{ reviewData.summary.tasksAdvancedCount }} tasks</p>
       </div>
-      <button class="bw-close" :disabled="writing" @click="closeWindow">x</button>
+      <div class="bw-header-tools">
+        <input
+          class="bw-date"
+          type="date"
+          v-model="selectedDate"
+          :max="localTodayStr()"
+          :disabled="writing || loading"
+          title="选择日期，查看并写入那天的工时"
+          @change="loadData()"
+        />
+        <button class="bw-close" :disabled="writing" @click="closeWindow">x</button>
+      </div>
     </header>
 
     <main class="bw-body">
@@ -464,14 +523,20 @@ onUnmounted(() => {
             </div>
 
             <div class="bw-content-row">
-              <textarea
+              <AutoTextarea
+                v-model="entry.workContent"
                 class="bw-content"
-                rows="2"
-                :value="entry.workContent"
-                @input="entry.workContent = ($event.target as HTMLTextAreaElement).value"
+                :class="{ expanded: expandedKeys.has(entry.key) }"
                 :disabled="entry.written || summarizingKeys.has(entry.key)"
+                :expanded="expandedKeys.has(entry.key)"
                 placeholder="工作内容..."
-              ></textarea>
+              />
+              <button
+                class="bw-expand-btn"
+                :disabled="entry.written"
+                :title="expandedKeys.has(entry.key) ? '收起' : '展开查看全部内容'"
+                @click="toggleExpand(entry.key)"
+              >{{ expandedKeys.has(entry.key) ? '收起' : '展开' }}</button>
               <button
                 class="bw-summarize-btn"
                 :disabled="entry.written || summarizingKeys.has(entry.key) || !entry.workContent.trim()"
@@ -528,6 +593,9 @@ onUnmounted(() => {
 .bw-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 22px 14px; background: var(--panel-bg); border-bottom: 1px solid var(--divider); user-select: none; }
 .bw-header h1 { margin: 0; font-size: 19px; font-weight: 700; }
 .bw-header p { margin: 4px 0 0; font-size: 12px; color: var(--text-ghost); }
+.bw-header-tools { display: flex; align-items: center; gap: 10px; }
+.bw-date { padding: 4px 8px; font-size: 12px; color: var(--text); background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 5px; color-scheme: dark; }
+.bw-date:disabled { opacity: .5; }
 .bw-close { width: 30px; height: 30px; border: none; border-radius: 6px; color: var(--text-dim); background: transparent; cursor: pointer; font-size: 18px; }
 .bw-close:hover { color: var(--text); background: var(--surface-item-hover); }
 .bw-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 22px 24px; display: flex; flex-direction: column; gap: 12px; }
@@ -551,8 +619,23 @@ onUnmounted(() => {
 .bw-task-input { flex: 1; padding: 3px 6px; font-size: 12px; color: var(--text); background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 4px; }
 .bw-hours { width: 60px; padding: 3px 6px; font-size: 12px; color: var(--text); background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 4px; text-align: center; }
 .bw-content-row { display: flex; gap: 6px; align-items: flex-start; }
-.bw-content { flex: 1; min-width: 0; padding: 6px 8px; font-size: 12px; color: var(--text); background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 5px; resize: vertical; font-family: inherit; }
+.bw-content { flex: 1; min-width: 0; padding: 6px 8px; font-size: 12px; line-height: 1.6; color: var(--text); background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 5px; resize: vertical; font-family: inherit; overflow-y: auto; max-height: 150px; }
+.bw-content.expanded { max-height: none; }
 .bw-content:disabled { opacity: .5; }
+.bw-expand-btn {
+  height: 28px;
+  padding: 0 9px;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+.bw-expand-btn:hover:not(:disabled) { color: var(--text); background: var(--surface-item-hover); border-color: var(--border); }
+.bw-expand-btn:disabled { opacity: .4; cursor: not-allowed; }
 .bw-summarize-btn {
   height: 28px;
   padding: 0 10px;

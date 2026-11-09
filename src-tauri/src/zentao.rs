@@ -8,8 +8,8 @@
 // JSON 响应，但实际未写入库。所以 add_effort 必须 verify-after-write：写后再读
 // consumed 比对，差额不对就抛错。这个配方在 feedback_zentao_workhour_recipe 记忆里。
 //
-// 防误关：禅道用 left[1]=0 决定任务关闭。必须先读 current left 原样回填，
-// consumed 加值但 left 不变，否则会自动 done 任务。
+// 防误关：禅道用 left[1]=0 决定任务关闭。left 一律固定写 1（2026-11-09 约定：
+// 不按工时递减——算出来的数很怪，团队习惯让任务常驻 1h 余量保持不关），永不写 0。
 
 #![allow(dead_code)]
 // wiring 在 M5 接入。
@@ -673,26 +673,25 @@ impl ZentaoClient {
         self.ensure_token().await?;
         self.login_via_form().await?;
 
-        // 1. 读当前任务拿 left（防误关）+ consumed（用于事后验证）
+        // 1. 读当前任务拿 left（状态哨兵）+ consumed（用于事后验证）
         let task = self
             .get_task(task_id)
             .await?
             .ok_or_else(|| format!("任务 #{} 不存在", task_id))?;
-        // left 作为本次递减的基准：旧值异常（缺失/<=0）时中止，让用户在禅道确认状态。
-        // 旧版逻辑会原值回填 left（永远不递减），导致禅道里 left 数值与实际投入脱节，
-        // 于 2026-06-23 改为按本次工时正确递减（见下方 new_left 计算）。
+        // left 不再参与递减（固定写 1），但仍读取做状态哨兵：
+        // left<=0 说明任务已完成，给已完成任务写回 left=1 会改出虚假余量，中止让用户确认。
         let current_left = task
             .get("left")
             .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
             .ok_or_else(|| {
                 format!(
-                    "任务 #{} 未返回 left（剩余工时）字段，无法作为递减基准。请在禅道确认该任务状态（可能已完成/已关闭），或手动修正 left 后重试。",
+                    "任务 #{} 未返回 left（剩余工时）字段，无法确认任务状态。请在禅道确认该任务状态（可能已完成/已关闭），或手动修正后重试。",
                     task_id
                 )
             })?;
         if current_left <= 0.0 {
             return Err(format!(
-                "任务 #{} 当前 left（剩余工时）为 {}，已无余量可递减。请在禅道确认该任务状态（可能已完成/已关闭），或手动修正 left 后重试。",
+                "任务 #{} 当前 left（剩余工时）为 {}，任务可能已完成。按当前策略剩余固定写 1，会给已完成任务改出余量，已中止。请确认任务状态后重试。",
                 task_id, current_left
             ));
         }
@@ -705,8 +704,8 @@ impl ZentaoClient {
             .unwrap_or(0.0);
 
         // 2. 构造 form body —— 字面方括号 + 3 行占位（与浏览器表单 1:1 对齐）
-        // left 按本次工时递减，卡在 0.5 避免禅道把 left=0 的任务自动标记完成。
-        let new_left = compute_new_left(current_left, hours);
+        // left 固定写 1：不按工时递减（算出来是怪数），也不写 0（禅道会自动完成任务）。
+        let new_left = 1.0;
         let date_str = date
             .map(String::from)
             .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string());
@@ -810,9 +809,9 @@ impl ZentaoClient {
 pub struct EffortResult {
     pub id: Option<u64>,
     pub endpoint: String,
-    /// 写入后的 left 值（按本次工时递减，卡在 0.5）。
+    /// 写入的 left 值（固定 1，不递减）。
     /// 字段名沿用 `preserved_left` 以保持 MCP 工具 JSON 契约不变；
-    /// 语义自 2026-06-23 起从"保留的旧 left"改为"递减后的新 left"。
+    /// 语义自 2026-11-09 起为"固定余量 1h"。
     pub preserved_left: f64,
     pub consumed_before: f64,
     pub consumed_after: f64,
@@ -822,17 +821,6 @@ pub struct EffortResult {
 // ============================================================================
 // 工具函数
 // ============================================================================
-
-/// 计算写工时后的新 left：旧值减去本次工时，卡在 0.5 下限。
-///
-/// 卡 0.5 的原因：禅道在 `left=0` 时会把任务自动标记为完成，掩盖真实状态；
-/// 0.5 既保留递减语义，又不误触发关闭。
-///
-/// 调用前应已确保 `current_left > 0`（在 `add_effort` 中由前置校验保证）；
-/// 本函数对非法输入也做防御性兜底。
-fn compute_new_left(current_left: f64, hours: f64) -> f64 {
-    (current_left - hours).max(0.5)
-}
 
 fn md5_hex(input: &str) -> String {
     let mut hasher = Md5::new();
@@ -1013,38 +1001,6 @@ mod tests {
     fn classify_task_ops_beats_feature_when_both_match() {
         // Ops checked first, so "需求对接 XZGN 系统" should be Ops
         assert_eq!(classify_task("需求对接 XZGN 系统"), TaskCategory::Ops);
-    }
-
-    // —— compute_new_left：left 按本次工时递减，卡 0.5 ——
-
-    #[test]
-    fn compute_new_left_normal_decrement() {
-        // 正常递减：10 - 3 = 7
-        assert!((compute_new_left(10.0, 3.0) - 7.0).abs() < 1e-9);
-    }
-
-    #[test]
-    fn compute_new_left_clamp_when_overshoot() {
-        // 递减超过余额：2 - 5 = -3，卡到 0.5（不报错，调用方应在此之前拦下）
-        assert!((compute_new_left(2.0, 5.0) - 0.5).abs() < 1e-9);
-    }
-
-    #[test]
-    fn compute_new_left_exactly_half() {
-        // 刚好减到 0.5：2.5 - 2 = 0.5
-        assert!((compute_new_left(2.5, 2.0) - 0.5).abs() < 1e-9);
-    }
-
-    #[test]
-    fn compute_new_left_just_above_half() {
-        // 边界：3 - 2.5 = 0.5
-        assert!((compute_new_left(3.0, 2.5) - 0.5).abs() < 1e-9);
-    }
-
-    #[test]
-    fn compute_new_left_zero_hours_keeps_value() {
-        // 写 0 工时：left 不变
-        assert!((compute_new_left(8.0, 0.0) - 8.0).abs() < 1e-9);
     }
 
     // —— humanize_error_body：服务端错误转可读中文 ——
