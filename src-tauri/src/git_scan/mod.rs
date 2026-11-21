@@ -20,4 +20,4 @@ pub use types::{LocalCommit, DateRange, MatchDimension, RangePreset};
 pub use discovery::find_git_repos;
 pub use commits::{list_my_local_commits, ListMyLocalCommitsInput};
 pub use config::{load_excluded_business_lines, get_repo_roots};
-pub use cleanup::{clean_commit_title, effort_for_commit};
+pub use cleanup::{clean_commit_title, strip_leading_index, effort_for_commit};

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 use crate::commit_link::{CommitLink, CommitLinkResult};
-use crate::git_scan::{clean_commit_title, DateRange};
+use crate::git_scan::{clean_commit_title, strip_leading_index, DateRange};
 
 // ============================================================================
 // 类型
@@ -123,7 +123,8 @@ fn build_default_work_content(commits: &[CommitLink]) -> String {
     let mut seen: HashSet<String> = HashSet::new();
     let mut items: Vec<String> = Vec::new();
     for c in commits {
-        let cleaned = clean_commit_title(&c.title, 200);
+        // 先剥标题自带序号再加我们的编号，避免出现「2、1、xxx」双编号
+        let cleaned = strip_leading_index(&clean_commit_title(&c.title));
         if cleaned.is_empty() || seen.contains(&cleaned) {
             continue;
         }
@@ -469,7 +470,7 @@ fn render_plain_text(
         let mut seen: HashSet<String> = HashSet::new();
         let mut commit_titles: Vec<String> = Vec::new();
         for c in &g.commits {
-            let cleaned = clean_commit_title(&c.title, 60);
+            let cleaned = clean_commit_title(&c.title);
             if cleaned.is_empty() || seen.contains(&cleaned) {
                 continue;
             }
@@ -558,7 +559,7 @@ fn render_plain_text(
             let mut seen: HashSet<String> = HashSet::new();
             let mut unique_titles: Vec<String> = Vec::new();
             for c in &g.commits {
-                let cleaned = clean_commit_title(&c.title, 60);
+                let cleaned = clean_commit_title(&c.title);
                 if cleaned.is_empty() || seen.contains(&cleaned) {
                     continue;
                 }

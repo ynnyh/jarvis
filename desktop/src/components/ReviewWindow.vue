@@ -252,7 +252,7 @@ function buildWorkContent(commits: { title: string }[]): string {
   const seen = new Set<string>()
   const lines: string[] = []
   for (const c of commits) {
-    const cleaned = cleanCommitTitle(c.title, 200)
+    const cleaned = cleanCommitTitle(c.title)
     if (!cleaned || seen.has(cleaned)) continue
     seen.add(cleaned)
     lines.push(`- ${cleaned}`)

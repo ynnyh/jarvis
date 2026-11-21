@@ -1,7 +1,8 @@
 use crate::git_scan::types::LocalCommit;
 
-/// 清理 commit 标题：剥 emoji + conventional commit 前缀，截断到 maxLen。
-pub fn clean_commit_title(title: &str, max_len: usize) -> String {
+/// 清理 commit 标题：剥 emoji + conventional commit 前缀；不截断——
+/// 工时/日报内容要求完整展示（UI 侧用限高+滚动/展开兜底）。
+pub fn clean_commit_title(title: &str) -> String {
     if title.is_empty() { return String::new(); }
     let mut s = title.to_string();
     for _ in 0..3 {
@@ -10,14 +11,18 @@ pub fn clean_commit_title(title: &str, max_len: usize) -> String {
         s = strip_cc_prefix(&s);
         if s == before { break; }
     }
-    s = s.trim().to_string();
-    if s.chars().count() > max_len {
-        let mut truncated: String = s.chars().take(max_len.saturating_sub(1)).collect();
-        truncated = truncated.trim_end().to_string();
-        truncated.push('…');
-        s = truncated;
-    }
-    s
+    s.trim().to_string()
+}
+
+/// 剥掉标题自带的序号前缀（"1、xxx" "2. xxx" "(3) xxx" "（4）xxx" "⑤xxx" "五、xxx"），
+/// 避免拼装工时内容时出现「2、1、xxx」双编号。
+/// "." 后必须跟空白才视为序号（防误伤 "1.5 版本发布" 这类小数）。
+pub fn strip_leading_index(s: &str) -> String {
+    use regex::Regex;
+    let re = Regex::new(
+        r"^(?:\s*(?:[0-9０-９]{1,3}\s*[、,，:：;；)）]\s*|[0-9０-９]{1,3}\.\s+|\([0-9]{1,3}\)\s*|（[0-9０-９]{1,3}）\s*|[①-⑳]\s*|[一二三四五六七八九十]{1,3}\s*[、.．]\s*))+",
+    ).unwrap();
+    re.replace(s, "").trim().to_string()
 }
 
 fn strip_leading_emoji(s: &str) -> String {
@@ -86,15 +91,36 @@ mod tests {
 
     #[test]
     fn clean_title_strips_cc_prefix() {
-        assert_eq!(clean_commit_title("feat: add login", 60), "add login");
-        assert_eq!(clean_commit_title("feat(api): add login", 60), "add login");
-        assert_eq!(clean_commit_title("FIX: bug", 60), "bug");
+        assert_eq!(clean_commit_title("feat: add login"), "add login");
+        assert_eq!(clean_commit_title("feat(api): add login"), "add login");
+        assert_eq!(clean_commit_title("FIX: bug"), "bug");
     }
 
     #[test]
     fn clean_title_strips_emoji() {
-        assert_eq!(clean_commit_title("✨ feat: 新增登录页", 60), "新增登录页");
-        assert_eq!(clean_commit_title("🐛 修复 bug", 60), "修复 bug");
+        assert_eq!(clean_commit_title("✨ feat: 新增登录页"), "新增登录页");
+        assert_eq!(clean_commit_title("🐛 修复 bug"), "修复 bug");
+    }
+
+    #[test]
+    fn clean_title_no_truncation() {
+        let long = "长".repeat(500);
+        assert_eq!(clean_commit_title(&long), long); // 不截断，完整保留
+    }
+
+    #[test]
+    fn strip_leading_index_variants() {
+        assert_eq!(strip_leading_index("1、修复登录"), "修复登录");
+        assert_eq!(strip_leading_index("1、1、重复前缀"), "重复前缀"); // 重复剥
+        assert_eq!(strip_leading_index("2. 修复登录"), "修复登录");
+        assert_eq!(strip_leading_index("（3）修复登录"), "修复登录");
+        assert_eq!(strip_leading_index("(4)修复登录"), "修复登录");
+        assert_eq!(strip_leading_index("⑤修复登录"), "修复登录");
+        assert_eq!(strip_leading_index("五、修复登录"), "修复登录");
+        // 非序号数字不误伤
+        assert_eq!(strip_leading_index("1.5 版本发布"), "1.5 版本发布");
+        assert_eq!(strip_leading_index("60秒超时修改"), "60秒超时修改");
+        assert_eq!(strip_leading_index("3D 渲染优化"), "3D 渲染优化");
     }
 
     #[test]
